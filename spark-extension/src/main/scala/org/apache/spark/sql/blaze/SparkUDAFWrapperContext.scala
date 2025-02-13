@@ -16,6 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import scala.collection.JavaConverters._
+
 import org.apache.arrow.c.{ArrowArray, Data}
 import org.apache.arrow.vector.{IntVector, VectorSchemaRoot}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
@@ -29,8 +30,8 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
 import org.apache.spark.sql.types.{DataType, IntegerType, StructField, StructType}
-
 import java.nio.ByteBuffer
+
 import scala.collection.mutable.ArrayBuffer
 
 case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
@@ -85,29 +86,25 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   }
 
   val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
-//  private def initialize(): InternalRow = initializer.apply(InternalRow.empty).copy()
-  def initialize(numRow: Int): Array[InternalRow] = {
-    val initialRow = initializer.apply(InternalRow.empty)
-    Array.fill(numRow) {
-      initialRow.copy()
-    }
+
+  def initialize(numRow: Int): ArrayBuffer[InternalRow] = {
+    val rows = ArrayBuffer[InternalRow]()
+    resize(rows, numRow)
+    rows
   }
 
-  def resize(rows: Array[InternalRow], len: Int):  Array[InternalRow] = {
-    val buffer = ArrayBuffer[InternalRow](rows: _*)
-    if (buffer.length < len) {
-      val initialRow = initializer.apply(InternalRow.empty)
-      buffer ++= Array.fill(len - buffer.length){initialRow.copy()}
+  def resize(rows: ArrayBuffer[InternalRow], len: Int): Unit = {
+    if (rows.length < len) {
+      rows.append(Range(rows.length, len).map(_ => initializer.apply(InternalRow.empty)) :_*)
     } else {
-      buffer.trimEnd(buffer.length - len)
+      rows.trimEnd(rows.length - len)
     }
-    buffer.toArray
   }
 
   def update(
-      rows: Array[InternalRow],
+      rows: ArrayBuffer[InternalRow],
       importIdxFFIArrayPtr: Long,
-      importBatchFFIArrayPtr: Long): Array[InternalRow] = {
+      importBatchFFIArrayPtr: Long): Unit = {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(inputSchema, batchAllocator),
@@ -120,52 +117,45 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
 
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
+        val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
         val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
         for (i <- 0 until idxRoot.getRowCount) {
-          if ( inputIdxVector.get(i) < inputRows.numRows() ) {
-              val row = rows(rowIdxVector.get(i))
-              val input = inputRows.getRow(inputIdxVector.get(i))
-              val joiner = new JoinedRow
-              rows(rowIdxVector.get(i)) = updater(joiner(row, paramsToUnsafe(input).copy())).copy()
-            }
+          val rowIdx = rowIdxVector.get(i)
+          val row = rows(rowIdx)
+          val input = paramsToUnsafe(inputRows.getRow(inputIdxVector.get(i)))
+          rows(rowIdx) = updater(new JoinedRow(row, input)).copy()
         }
-        rows
       }
     }
   }
 
   def merge(
-      rows: Array[InternalRow],
-      mergeRows: Array[InternalRow],
-      importIdxFFIArrayPtr: Long): Array[InternalRow] = {
+      rows: ArrayBuffer[InternalRow],
+      mergeRows: ArrayBuffer[InternalRow],
+      importIdxFFIArrayPtr: Long): Unit = {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(indexSchema, batchAllocator),
         ArrowArray.wrap(importIdxFFIArrayPtr)) { (idxRoot, idxArray) =>
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
+        val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
         val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-
         for (i <- 0 until idxRoot.getRowCount) {
-          val idx = mergeIdxVector.get(i)
-          if (idx < mergeRows.length) {
-            val row = rows(rowIdxVector.get(i))
-            val mergeRow = mergeRows(mergeIdxVector.get(i))
-            val joiner = new JoinedRow
-            rows(rowIdxVector.get(i)) = merger(joiner(row, mergeRow)).copy()
-          }
+          val rowIdx = rowIdxVector.get(i)
+          val mergeIdx = mergeIdxVector.get(i)
+          val row = rows(rowIdx)
+          val mergeRow = mergeRows(mergeIdx)
+          rows(rowIdx) = merger(new JoinedRow(row, mergeRow)).copy()
         }
-        rows
       }
     }
   }
 
   def eval(
-      rows: Array[InternalRow],
+      rows: ArrayBuffer[InternalRow],
       importIdxFFIArrayPtr: Long,
       exportFFIArrayPtr: Long): Unit = {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>

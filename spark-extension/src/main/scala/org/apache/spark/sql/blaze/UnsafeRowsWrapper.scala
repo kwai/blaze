@@ -16,7 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.arrow.c.{ArrowArray, Data}
-import org.apache.arrow.vector.{VarBinaryVector, IntVector, VectorSchemaRoot}
+import org.apache.arrow.vector.{IntVector, VarBinaryVector, VectorSchemaRoot}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
@@ -28,9 +28,15 @@ import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
 import org.apache.spark.sql.types.{BinaryType, DataType, IntegerType, StructField, StructType}
 import org.apache.spark.sql.Row
-
 import scala.collection.JavaConverters._
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.util.ByteBufferInputStream
 
 object UnsafeRowsWrapper extends Logging {
 
@@ -40,7 +46,7 @@ object UnsafeRowsWrapper extends Logging {
     ArrowUtils.toArrowSchema(schema)
   }
 
-  private val byteSchema = {
+  private val dataSchema = {
     val schema = StructType(Seq(StructField("", BinaryType, nullable = false)))
     ArrowUtils.toArrowSchema(schema)
   }
@@ -71,104 +77,64 @@ object UnsafeRowsWrapper extends Logging {
   }
 
   def serialize(
-      unsafeRows: Array[InternalRow],
-      numFields: Int,
-      importFFIArrayPtr: Long,
-      exportFFIArrayPtr: Long): Unit = {
+    rows: ArrayBuffer[InternalRow],
+    numFields: Int,
+    importFFIArrayPtr: Long,
+    exportFFIArrayPtr: Long): Unit = {
+
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
-        VectorSchemaRoot.create(byteSchema, batchAllocator),
+        VectorSchemaRoot.create(dataSchema, batchAllocator),
         VectorSchemaRoot.create(idxSchema, batchAllocator),
-        ArrowArray.wrap(importFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) {
-        (outputRoot, paramsRoot, importArray, exportArray) =>
+      ) { (exportDataRoot, importIdxRoot) =>
+
+        Using.resources(
+          ArrowArray.wrap(importFFIArrayPtr),
+          ArrowArray.wrap(exportFFIArrayPtr)) { (importArray, exportArray) =>
+
           // import into params root
           Data.importIntoVectorSchemaRoot(
             batchAllocator,
             importArray,
-            paramsRoot,
+            importIdxRoot,
             dictionaryProvider)
-          val idxArray = paramsRoot.getFieldVectors.asScala.head.asInstanceOf[IntVector]
+
+          // write serialized row into sequential raw bytes
+          val importIdxArray = importIdxRoot.getFieldVectors.get(0).asInstanceOf[IntVector]
+          val outputDataStream = new ByteArrayOutputStream()
           val serializer = new UnsafeRowSerializer(numFields).newInstance()
-          val outputWriter = ArrowWriter.create(outputRoot)
-          for (idx <- 0 until paramsRoot.getRowCount) {
-            val internalRow = unsafeRows(idxArray.get(idx))
-              Utils.tryWithResource(new ByteArrayOutputStream()) { baos =>
-                val serializerStream = serializer.serializeStream(baos)
-                serializerStream.writeValue(internalRow)
-                serializerStream.close()
-                val bytes = baos.toByteArray
-                outputWriter.write(toUnsafeRow(Row(bytes), Array(BinaryType)))
+          Using(serializer.serializeStream(outputDataStream)) { ser =>
+            for (idx <- 0 until importIdxRoot.getRowCount) {
+              val rowIdx = importIdxArray.get(idx)
+              val row = rows(rowIdx)
+              ser.writeValue(row)
             }
           }
 
+          // export serialized data as a single row batch using root allocator
+          val outputWriter = ArrowWriter.create(exportDataRoot)
+          outputWriter.write(InternalRow(outputDataStream.toByteArray))
           outputWriter.finish()
-
-          // export to output using root allocator
           Data.exportVectorSchemaRoot(
             ArrowUtils.rootAllocator,
-            outputRoot,
+            exportDataRoot,
             dictionaryProvider,
             exportArray)
+        }
       }
     }
   }
 
-  def deserialize(
-      numFields: Int,
-      importFFIArrayPtr: Long,
-      exportFFIArrayPtr: Long): Array[InternalRow] = {
+  def deserialize(numFields: Int, dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
+    val deserializer = new UnsafeRowSerializer(numFields).newInstance()
+    val inputDataStream = new ByteBufferInputStream(dataBuffer)
+    val rows = new ArrayBuffer[InternalRow]()
 
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(deserializeSchema, batchAllocator),
-        VectorSchemaRoot.create(offsetSchema, batchAllocator),
-        ArrowArray.wrap(importFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) {
-        (paramsRoot, outputRoot, importArray, exportArray) =>
-          Data.importIntoVectorSchemaRoot(
-            batchAllocator,
-            importArray,
-            paramsRoot,
-            dictionaryProvider)
-          val fieldVectors = paramsRoot.getFieldVectors.asScala
-          val binaryVector = fieldVectors.head.asInstanceOf[VarBinaryVector];
-          val intVector = fieldVectors(1).asInstanceOf[IntVector]
-
-          val deserializer = new UnsafeRowSerializer(numFields).newInstance()
-          val internalRowsArray = new Array[InternalRow](paramsRoot.getRowCount)
-          val outputWriter = ArrowWriter.create(outputRoot)
-          for (i <- 0 until paramsRoot.getRowCount) {
-            val bytes = binaryVector.get(i)
-            val offset = intVector.get(i)
-              val internalRow: InternalRow = Utils.tryWithResource(
-                new ByteArrayInputStream(bytes, offset, bytes.length - offset)) { bais =>
-                val deserializeStream = deserializer.deserializeStream(bais)
-                val unsafeRow = deserializeStream.readValue().asInstanceOf[UnsafeRow]
-                deserializeStream.close()
-                val size = unsafeRow.getSizeInBytes + 4
-                outputWriter.write(toUnsafeRow(Row(offset + size), Array(IntegerType)))
-                unsafeRow
-              }
-              internalRowsArray(i) = internalRow
-          }
-
-          outputWriter.finish()
-
-          // export to output using root allocator
-          Data.exportVectorSchemaRoot(
-            ArrowUtils.rootAllocator,
-            outputRoot,
-            dictionaryProvider,
-            exportArray)
-
-          internalRowsArray
+    Using.resource(deserializer.deserializeStream(inputDataStream)) { deser =>
+      for (row <- deser.asKeyValueIterator.map(_._2.asInstanceOf[UnsafeRow].copy())) {
+        rows.append(row)
       }
     }
+    rows
   }
-
-  def getRowNum(unsafeRows: Array[InternalRow]): Int = {
-    unsafeRows.length
-  }
-
 }

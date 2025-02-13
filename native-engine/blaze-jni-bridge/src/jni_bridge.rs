@@ -1199,29 +1199,33 @@ impl<'a> SparkUDAFWrapperContext<'a> {
             method_initialize: env.get_method_id(
                 class,
                 "initialize",
-                "(I)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
+                "(I)Lscala/collection/mutable/ArrayBuffer;",
+            )?,
             method_initialize_ret: ReturnType::Object,
             method_resize: env.get_method_id(
                 class,
                 "resize",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;I)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
-            method_resize_ret: ReturnType::Object,
+                "(Lscala/collection/mutable/ArrayBuffer;I)V",
+            )?,
+            method_resize_ret: ReturnType::Primitive(Primitive::Void),
             method_update: env.get_method_id(
                 class,
                 "update",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
-            method_update_ret: ReturnType::Object,
+                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+            )?,
+            method_update_ret: ReturnType::Primitive(Primitive::Void),
             method_merge: env.get_method_id(
                 class,
                 "merge",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;[Lorg/apache/spark/sql/catalyst/InternalRow;J)[Lorg/apache/spark/sql/catalyst/InternalRow;")?,
-            method_merge_ret: ReturnType::Object,
+                "(Lscala/collection/mutable/ArrayBuffer;Lscala/collection/mutable/ArrayBuffer;J)V",
+            )?,
+            method_merge_ret: ReturnType::Primitive(Primitive::Void),
             method_eval: env.get_method_id(
                 class,
                 "eval",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;JJ)V")?,
+                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+            )?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
-
         })
     }
 }
@@ -1258,8 +1262,6 @@ pub struct BlazeUnsafeRowsWrapperUtils<'a> {
     pub method_serialize_ret: ReturnType,
     pub method_deserialize: JStaticMethodID,
     pub method_deserialize_ret: ReturnType,
-    pub method_num: JStaticMethodID,
-    pub method_num_ret: ReturnType,
 }
 impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils";
@@ -1271,21 +1273,15 @@ impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
             method_serialize: env.get_static_method_id(
                 class,
                 "serialize",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;IJJ)V",
+                "(Lscala/collection/mutable/ArrayBuffer;IJJ)V",
             )?,
             method_serialize_ret: ReturnType::Primitive(Primitive::Void),
             method_deserialize: env.get_static_method_id(
                 class,
                 "deserialize",
-                "(IJJ)[Lorg/apache/spark/sql/catalyst/InternalRow;",
+                "(ILjava/nio/ByteBuffer;)Lscala/collection/mutable/ArrayBuffer;",
             )?,
             method_deserialize_ret: ReturnType::Object,
-            method_num: env.get_static_method_id(
-                class,
-                "getRowNum",
-                "([Lorg/apache/spark/sql/catalyst/InternalRow;)I",
-            )?,
-            method_num_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }

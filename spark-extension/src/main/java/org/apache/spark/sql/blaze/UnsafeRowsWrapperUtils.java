@@ -15,21 +15,20 @@
  */
 package org.apache.spark.sql.blaze;
 
+import java.nio.ByteBuffer;
+
 import org.apache.spark.sql.catalyst.InternalRow;
+
+import scala.collection.mutable.ArrayBuffer;
 
 public class UnsafeRowsWrapperUtils {
 
     public static void serialize(
-            InternalRow[] unsafeRows, int numFields, long importFFIArrayPtr, long exportFFIArrayPtr) {
+            ArrayBuffer<InternalRow> unsafeRows, int numFields, long importFFIArrayPtr, long exportFFIArrayPtr) {
         UnsafeRowsWrapper$.MODULE$.serialize(unsafeRows, numFields, importFFIArrayPtr, exportFFIArrayPtr);
     }
 
-    public static InternalRow[] deserialize(int numFields, long importFFIArrayPtr, long exportFFIArrayPtr) {
-        return UnsafeRowsWrapper$.MODULE$.deserialize(numFields, importFFIArrayPtr, exportFFIArrayPtr);
+    public static ArrayBuffer<InternalRow> deserialize(int numFields, ByteBuffer dataBuffer) {
+        return UnsafeRowsWrapper$.MODULE$.deserialize(numFields, dataBuffer);
     }
-
-    public static int getRowNum(InternalRow[] unsafeRows) {
-        return UnsafeRowsWrapper$.MODULE$.getRowNum(unsafeRows);
-    }
-
 }

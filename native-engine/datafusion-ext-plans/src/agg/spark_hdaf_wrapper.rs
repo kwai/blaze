@@ -15,6 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
+    io::Cursor,
     sync::Arc,
 };
 
@@ -27,14 +28,15 @@ use arrow::{
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
+use arrow_schema::FieldRef;
 use blaze_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
-use datafusion::{
-    common::{DataFusionError, Result},
-    physical_expr::PhysicalExpr,
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion_ext_commons::{
+    downcast_any,
+    io::{read_len, write_len},
 };
-use datafusion_ext_commons::downcast_any;
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 
@@ -120,7 +122,8 @@ impl Agg for SparkUDAFWrapper {
         let jcontext = self.jcontext().unwrap();
         let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).initialize(
             num_rows as i32,
-        )-> JObject).unwrap();
+        )-> JObject)
+        .unwrap();
 
         let jcontext = self.jcontext().unwrap();
         let obj = jni_new_global_ref!(rows.as_obj()).unwrap();
@@ -128,6 +131,7 @@ impl Agg for SparkUDAFWrapper {
             obj,
             jcontext,
             num_fields: self.buffer_schema.fields.len(),
+            num_rows,
         })
     }
 
@@ -188,28 +192,16 @@ impl Agg for SparkUDAFWrapper {
                 partial_arg_idx_builder.append_value(partial_arg_idx as i32);
             }
         }
-        let acc_idx = acc_idx_builder
-            .finish()
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .cloned()
-            .unwrap();
+        let acc_idx = acc_idx_builder.finish();
+        let partial_arg_idx = partial_arg_idx_builder.finish();
 
-        let partial_arg_idx = partial_arg_idx_builder
-            .finish()
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .cloned()
-            .unwrap();
-
-        accs.obj = partial_update_udaf(
+        partial_update_udaf(
             self.jcontext()?,
             params_batch,
             accs.obj.clone(),
             acc_idx,
             partial_arg_idx,
-        )
-        .unwrap();
+        )?;
         Ok(())
     }
 
@@ -232,29 +224,16 @@ impl Agg for SparkUDAFWrapper {
                 merging_acc_idx_builder.append_value(merging_acc_idx as i32);
             }
         }
-        let acc_idx = acc_idx_builder
-            .finish()
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .cloned()
-            .unwrap();
+        let acc_idx = acc_idx_builder.finish();
+        let merging_acc_idx = merging_acc_idx_builder.finish();
 
-        let merging_acc_idx = merging_acc_idx_builder
-            .finish()
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .cloned()
-            .unwrap();
-
-        accs.obj = partial_merge_udaf(
+        partial_merge_udaf(
             self.jcontext()?,
             accs.obj.clone(),
             merging_accs.obj.clone(),
             acc_idx,
             merging_acc_idx,
-        )
-        .unwrap();
-
+        )?;
         Ok(())
     }
 
@@ -273,6 +252,7 @@ struct AccUnsafeRowsColumn {
     obj: GlobalRef,
     jcontext: GlobalRef,
     num_fields: usize,
+    num_rows: usize,
 }
 
 impl AccColumn for AccUnsafeRowsColumn {
@@ -284,20 +264,15 @@ impl AccColumn for AccUnsafeRowsColumn {
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
             self.obj.as_obj(),
             len as i32,
-        )-> JObject).unwrap();
-        self.obj = jni_new_global_ref!(rows.as_obj()).unwrap();
+        )-> ())
+        .unwrap();
+        self.num_rows = len;
     }
 
     fn shrink_to_fit(&mut self) {}
 
     fn num_records(&self) -> usize {
-        match jni_call_static!(
-        BlazeUnsafeRowsWrapperUtils.num(self.obj.as_obj())
-        -> i32)
-        {
-            Ok(row_num) => row_num as usize,
-            Err(_) => 0,
-        }
+        self.num_rows
     }
 
     fn mem_used(&self) -> usize {
@@ -306,8 +281,8 @@ impl AccColumn for AccUnsafeRowsColumn {
 
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
         let field = Arc::new(Field::new("", DataType::Int32, false));
-        let idx32 = idx.to_int32_array().into_data();
-        let struct_array = StructArray::from(vec![(field, make_array(idx32))]);
+        let idx_array: ArrayRef = Arc::new(idx.to_int32_array());
+        let struct_array = StructArray::from(vec![(field, idx_array)]);
         let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
         let mut import_ffi_array = FFI_ArrowArray::empty();
         jni_call_static!(
@@ -325,79 +300,42 @@ impl AccColumn for AccUnsafeRowsColumn {
             make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
         let result_struct = import_struct_array.as_struct();
 
-        let binary_array = result_struct
-            .column(0)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .ok_or_else(|| DataFusionError::Execution("Expected a BinaryArray".to_string()))?;
+        let binary_array = downcast_any!(result_struct.column(0), BinaryArray)?;
+        let data = binary_array.value(0);
 
-        for i in 0..binary_array.len() {
-            if binary_array.is_valid(i) {
-                let bytes = binary_array.value(i).to_vec();
-                array[i].extend_from_slice(&bytes);
-            } else {
-                log::warn!("AccUnsafeRowsColumn::freeze_to_rows : binary_array null error")
-            }
+        // UnsafeRow is serialized with big-endian i32 length prefix
+        let mut cur = 0;
+        for i in 0..array.len() {
+            let bytes_len = i32::from_be_bytes(data[cur..][..4].try_into().unwrap()) as usize;
+            write_len(bytes_len, &mut array[i])?;
+            cur += 4;
+
+            array[i].extend_from_slice(&data[cur..][..bytes_len]);
+            cur += bytes_len;
         }
         Ok(())
     }
 
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let binary_values = array.iter().map(|&data| data).collect();
-        let offsets_i32 = offsets
-            .iter()
-            .map(|data| *data as i32)
-            .collect::<Vec<i32>>();
-        let offsets_array = Int32Array::from(offsets_i32)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .cloned()
-            .unwrap();
-        let binary_array = BinaryArray::from_vec(binary_values)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .cloned()
-            .unwrap();
+        let mut data = vec![];
+        for (row_data, offset) in array.iter().zip(offsets) {
+            let mut cur = Cursor::new(&row_data[*offset..]);
+            let bytes_len = read_len(&mut cur)?;
+            data.extend_from_slice(&(bytes_len as i32).to_be_bytes());
+            *offset += cur.position() as usize;
 
-        let binary_field = Arc::new(Field::new("", DataType::Binary, false));
-        let offsets_field = Arc::new(Field::new("", DataType::Int32, false));
+            data.extend_from_slice(&row_data[*offset..][..bytes_len]);
+            *offset += bytes_len;
+        }
 
-        let struct_array = StructArray::from(vec![
-            (binary_field.clone(), make_array(binary_array.into_data())),
-            (offsets_field.clone(), make_array(offsets_array.into_data())),
-        ]);
-
-        let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
-        let mut import_ffi_array = FFI_ArrowArray::empty();
+        let data_buffer = jni_new_direct_byte_buffer!(data)?;
         let rows = jni_call_static!(
             BlazeUnsafeRowsWrapperUtils.deserialize(
                 self.num_fields as i32,
-                &mut export_ffi_array as *mut FFI_ArrowArray as i64,
-                &mut import_ffi_array as *mut FFI_ArrowArray as i64,)
+                data_buffer.as_obj())
             -> JObject)?;
         self.obj = jni_new_global_ref!(rows.as_obj())?;
-
-        // update offsets
-        // import output from context
-        let field = Field::new("", DataType::Int32, false);
-        let schema = Schema::new(vec![field]);
-        let import_ffi_schema = FFI_ArrowSchema::try_from(schema)?;
-        let import_struct_array =
-            make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
-        let result_struct = import_struct_array.as_struct();
-
-        let int32array = result_struct
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .ok_or_else(|| DataFusionError::Execution("Expected a Int32Array".to_string()))?;
-
-        assert_eq!(int32array.len(), array.len());
-
-        for i in 0..int32array.len() {
-            offsets[i] = int32array.value(i) as usize;
-        }
-
+        self.num_rows = array.len();
         Ok(())
     }
 
@@ -410,36 +348,45 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 }
 
+fn int32_field() -> FieldRef {
+    static FIELD: OnceCell<FieldRef> = OnceCell::new();
+    FIELD
+        .get_or_init(|| Arc::new(Field::new("", DataType::Int32, false)))
+        .clone()
+}
+
+fn binary_field() -> FieldRef {
+    static FIELD: OnceCell<FieldRef> = OnceCell::new();
+    FIELD
+        .get_or_init(|| Arc::new(Field::new("", DataType::Binary, false)))
+        .clone()
+}
+
 fn partial_update_udaf(
     jcontext: GlobalRef,
     params_batch: RecordBatch,
     accs: GlobalRef,
     acc_idx: Int32Array,
     partial_arg_idx: Int32Array,
-) -> Result<GlobalRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
-    let partial_arg_idx_field = Arc::new(Field::new("partial_arg_idx", DataType::Int32, false));
-
-    let struct_array = StructArray::from(vec![
-        (acc_idx_field.clone(), make_array(acc_idx.into_data())),
-        (
-            partial_arg_idx_field.clone(),
-            make_array(partial_arg_idx.into_data()),
-        ),
+) -> Result<()> {
+    let acc_idx: ArrayRef = Arc::new(acc_idx);
+    let partial_arg_idx: ArrayRef = Arc::new(partial_arg_idx);
+    let idx_struct_array = StructArray::from(vec![
+        (int32_field(), acc_idx),
+        (int32_field(), partial_arg_idx),
     ]);
-    let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
+    let batch_struct_array = StructArray::from(params_batch);
 
-    let struct_array = StructArray::from(params_batch.clone());
-
-    let mut export_ffi_batch_array = FFI_ArrowArray::new(&struct_array.to_data());
+    let mut export_ffi_idx_array = FFI_ArrowArray::new(&idx_struct_array.to_data());
+    let mut export_ffi_batch_array = FFI_ArrowArray::new(&batch_struct_array.to_data());
 
     let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).update(
         accs.as_obj(),
         &mut export_ffi_idx_array as *mut FFI_ArrowArray as i64,
         &mut export_ffi_batch_array as *mut FFI_ArrowArray as i64,
-    )-> JObject)?;
+    )-> ())?;
 
-    jni_new_global_ref!(rows.as_obj())
+    Ok(())
 }
 
 fn partial_merge_udaf(
@@ -448,26 +395,22 @@ fn partial_merge_udaf(
     merging_accs: GlobalRef,
     acc_idx: Int32Array,
     merging_acc_idx: Int32Array,
-) -> Result<GlobalRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
-    let merging_acc_idx_field = Arc::new(Field::new("merging_acc_idx", DataType::Int32, false));
-
-    let struct_array = StructArray::from(vec![
-        (acc_idx_field.clone(), make_array(acc_idx.into_data())),
-        (
-            merging_acc_idx_field.clone(),
-            make_array(merging_acc_idx.into_data()),
-        ),
+) -> Result<()> {
+    let acc_idx: ArrayRef = Arc::new(acc_idx);
+    let merging_acc_idx: ArrayRef = Arc::new(merging_acc_idx);
+    let export_ffi_idx_array = StructArray::from(vec![
+        (int32_field(), acc_idx),
+        (int32_field(), merging_acc_idx),
     ]);
-    let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
+    let mut export_ffi_idx_array = FFI_ArrowArray::new(&export_ffi_idx_array.to_data());
 
     let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).merge(
         accs.as_obj(),
         merging_accs.as_obj(),
         &mut export_ffi_idx_array as *mut FFI_ArrowArray as i64,
-    )-> JObject)?;
+    )-> ())?;
 
-    jni_new_global_ref!(rows.as_obj())
+    Ok(())
 }
 
 fn final_merge_udaf(
@@ -476,9 +419,8 @@ fn final_merge_udaf(
     acc_idx: IdxSelection<'_>,
     result_schema: SchemaRef,
 ) -> Result<ArrayRef> {
-    let acc_idx_field = Arc::new(Field::new("acc_idx", DataType::Int32, false));
-    let acc_idx = acc_idx.to_int32_array().into_data();
-    let struct_array = StructArray::from(vec![(acc_idx_field.clone(), make_array(acc_idx))]);
+    let acc_idx: ArrayRef = Arc::new(Int32Array::from(acc_idx.to_int32_array()));
+    let struct_array = StructArray::from(vec![(int32_field(), acc_idx)]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
     let mut import_ffi_array = FFI_ArrowArray::empty();
     let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).eval(
