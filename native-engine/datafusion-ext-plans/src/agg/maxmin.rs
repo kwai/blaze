@@ -93,7 +93,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        batch_schema: SchemaRef,
+        _batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
         let old_heap_mem_used = accs.items_heap_mem_used(acc_idx);

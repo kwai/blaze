@@ -24,7 +24,7 @@ use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::{
     acc::AccColumnRef, avg, bloom_filter, brickhouse, collect, first, first_ignores_null, maxmin,
-    spark_hdaf_wrapper::SparkUDAFWrapper, sum, AggFunction,
+    spark_udaf_wrapper::SparkUDAFWrapper, sum, AggFunction,
 };
 
 pub trait Agg: Send + Sync + Debug {

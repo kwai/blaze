@@ -16,7 +16,6 @@
 package org.apache.spark.sql.blaze
 
 import scala.collection.JavaConverters._
-
 import org.apache.arrow.c.{ArrowArray, Data}
 import org.apache.arrow.vector.{IntVector, VectorSchemaRoot}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
@@ -25,13 +24,13 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateFunction, DeclarativeAggregate}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, JoinedRow, MutableProjection, Nondeterministic, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.{ArrowUtils, ArrowWriter}
-import org.apache.spark.sql.types.{DataType, IntegerType, StructField, StructType}
-import java.nio.ByteBuffer
+import org.apache.spark.sql.types.{DataType, DoubleType, IntegerType, StructField, StructType}
 
+import java.nio.ByteBuffer
 import scala.collection.mutable.ArrayBuffer
 
 case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
@@ -74,6 +73,10 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     toUnsafe
   }
 
+  private val outputSchema = {
+    val schema = StructType(Seq(StructField("", expr.dataType, expr.nullable)))
+    ArrowUtils.toArrowSchema(schema)
+  }
 
   private val indexSchema = {
     val schema = StructType(Seq(StructField("", IntegerType), StructField("", IntegerType)))
@@ -84,6 +87,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     val schema = StructType(Seq(StructField("", IntegerType)))
     ArrowUtils.toArrowSchema(schema)
   }
+
 
   val dataTypes: Seq[DataType] = expr.aggBufferAttributes.map(_.dataType)
 
@@ -161,7 +165,7 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
         VectorSchemaRoot.create(evalIndexSchema, batchAllocator),
-        VectorSchemaRoot.create(inputSchema, batchAllocator),
+        VectorSchemaRoot.create(outputSchema, batchAllocator),
         ArrowArray.wrap(importIdxFFIArrayPtr),
         ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>
         Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)

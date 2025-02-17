@@ -25,7 +25,7 @@ pub mod count;
 pub mod first;
 pub mod first_ignores_null;
 pub mod maxmin;
-mod spark_hdaf_wrapper;
+mod spark_udaf_wrapper;
 pub mod sum;
 
 use std::{fmt::Debug, sync::Arc};

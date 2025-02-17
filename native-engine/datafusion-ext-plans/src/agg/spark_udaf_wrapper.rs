@@ -21,7 +21,7 @@ use std::{
 
 use arrow::{
     array::{
-        as_struct_array, make_array, Array, ArrayAccessor, ArrayRef, AsArray, BinaryArray, Datum,
+        as_struct_array, make_array, Array, ArrayRef, AsArray, BinaryArray,
         Int32Array, Int32Builder, StructArray,
     },
     datatypes::{DataType, Field, Schema, SchemaRef},
@@ -135,7 +135,7 @@ impl Agg for SparkUDAFWrapper {
         })
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, _exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.buffer_schema.clone(),
@@ -261,7 +261,7 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
+         jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
             self.obj.as_obj(),
             len as i32,
         )-> ())
@@ -380,7 +380,7 @@ fn partial_update_udaf(
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&idx_struct_array.to_data());
     let mut export_ffi_batch_array = FFI_ArrowArray::new(&batch_struct_array.to_data());
 
-    let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).update(
+    jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).update(
         accs.as_obj(),
         &mut export_ffi_idx_array as *mut FFI_ArrowArray as i64,
         &mut export_ffi_batch_array as *mut FFI_ArrowArray as i64,
@@ -404,7 +404,7 @@ fn partial_merge_udaf(
     ]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&export_ffi_idx_array.to_data());
 
-    let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).merge(
+    jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).merge(
         accs.as_obj(),
         merging_accs.as_obj(),
         &mut export_ffi_idx_array as *mut FFI_ArrowArray as i64,
@@ -423,7 +423,7 @@ fn final_merge_udaf(
     let struct_array = StructArray::from(vec![(int32_field(), acc_idx)]);
     let mut export_ffi_idx_array = FFI_ArrowArray::new(&struct_array.to_data());
     let mut import_ffi_array = FFI_ArrowArray::empty();
-    let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).eval(
+    jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).eval(
         accs.as_obj(),
         &mut export_ffi_idx_array as *mut FFI_ArrowArray as i64,
         &mut import_ffi_array as *mut FFI_ArrowArray as i64,

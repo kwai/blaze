@@ -114,7 +114,7 @@ impl Agg for AggBloomFilter {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        batch_schema: SchemaRef,
+        _batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
         let bloom_filter = match acc_idx {
