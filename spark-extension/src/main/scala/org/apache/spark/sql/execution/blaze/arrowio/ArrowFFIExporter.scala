@@ -36,7 +36,7 @@ import java.util.concurrent.BlockingQueue
 
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
 
-class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
+class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) extends AutoCloseable {
   private val maxBatchNumRows = BlazeConf.BATCH_SIZE.intConf()
   private val maxBatchMemorySize = BlazeConf.SUGGESTED_BATCH_MEM_SIZE.intConf()
 
@@ -52,7 +52,7 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
   private val outputQueue: BlockingQueue[QueueState] = new ArrayBlockingQueue[QueueState](16)
   private val processingQueue: BlockingQueue[Unit] = new ArrayBlockingQueue[Unit](16)
   private var currentRoot: VectorSchemaRoot = _
-  startOutputThread()
+  private val outputThread = startOutputThread()
 
   def exportSchema(exportArrowSchemaPtr: Long): Unit = {
     Using.resource(ArrowSchema.wrap(exportArrowSchemaPtr)) { exportSchema =>
@@ -126,11 +126,6 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
       }
     })
 
-    def close(): Unit = {
-      thread.interrupt()
-      outputQueue.put(Finished) // to abort any pending call to exportNextBatch()
-    }
-
     if (tc != null) {
       tc.addTaskCompletionListener[Unit]((_: TaskContext) => close())
       tc.addTaskFailureListener((_, _) => close())
@@ -145,5 +140,10 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) {
     })
     thread.start()
     thread
+  }
+
+  override def close(): Unit = {
+    outputThread.interrupt()
+    outputQueue.put(Finished) // to abort any pending call to exportNextBatch()
   }
 }
