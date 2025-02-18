@@ -27,18 +27,8 @@ import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper}
-import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.expressions.aggregate.Average
-import org.apache.spark.sql.catalyst.expressions.aggregate.CollectList
-import org.apache.spark.sql.catalyst.expressions.aggregate.CollectSet
-import org.apache.spark.sql.catalyst.expressions.aggregate.Count
-import org.apache.spark.sql.catalyst.expressions.aggregate.Max
-import org.apache.spark.sql.catalyst.expressions.aggregate.Min
-import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
-import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.aggregate.First
+import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, Attribute, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, DayOfMonth, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetJsonObject, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, LeafExpression, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Month, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper, XxHash64, Year}
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, AggregateFunction, Average, CollectList, CollectSet, Count, DeclarativeAggregate, First, ImperativeAggregate, Max, Min, Sum, TypedImperativeAggregate}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
 import org.apache.spark.sql.catalyst.plans.FullOuter
@@ -50,12 +40,6 @@ import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.DayOfMonth
-import org.apache.spark.sql.catalyst.expressions.GetJsonObject
-import org.apache.spark.sql.catalyst.expressions.LeafExpression
-import org.apache.spark.sql.catalyst.expressions.Month
-import org.apache.spark.sql.catalyst.expressions.XxHash64
-import org.apache.spark.sql.catalyst.expressions.Year
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ScalarSubquery
@@ -1165,21 +1149,31 @@ object NativeConverters extends Logging {
               defaultValue = true) =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COMBINE_UNIQUE)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
-      // other DeclarativeAggregate
-      case declarative
-          if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass) =>
-        def fallbackToError: Expression => pb.PhysicalExprNode = { e =>
-          throw new NotImplementedError(s"unsupported declarative expression: (${e.getClass}) $e")
-        }
+      // other udaf aggFunction
+      case udaf
+          if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass)
+            || classOf[TypedImperativeAggregate[_]].isAssignableFrom(e.aggregateFunction.getClass) =>
         aggBuilder.setAggFunction(pb.AggFunction.DECLARATIVE)
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
 
-        val bound = declarative.mapChildren { p =>
-          val convertedChild = convertExpr(p)
-          val nextBindIndex = convertedChildren.size + declarative.inputAggBufferAttributes.length
-          convertedChildren.getOrElseUpdate(
-            convertedChild,
-            BoundReference(nextBindIndex, p.dataType, p.nullable))
+        val bound = udaf match {
+          case declarativeAggregate: DeclarativeAggregate =>
+            declarativeAggregate.mapChildren { p =>
+              val convertedChild = convertExpr(p)
+              val nextBindIndex =
+                convertedChildren.size + declarativeAggregate.inputAggBufferAttributes.length
+              convertedChildren.getOrElseUpdate(
+                convertedChild,
+                BoundReference(nextBindIndex, p.dataType, p.nullable))
+            }
+          case imperativeAggregate: ImperativeAggregate =>
+            imperativeAggregate.mapChildren { p =>
+              val convertedChild = convertExpr(p)
+              val nextBindIndex = convertedChildren.size
+              convertedChildren.getOrElseUpdate(
+                convertedChild,
+                BoundReference(nextBindIndex, p.dataType, p.nullable))
+            }
         }
 
         val paramsSchema = StructType(
@@ -1189,14 +1183,14 @@ object NativeConverters extends Logging {
 
         val serialized =
           serializeExpression(
-            bound.asInstanceOf[DeclarativeAggregate with Serializable],
+            bound.asInstanceOf[AggregateFunction with Serializable],
             paramsSchema)
 
         aggBuilder.setUdaf(
           pb.AggUdaf
             .newBuilder()
             .setSerialized(ByteString.copyFrom(serialized))
-            .setAggBufferSchema(NativeConverters.convertSchema(declarative.aggBufferSchema))
+            .setAggBufferSchema(NativeConverters.convertSchema(udaf.aggBufferSchema))
             .setReturnType(convertDataType(bound.dataType))
             .setReturnNullable(bound.nullable))
         aggBuilder.addAllChildren(convertedChildren.keys.asJava)

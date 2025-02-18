@@ -21,8 +21,8 @@ use std::{
 
 use arrow::{
     array::{
-        as_struct_array, make_array, Array, ArrayRef, AsArray, BinaryArray,
-        Int32Array, Int32Builder, StructArray,
+        as_struct_array, make_array, Array, ArrayRef, AsArray, BinaryArray, Int32Array,
+        Int32Builder, StructArray,
     },
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
@@ -261,7 +261,7 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-         jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
+        jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
             self.obj.as_obj(),
             len as i32,
         )-> ())

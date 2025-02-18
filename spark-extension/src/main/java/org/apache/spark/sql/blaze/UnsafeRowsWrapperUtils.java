@@ -16,9 +16,7 @@
 package org.apache.spark.sql.blaze;
 
 import java.nio.ByteBuffer;
-
 import org.apache.spark.sql.catalyst.InternalRow;
-
 import scala.collection.mutable.ArrayBuffer;
 
 public class UnsafeRowsWrapperUtils {
