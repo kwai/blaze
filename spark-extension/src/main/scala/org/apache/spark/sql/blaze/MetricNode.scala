@@ -24,8 +24,13 @@ case class MetricNode(
     metricValueHandler: Option[(String, Long) => Unit] = None)
     extends Logging {
 
-  def getChild(i: Int): MetricNode =
-    children(i)
+  def getChild(i: Int): MetricNode = {
+    if (i < children.length) {
+      children(i)
+    } else {
+      null
+    }
+  }
 
   def add(metricName: String, v: Long): Unit = {
     metricValueHandler.foreach(_.apply(metricName, v))
