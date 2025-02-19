@@ -444,11 +444,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             AggFunction::Declarative => {
                                 let udaf = agg_node.udaf.as_ref().unwrap();
                                 let serialized = udaf.serialized.clone();
-                                let agg_buffer_schema =
-                                    Arc::new(convert_required!(udaf.agg_buffer_schema)?);
                                 create_declarative_agg(
                                     serialized,
-                                    agg_buffer_schema,
                                     convert_required!(udaf.return_type)?,
                                     agg_children_exprs,
                                 )?

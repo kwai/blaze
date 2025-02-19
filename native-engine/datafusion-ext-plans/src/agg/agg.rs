@@ -312,13 +312,11 @@ pub fn create_agg(
 
 pub fn create_declarative_agg(
     serialized: Vec<u8>,
-    buffer_schema: SchemaRef,
     return_type: DataType,
     children: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<Arc<dyn Agg>> {
     Ok(Arc::new(SparkUDAFWrapper::try_new(
         serialized,
-        buffer_schema,
         return_type,
         children,
     )?))

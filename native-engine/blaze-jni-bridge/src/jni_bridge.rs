@@ -415,7 +415,6 @@ pub struct JavaClasses<'a> {
     pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
-    pub cBlazeUnsafeRowsWrapperUtils: BlazeUnsafeRowsWrapperUtils<'a>,
     pub cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager<'a>,
     pub cBlazeNativeParquetSinkUtils: BlazeNativeParquetSinkUtils<'a>,
     pub cBlazeBlockObject: BlazeBlockObject<'a>,
@@ -476,7 +475,6 @@ impl JavaClasses<'static> {
                 cSparkUDAFWrapperContext: SparkUDAFWrapperContext::new(env)?,
                 cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env)?,
                 cBlazeConf: BlazeConf::new(env)?,
-                cBlazeUnsafeRowsWrapperUtils: BlazeUnsafeRowsWrapperUtils::new(env)?,
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env)?,
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env)?,
                 cBlazeOnHeapSpillManager: BlazeOnHeapSpillManager::new(env)?,
@@ -1187,6 +1185,10 @@ pub struct SparkUDAFWrapperContext<'a> {
     pub method_merge_ret: ReturnType,
     pub method_eval: JMethodID,
     pub method_eval_ret: ReturnType,
+    pub method_serializeRows: JMethodID,
+    pub method_serializeRows_ret: ReturnType,
+    pub method_deserializeRows: JMethodID,
+    pub method_deserializeRows_ret: ReturnType,
 }
 impl<'a> SparkUDAFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFWrapperContext";
@@ -1226,6 +1228,18 @@ impl<'a> SparkUDAFWrapperContext<'a> {
                 "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
             )?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
+            method_serializeRows: env.get_method_id(
+                class,
+                "serializeRows",
+                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+            )?,
+            method_serializeRows_ret: ReturnType::Primitive(Primitive::Void),
+            method_deserializeRows: env.get_method_id(
+                class,
+                "deserializeRows",
+                "(Ljava/nio/ByteBuffer;)Lscala/collection/mutable/ArrayBuffer;",
+            )?,
+            method_deserializeRows_ret: ReturnType::Object,
         })
     }
 }
@@ -1251,37 +1265,6 @@ impl<'a> SparkUDTFWrapperContext<'a> {
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
             method_terminate: env.get_method_id(class, "terminate", "(IJ)V")?,
             method_terminate_ret: ReturnType::Primitive(Primitive::Void),
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct BlazeUnsafeRowsWrapperUtils<'a> {
-    pub class: JClass<'a>,
-    pub method_serialize: JStaticMethodID,
-    pub method_serialize_ret: ReturnType,
-    pub method_deserialize: JStaticMethodID,
-    pub method_deserialize_ret: ReturnType,
-}
-impl<'a> BlazeUnsafeRowsWrapperUtils<'a> {
-    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/UnsafeRowsWrapperUtils";
-
-    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeUnsafeRowsWrapperUtils<'a>> {
-        let class = get_global_jclass(env, Self::SIG_TYPE)?;
-        Ok(BlazeUnsafeRowsWrapperUtils {
-            class,
-            method_serialize: env.get_static_method_id(
-                class,
-                "serialize",
-                "(Lscala/collection/mutable/ArrayBuffer;IJJ)V",
-            )?,
-            method_serialize_ret: ReturnType::Primitive(Primitive::Void),
-            method_deserialize: env.get_static_method_id(
-                class,
-                "deserialize",
-                "(ILjava/nio/ByteBuffer;)Lscala/collection/mutable/ArrayBuffer;",
-            )?,
-            method_deserialize_ret: ReturnType::Object,
         })
     }
 }

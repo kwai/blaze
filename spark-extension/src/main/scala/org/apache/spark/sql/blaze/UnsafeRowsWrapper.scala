@@ -46,7 +46,7 @@ object UnsafeRowsWrapper extends Logging {
     ArrowUtils.toArrowSchema(schema)
   }
 
-  private val dataSchema = {
+  private val serializedRowSchema = {
     val schema = StructType(Seq(StructField("", BinaryType, nullable = false)))
     ArrowUtils.toArrowSchema(schema)
   }
@@ -84,7 +84,7 @@ object UnsafeRowsWrapper extends Logging {
 
     Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
-        VectorSchemaRoot.create(dataSchema, batchAllocator),
+        VectorSchemaRoot.create(serializedRowSchema, batchAllocator),
         VectorSchemaRoot.create(idxSchema, batchAllocator),
       ) { (exportDataRoot, importIdxRoot) =>
 

@@ -1190,7 +1190,6 @@ object NativeConverters extends Logging {
           pb.AggUdaf
             .newBuilder()
             .setSerialized(ByteString.copyFrom(serialized))
-            .setAggBufferSchema(NativeConverters.convertSchema(udaf.aggBufferSchema))
             .setReturnType(convertDataType(bound.dataType))
             .setReturnNullable(bound.nullable))
         aggBuilder.addAllChildren(convertedChildren.keys.asJava)
@@ -1300,13 +1299,13 @@ object NativeConverters extends Logging {
     }
   }
 
-  def deserializeExpression[E <: Expression](
-      serialized: Array[Byte]): (E with Serializable, StructType) = {
+  def deserializeExpression[E <: Expression, S <: Serializable](
+      serialized: Array[Byte]): (E with Serializable, S) = {
     Utils.tryWithResource(new ByteArrayInputStream(serialized)) { bis =>
       Utils.tryWithResource(new ObjectInputStream(bis)) { ois =>
         val expr = ois.readObject().asInstanceOf[E with Serializable]
-        val paramsSchema = ois.readObject().asInstanceOf[StructType]
-        (expr, paramsSchema)
+        val payload = ois.readObject().asInstanceOf[S with Serializable]
+        (expr, payload)
       }
     }
   }
