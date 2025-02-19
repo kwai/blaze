@@ -19,16 +19,25 @@ use poem::{http::StatusCode, IntoResponse, Request, RouteMethod};
 
 use super::Handler;
 
+#[cfg(feature = "jemalloc-pprof")]
+#[cfg(not(target_env = "msvc"))]
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
 #[poem::handler]
 async fn jemalloc_pprof_handler(_: &Request) -> poem::Result<Vec<u8>> {
     let pprof = dump_prof()
         .await
-        .map_err(|e| poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR))?;
+        .map_err(|e| poem::Error::from_string(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR))?;
     Ok(pprof)
 }
 
 async fn dump_prof() -> Result<Vec<u8>, Error> {
-    let mut prof_ctl = jemalloc_pprof::PROF_CTL.as_ref().unwrap().lock().await;
+    let prof_ctl = jemalloc_pprof::PROF_CTL
+        .as_ref()
+        .ok_or_else(|| Error::new(ErrorKind::Other, "JemallocProfCtl not initialized"))?;
+    let mut prof_ctl = prof_ctl.lock().await;
     let pprof = prof_ctl.dump_pprof().map_err(|err| {
         error!("Errors on jemalloc profile. err: {:?}", &err);
         Error::new(ErrorKind::Other, err)

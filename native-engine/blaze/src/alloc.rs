@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-#[cfg(feature = "jemalloc")]
+#[cfg(any(feature = "jemalloc", feature = "jemalloc-pprof"))]
 #[cfg(not(windows))]
 #[cfg_attr(not(windows), global_allocator)]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
