@@ -32,4 +32,17 @@ object ColumnarHelper {
       row.asInstanceOf[InternalRow]
     }
   }
+
+  def rootRowsArray(root: VectorSchemaRoot): Array[InternalRow] = {
+    val vectors = root.getFieldVectors.asScala.toArray
+    val numRows = root.getRowCount
+    val row = new BlazeColumnarBatchRow(
+      vectors.map(new BlazeArrowColumnVector(_).asInstanceOf[BlazeColumnVector])
+    )
+    (0 until numRows).map { rowId =>
+      row.rowId = rowId
+      row.asInstanceOf[InternalRow]
+    }.toArray
+  }
+
 }

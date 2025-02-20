@@ -38,7 +38,7 @@ use datafusion_ext_commons::{
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
-use datafusion_ext_commons::io::{read_bytes_into_vec, read_bytes_slice};
+use datafusion_ext_commons::io::read_bytes_into_vec;
 
 use crate::{
     agg::{

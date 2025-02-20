@@ -38,10 +38,11 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggregate
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-import org.apache.spark.sql.execution.blaze.arrowio.ColumnarHelper
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.execution.UnsafeRowSerializer
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
+import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
 import org.apache.spark.sql.types.{BinaryType, IntegerType, ObjectType, StructField, StructType}
 import org.apache.spark.util.ByteBufferInputStream
 
@@ -107,17 +108,16 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       rows: ArrayBuffer[InternalRow],
       importIdxFFIArrayPtr: Long,
       importBatchFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
-        VectorSchemaRoot.create(inputSchema, batchAllocator),
-        VectorSchemaRoot.create(indexTupleSchema, batchAllocator),
+        VectorSchemaRoot.create(inputSchema, ROOT_ALLOCATOR),
+        VectorSchemaRoot.create(indexTupleSchema, ROOT_ALLOCATOR),
         ArrowArray.wrap(importBatchFFIArrayPtr),
         ArrowArray.wrap(importIdxFFIArrayPtr)) { (inputRoot, idxRoot, inputArray, idxArray) =>
         // import into params root
-        Data.importIntoVectorSchemaRoot(batchAllocator, inputArray, inputRoot, dictionaryProvider)
-        val inputRows = ColumnarHelper.rootAsBatch(inputRoot)
+        Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, inputArray, inputRoot, dictionaryProvider)
+        val inputRows = ColumnarHelper.rootRowsArray(inputRoot)
 
-        Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
+        Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
         val fieldVectors = idxRoot.getFieldVectors.asScala
         val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
         val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
@@ -125,10 +125,9 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
         for (i <- 0 until idxRoot.getRowCount) {
           val rowIdx = rowIdxVector.get(i)
           val row = rows(rowIdx)
-          val input = paramsToUnsafe(inputRows.getRow(inputIdxVector.get(i)))
+          val input = paramsToUnsafe(inputRows(inputIdxVector.get(i)))
           rows(rowIdx) = aggEvaluator.update(row, input)
         }
-      }
     }
   }
 
@@ -136,97 +135,93 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
       rows: ArrayBuffer[InternalRow],
       mergeRows: ArrayBuffer[InternalRow],
       importIdxFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(indexTupleSchema, batchAllocator),
-        ArrowArray.wrap(importIdxFFIArrayPtr)) { (idxRoot, idxArray) =>
-        Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
-        val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
-        val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
+    Using.resources(
+      VectorSchemaRoot.create(indexTupleSchema, ROOT_ALLOCATOR),
+      ArrowArray.wrap(importIdxFFIArrayPtr)) { (idxRoot, idxArray) =>
+      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
+      val fieldVectors = idxRoot.getFieldVectors.asScala
+      val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
+      val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
 
-        for (i <- 0 until idxRoot.getRowCount) {
-          val rowIdx = rowIdxVector.get(i)
-          val mergeIdx = mergeIdxVector.get(i)
-          val row = rows(rowIdx)
-          val mergeRow = mergeRows(mergeIdx)
-          rows(rowIdx) = aggEvaluator.merge(row, mergeRow)
-        }
+      for (i <- 0 until idxRoot.getRowCount) {
+        val rowIdx = rowIdxVector.get(i)
+        val mergeIdx = mergeIdxVector.get(i)
+        val row = rows(rowIdx)
+        val mergeRow = mergeRows(mergeIdx)
+        rows(rowIdx) = aggEvaluator.merge(row, mergeRow)
       }
     }
   }
+
 
   def eval(
       rows: ArrayBuffer[InternalRow],
       importIdxFFIArrayPtr: Long,
       exportFFIArrayPtr: Long): Unit = {
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
-      Using.resources(
-        VectorSchemaRoot.create(indexSchema, batchAllocator),
-        VectorSchemaRoot.create(outputSchema, batchAllocator),
-        ArrowArray.wrap(importIdxFFIArrayPtr),
-        ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>
-        Data.importIntoVectorSchemaRoot(batchAllocator, idxArray, idxRoot, dictionaryProvider)
-        val fieldVectors = idxRoot.getFieldVectors.asScala
-        val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
+    Using.resources(
+      VectorSchemaRoot.create(indexSchema, ROOT_ALLOCATOR),
+      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
+      ArrowArray.wrap(importIdxFFIArrayPtr),
+      ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>
+      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
+      val fieldVectors = idxRoot.getFieldVectors.asScala
+      val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
 
-        // evaluate expression and write to output root
-        val outputWriter = ArrowWriter.create(outputRoot)
-        for (i <- 0 until idxRoot.getRowCount) {
-          val row = rows(rowIdxVector.get(i))
-          outputWriter.write(aggEvaluator.eval(row))
-        }
-        outputWriter.finish()
-
-        // export to output using root allocator
-        Data.exportVectorSchemaRoot(
-          ArrowUtils.rootAllocator,
-          outputRoot,
-          dictionaryProvider,
-          exportArray)
+      // evaluate expression and write to output root
+      val outputWriter = ArrowWriter.create(outputRoot)
+      for (i <- 0 until idxRoot.getRowCount) {
+        val row = rows(rowIdxVector.get(i))
+        outputWriter.write(aggEvaluator.eval(row))
       }
+      outputWriter.finish()
+
+      // export to output using root allocator
+      Data.exportVectorSchemaRoot(
+        ROOT_ALLOCATOR,
+        outputRoot,
+        dictionaryProvider,
+        exportArray)
     }
   }
+
 
   def serializeRows(
     rows: ArrayBuffer[InternalRow],
     importFFIArrayPtr: Long,
     exportFFIArrayPtr: Long): Unit = {
+    Using.resources(
+      VectorSchemaRoot.create(serializedRowSchema, ROOT_ALLOCATOR),
+      VectorSchemaRoot.create(indexSchema, ROOT_ALLOCATOR),
+    ) { (exportDataRoot, importIdxRoot) =>
 
-    Using.resource(ArrowUtils.newChildAllocator(getClass.getName)) { batchAllocator =>
       Using.resources(
-        VectorSchemaRoot.create(serializedRowSchema, batchAllocator),
-        VectorSchemaRoot.create(indexSchema, batchAllocator),
-      ) { (exportDataRoot, importIdxRoot) =>
+        ArrowArray.wrap(importFFIArrayPtr),
+        ArrowArray.wrap(exportFFIArrayPtr)) { (importArray, exportArray) =>
 
-        Using.resources(
-          ArrowArray.wrap(importFFIArrayPtr),
-          ArrowArray.wrap(exportFFIArrayPtr)) { (importArray, exportArray) =>
+        // import into params root
+        Data.importIntoVectorSchemaRoot(
+          ROOT_ALLOCATOR,
+          importArray,
+          importIdxRoot,
+          dictionaryProvider)
 
-          // import into params root
-          Data.importIntoVectorSchemaRoot(
-            batchAllocator,
-            importArray,
-            importIdxRoot,
-            dictionaryProvider)
+        // write serialized row into sequential raw bytes
+        val importIdxArray = importIdxRoot.getFieldVectors.get(0).asInstanceOf[IntVector]
+        val rowsIter = (0 until importIdxRoot.getRowCount).map(i => rows(importIdxArray.get(i)))
+        val serializedBytes = aggEvaluator.serializeRows(rowsIter)
 
-          // write serialized row into sequential raw bytes
-          val importIdxArray = importIdxRoot.getFieldVectors.get(0).asInstanceOf[IntVector]
-          val rowsIter = (0 until importIdxRoot.getRowCount).map(i => rows(importIdxArray.get(i)))
-          val serializedBytes = aggEvaluator.serializeRows(rowsIter)
-
-          // export serialized data as a single row batch using root allocator
-          val outputWriter = ArrowWriter.create(exportDataRoot)
-          outputWriter.write(InternalRow(serializedBytes))
-          outputWriter.finish()
-          Data.exportVectorSchemaRoot(
-            ArrowUtils.rootAllocator,
-            exportDataRoot,
-            dictionaryProvider,
-            exportArray)
-        }
+        // export serialized data as a single row batch using root allocator
+        val outputWriter = ArrowWriter.create(exportDataRoot)
+        outputWriter.write(InternalRow(serializedBytes))
+        outputWriter.finish()
+        Data.exportVectorSchemaRoot(
+          ROOT_ALLOCATOR,
+          exportDataRoot,
+          dictionaryProvider,
+          exportArray)
       }
     }
+
   }
 
   def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
