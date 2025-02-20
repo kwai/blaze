@@ -15,10 +15,9 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
-    io::Cursor,
+    io::{Cursor, Write},
     sync::Arc,
 };
-use std::io::Write;
 
 use arrow::{
     array::{
@@ -34,11 +33,11 @@ use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer, jni_new_global_ref,
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{
     downcast_any,
-    io::{read_len, write_len},
+    io::{read_bytes_into_vec, read_len, write_len},
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
-use datafusion_ext_commons::io::read_bytes_into_vec;
+use datafusion_ext_commons::io::read_bytes_slice;
 
 use crate::{
     agg::{
@@ -331,7 +330,6 @@ impl AccColumn for AccUnsafeRowsColumn {
     }
 
     fn spill(&self, idx: IdxSelection<'_>, buf: &mut SpillCompressedWriter) -> Result<()> {
-        log::info!("start spill!");
         let idx_array: ArrayRef = Arc::new(idx.to_int32_array());
         let struct_array =
             StructArray::from(RecordBatch::try_new(index_schema(), vec![idx_array])?);
@@ -352,31 +350,24 @@ impl AccColumn for AccUnsafeRowsColumn {
         let binary_array = downcast_any!(result_struct.column(0), BinaryArray)?;
         let data = binary_array.value(0);
         buf.write(data)?;
-        log::info!("end spill!");
         Ok(())
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        log::info!("start unspill!");
         let mut data = vec![];
-        let mut data_len = 0;
-        for i in 0.. num_rows {
-            let bytes_len = i32::from_be_bytes(data[data_len..][..4].try_into().unwrap()) as usize;
-            data_len += bytes_len + 4;
+        for i in 0..num_rows {
+            let bytes_len = read_bytes_slice(r, 4)?;
+            let length = i32::from_be_bytes(bytes_len.as_ref().try_into().unwrap());
+            data.extend_from_slice(bytes_len.as_ref());
+            data.extend_from_slice( read_bytes_slice(r, length as usize)?.as_ref());
         }
-        let mut data = vec![];
-        read_bytes_into_vec(r, &mut data, data_len)?;
-
         let data_buffer = jni_new_direct_byte_buffer!(data)?;
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .deserializeRows(data_buffer.as_obj()) -> JObject)?;
         self.obj = jni_new_global_ref!(rows.as_obj())?;
         self.num_rows = num_rows;
-
-        log::info!("start unspill!");
         Ok(())
     }
-
 }
 
 fn int32_field() -> FieldRef {

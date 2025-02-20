@@ -1152,7 +1152,8 @@ object NativeConverters extends Logging {
       // other udaf aggFunction
       case udaf
           if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass)
-            || classOf[TypedImperativeAggregate[_]].isAssignableFrom(e.aggregateFunction.getClass) =>
+            || classOf[TypedImperativeAggregate[_]].isAssignableFrom(
+              e.aggregateFunction.getClass) =>
         aggBuilder.setAggFunction(pb.AggFunction.DECLARATIVE)
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
 
