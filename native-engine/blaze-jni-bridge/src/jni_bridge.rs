@@ -1189,6 +1189,8 @@ pub struct SparkUDAFWrapperContext<'a> {
     pub method_serializeRows_ret: ReturnType,
     pub method_deserializeRows: JMethodID,
     pub method_deserializeRows_ret: ReturnType,
+    pub method_memUsed: JMethodID,
+    pub method_memUsed_ret: ReturnType,
 }
 impl<'a> SparkUDAFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFWrapperContext";
@@ -1240,6 +1242,12 @@ impl<'a> SparkUDAFWrapperContext<'a> {
                 "(Ljava/nio/ByteBuffer;)Lscala/collection/mutable/ArrayBuffer;",
             )?,
             method_deserializeRows_ret: ReturnType::Object,
+            method_memUsed: env.get_method_id(
+                class,
+                "memUsed",
+                "(Lscala/collection/mutable/ArrayBuffer;)I",
+            )?,
+            method_memUsed_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }

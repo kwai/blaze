@@ -232,6 +232,10 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
   def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
     aggEvaluator.deserializeRows(dataBuffer)
   }
+
+  def memUsed(rows: ArrayBuffer[InternalRow]): Int = {
+    aggEvaluator.memUsed(rows)
+  }
 }
 
 object SparkUDAFWrapperContext {
@@ -258,6 +262,8 @@ trait AggregateEvaluator extends Logging {
   def eval(row: InternalRow): InternalRow
   def serializeRows(rows: Seq[InternalRow]): Array[Byte]
   def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow]
+
+  def memUsed(rows: Seq[InternalRow]): Int
 }
 
 class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attribute])
@@ -318,6 +324,14 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
     }
     rows
   }
+
+  override def memUsed(rows: Seq[InternalRow]): Int = {
+    var mem = 0
+    for (row <- rows) {
+      mem = mem + row.asInstanceOf[UnsafeRow].getSizeInBytes
+    }
+    mem
+  }
 }
 
 class TypedImperativeEvaluator[T](agg: TypedImperativeAggregate[T], inputAttributes: Seq[Attribute])
@@ -372,5 +386,9 @@ class TypedImperativeEvaluator[T](agg: TypedImperativeAggregate[T], inputAttribu
       rows.append(row)
     }
     rows
+  }
+
+  override def memUsed(rows: Seq[InternalRow]): Int = {
+    rows.length * 192
   }
 }
