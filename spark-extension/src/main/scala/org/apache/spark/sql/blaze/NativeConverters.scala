@@ -843,13 +843,17 @@ object NativeConverters extends Logging {
           }
         }
       case e: Ceil if !e.dataType.isInstanceOf[DecimalType] =>
-        buildExprNode {
-          _.setTryCast(
-            pb.PhysicalTryCastNode
-              .newBuilder()
-              .setExpr(buildScalarFunction(pb.ScalarFunction.Ceil, e.children, e.dataType))
-              .setArrowType(convertDataType(e.dataType))
-              .build())
+        if (e.child.dataType.isInstanceOf[LongType]) {
+          convertExprWithFallback(e.child, isPruningExpr, fallback)
+        } else {
+          buildExprNode {
+            _.setTryCast(
+              pb.PhysicalTryCastNode
+                .newBuilder()
+                .setExpr(buildScalarFunction(pb.ScalarFunction.Ceil, e.children, e.dataType))
+                .setArrowType(convertDataType(e.dataType))
+                .build())
+          }
         }
 
       // TODO: datafusion's round() has different behavior from spark
