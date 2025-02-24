@@ -43,6 +43,7 @@ use crate::{
 };
 
 pub trait AccColumn: Send {
+    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn resize(&mut self, len: usize);
     fn shrink_to_fit(&mut self);
@@ -61,16 +62,12 @@ const _ACC_BYTES_SIZE_CHECKER: [(); 32] = [(); size_of::<AccBytes>()];
 
 pub struct AccTable {
     cols: Vec<AccColumnRef>,
-    num_records: usize,
 }
 
 impl AccTable {
     pub fn new(cols: Vec<Box<dyn AccColumn>>, num_records: usize) -> Self {
         assert!(cols.iter().all(|c| c.num_records() == num_records));
-        Self {
-            cols,
-            num_records: 0,
-        }
+        Self { cols }
     }
 
     pub fn cols(&self) -> &[AccColumnRef] {
@@ -81,13 +78,8 @@ impl AccTable {
         &mut self.cols
     }
 
-    pub fn num_records(&self) -> usize {
-        self.num_records
-    }
-
     pub fn resize(&mut self, num_records: usize) {
         self.cols.iter_mut().for_each(|c| c.resize(num_records));
-        self.num_records = num_records;
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -415,6 +407,10 @@ impl AccGenericColumn {
 }
 
 impl AccColumn for AccGenericColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

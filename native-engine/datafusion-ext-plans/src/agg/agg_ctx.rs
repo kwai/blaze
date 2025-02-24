@@ -31,12 +31,15 @@ use datafusion::{
     common::{cast::as_binary_array, Result},
     physical_expr::PhysicalExprRef,
 };
+use datafusion_ext_commons::{downcast_any, suggested_batch_mem_size};
+use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
 use crate::{
     agg::{
         acc::AccTable,
         agg::{Agg, IdxSelection},
+        spark_udaf_wrapper::{AccUDAFBufferRowsColumn, SparkUDAFMemTracker, SparkUDAFWrapper},
         AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
     },
     common::{
@@ -63,6 +66,8 @@ pub struct AggContext {
     pub partial_skipping_skip_spill: bool,
     pub is_expand_agg: bool,
     pub agg_expr_evaluator: CachedExprsEvaluator,
+    pub num_spill_buckets: OnceCell<usize>,
+    pub udaf_mem_tracker: OnceCell<SparkUDAFMemTracker>,
 }
 
 impl Debug for AggContext {
@@ -193,6 +198,8 @@ impl AggContext {
             partial_skipping_min_rows,
             partial_skipping_skip_spill,
             is_expand_agg,
+            num_spill_buckets: Default::default(),
+            udaf_mem_tracker: Default::default(),
         })
     }
 
@@ -226,6 +233,19 @@ impl AggContext {
         acc_table: &mut AccTable,
         acc_idx: IdxSelection,
     ) -> Result<()> {
+        self.update_batch_slice_to_acc_table(batch, 0, batch.num_rows(), acc_table, acc_idx)
+    }
+
+    pub fn update_batch_slice_to_acc_table(
+        &self,
+        batch: &RecordBatch,
+        batch_start_idx: usize,
+        batch_end_idx: usize,
+        acc_table: &mut AccTable,
+        acc_idx: IdxSelection,
+    ) -> Result<()> {
+        let batch_selection = IdxSelection::Range(batch_start_idx, batch_end_idx);
+
         // partial update
         if self.need_partial_update {
             let agg_exprs_batch = self.agg_expr_evaluator.filter_project(&batch)?;
@@ -243,14 +263,7 @@ impl AggContext {
                     input_arrays.push(vec![]);
                 }
             }
-
-            self.partial_update(
-                acc_table,
-                acc_idx,
-                &input_arrays,
-                IdxSelection::Range(0, batch.num_rows()),
-                batch.schema(),
-            )?;
+            self.partial_update(acc_table, acc_idx, &input_arrays, batch_selection)?;
         }
 
         // partial merge
@@ -270,13 +283,7 @@ impl AggContext {
                     acc_col.unfreeze_from_rows(&array, &mut offsets)?;
                 }
             }
-
-            self.partial_merge(
-                acc_table,
-                acc_idx,
-                &mut merging_acc_table,
-                IdxSelection::Range(0, batch.num_rows()),
-            )?;
+            self.partial_merge(acc_table, acc_idx, &mut merging_acc_table, batch_selection)?;
         }
         Ok(())
     }
@@ -288,9 +295,14 @@ impl AggContext {
     ) -> Result<Vec<ArrayRef>> {
         if self.need_final_merge {
             // output final merged value
+            let udaf_indices_cache = OnceCell::new();
             let mut agg_columns = vec![];
             for (agg, acc_col) in self.aggs.iter().zip(acc_table.cols_mut()) {
-                let values = agg.agg.final_merge(acc_col, idx)?;
+                let values = if let Ok(udaf_agg) = downcast_any!(agg.agg, SparkUDAFWrapper) {
+                    udaf_agg.final_merge_with_indices_cache(acc_col, idx, &udaf_indices_cache)?
+                } else {
+                    agg.agg.final_merge(acc_col, idx)?
+                };
                 agg_columns.push(values);
             }
             Ok(agg_columns)
@@ -328,12 +340,23 @@ impl AggContext {
         acc_idx: IdxSelection,
         input_arrays: &[Vec<ArrayRef>],
         input_idx: IdxSelection,
-        batch_schema: SchemaRef,
     ) -> Result<()> {
         if self.need_partial_update {
+            let udaf_indices_cache = OnceCell::new();
             for (agg_idx, agg) in &self.need_partial_update_aggs {
                 let acc_col = &mut acc_table.cols_mut()[*agg_idx];
-                agg.partial_update(acc_col, acc_idx, &input_arrays[*agg_idx], input_idx)?;
+                // use indices cached version for UDAFs
+                if let Ok(udaf_agg) = downcast_any!(agg, SparkUDAFWrapper) {
+                    udaf_agg.partial_update_with_indices_cache(
+                        acc_col,
+                        acc_idx,
+                        &input_arrays[*agg_idx],
+                        input_idx,
+                        &udaf_indices_cache,
+                    )?;
+                } else {
+                    agg.partial_update(acc_col, acc_idx, &input_arrays[*agg_idx], input_idx)?;
+                }
             }
         }
         Ok(())
@@ -347,10 +370,23 @@ impl AggContext {
         merging_acc_idx: IdxSelection,
     ) -> Result<()> {
         if self.need_partial_merge {
+            let udaf_indices_cache = OnceCell::new();
             for (agg_idx, agg) in &self.need_partial_merge_aggs {
                 let acc_col = &mut acc_table.cols_mut()[*agg_idx];
                 let merging_acc_col = &mut merging_acc_table.cols_mut()[*agg_idx];
-                agg.partial_merge(acc_col, acc_idx, merging_acc_col, merging_acc_idx)?;
+
+                // use indices cached version for UDAFs
+                if let Ok(udaf_agg) = downcast_any!(agg, SparkUDAFWrapper) {
+                    udaf_agg.partial_merge_with_indices_cache(
+                        acc_col,
+                        acc_idx,
+                        merging_acc_col,
+                        merging_acc_idx,
+                        &udaf_indices_cache,
+                    )?;
+                } else {
+                    agg.partial_merge(acc_col, acc_idx, merging_acc_col, merging_acc_idx)?;
+                }
             }
         }
         Ok(())
@@ -361,9 +397,18 @@ impl AggContext {
         acc_table: &AccTable,
         acc_idx: IdxSelection,
     ) -> Result<Vec<Vec<u8>>> {
+        let udaf_indices_cache = OnceCell::new();
         let mut vec = vec![vec![]; acc_idx.len()];
         for acc_col in acc_table.cols() {
-            acc_col.freeze_to_rows(acc_idx, &mut vec)?;
+            if let Ok(udaf_acc_col) = downcast_any!(acc_col, AccUDAFBufferRowsColumn) {
+                udaf_acc_col.freeze_to_rows_with_indices_cache(
+                    acc_idx,
+                    &mut vec,
+                    &udaf_indices_cache,
+                )?;
+            } else {
+                acc_col.freeze_to_rows(acc_idx, &mut vec)?;
+            }
         }
         Ok(vec)
     }
@@ -409,5 +454,20 @@ impl AggContext {
             .record_output(output_batch.num_rows());
         sender.send(output_batch).await;
         return Ok(());
+    }
+
+    pub fn num_spill_buckets(&self, mem_size: usize) -> usize {
+        *self
+            .num_spill_buckets
+            .get_or_init(|| (mem_size / suggested_batch_mem_size() / 2).max(16))
+    }
+
+    pub fn get_udaf_mem_tracker(&self) -> Option<&SparkUDAFMemTracker> {
+        self.udaf_mem_tracker.get()
+    }
+
+    pub fn get_or_try_init_udaf_mem_tracker(&self) -> Result<&SparkUDAFMemTracker> {
+        self.udaf_mem_tracker
+            .get_or_try_init(|| SparkUDAFMemTracker::try_new())
     }
 }

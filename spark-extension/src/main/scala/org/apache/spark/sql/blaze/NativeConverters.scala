@@ -1161,7 +1161,7 @@ object NativeConverters extends Logging {
           case Some(converted) => return converted
           case _ =>
         }
-        if (BlazeConf.UDAF_CONVERT_ENABLE.booleanConf()) {
+        if (BlazeConf.UDAF_FALLBACK_ENABLE.booleanConf()) {
           // other udaf aggFunction
           aggBuilder.setAggFunction(pb.AggFunction.UDAF)
           val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()

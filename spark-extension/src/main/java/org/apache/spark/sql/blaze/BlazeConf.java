@@ -35,7 +35,17 @@ public enum BlazeConf {
     INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", true),
 
     /// supports UDAF and other aggregate functions not implemented
-    UDAF_CONVERT_ENABLE("spark.blaze.enable.udaf", false),
+    UDAF_FALLBACK_ENABLE("spark.blaze.udafFallback.enable", true),
+
+    // TypedImperativeAggregate one row mem use size
+    SUGGESTED_UDAF_ROW_MEM_USAGE("spark.blaze.suggested.udaf.memUsedSize", 64),
+
+    /// number of udafs to trigger sort-based aggregation
+    /// by default, all aggs containing udafs are converted to sort-based
+    UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG("spark.blaze.udafFallback.num.udafs.trigger.sortAgg", 1),
+
+    // TypedImperativeAggregate one row mem use size
+    UDAF_FALLBACK_ESTIM_ROW_SIZE("spark.blaze.udafFallback.typedImperativeEstimatedRowSize", 256),
 
     /// ignore corrupted input files
     IGNORE_CORRUPTED_FILES("spark.files.ignoreCorruptFiles", false),
@@ -92,9 +102,6 @@ public enum BlazeConf {
     // use smaller batch memory size for kway merging since there will be multiple
     // batches in memory at the same time
     SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.blaze.suggested.batch.memSize.multiwayMerging", 1048576),
-
-    // TypedImperativeAggregate one row mem use size
-    SUGGESTED_UDAF_ROW_MEM_USAGE("spark.blaze.suggested.udaf.memUsedSize", 64),
 
     ORC_FORCE_POSITIONAL_EVOLUTION("spark.blaze.orc.force.positional.evolution", false);
 

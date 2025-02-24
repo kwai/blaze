@@ -19,10 +19,12 @@ use jni::objects::{JObject, JThrowable};
 
 mod alloc;
 mod exec;
-mod http;
 mod logging;
 mod metrics;
 mod rt;
+
+#[cfg(feature = "http-service")]
+mod http;
 
 fn handle_unwinded(err: Box<dyn Any + Send>) {
     // default handling:

@@ -136,21 +136,6 @@ impl ExecutionContext {
         }
 
         impl CoalesceStream {
-            pub fn new(
-                input: SendableRecordBatchStream,
-                batch_size: usize,
-                elapsed_compute: Time,
-            ) -> Self {
-                Self {
-                    input,
-                    staging_batches: vec![],
-                    staging_rows: 0,
-                    staging_batches_mem_size: 0,
-                    batch_size,
-                    elapsed_compute,
-                }
-            }
-
             fn coalesce(&mut self) -> Result<RecordBatch> {
                 // better concat_batches() implementation that releases old batch columns asap.
                 let schema = self.input.schema();

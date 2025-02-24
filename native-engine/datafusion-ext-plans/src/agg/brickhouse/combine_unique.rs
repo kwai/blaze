@@ -91,6 +91,10 @@ impl Agg for AggCombineUnique {
 
         idx_for_zipped! {
             ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                if acc_idx >= accs.num_records() {
+                    accs.resize(acc_idx + 1);
+                }
+
                 if list.is_valid(partial_arg_idx) {
                     let values = list.value(partial_arg_idx);
                     let values_len = values.len();

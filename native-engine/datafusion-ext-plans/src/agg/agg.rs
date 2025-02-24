@@ -79,26 +79,9 @@ impl IdxSelection<'_> {
 
     pub fn to_int32_vec(&self) -> Vec<i32> {
         let mut vec = Vec::with_capacity(self.len());
-
-        match self {
-            IdxSelection::Single(idx) => {
-                vec.push(*idx as i32);
-            }
-
-            IdxSelection::Indices(indices) => {
-                for &idx in *indices {
-                    vec.push(idx as i32);
-                }
-            }
-            IdxSelection::IndicesU32(indices_u32) => {
-                for &idx in *indices_u32 {
-                    vec.push(idx as i32);
-                }
-            }
-            IdxSelection::Range(start, end) => {
-                for idx in *start..*end {
-                    vec.push(idx as i32);
-                }
+        crate::idx_for! {
+            (idx in *self) => {
+                vec.push(idx as i32);
             }
         }
         vec
@@ -306,13 +289,11 @@ pub fn create_agg(
 
 pub fn create_udaf_agg(
     serialized: Vec<u8>,
-    input_schema: SchemaRef,
     return_type: DataType,
     children: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<Arc<dyn Agg>> {
     Ok(Arc::new(SparkUDAFWrapper::try_new(
         serialized,
-        input_schema,
         return_type,
         children,
     )?))

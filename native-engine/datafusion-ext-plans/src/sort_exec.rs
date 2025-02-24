@@ -106,8 +106,9 @@ impl SortExec {
 pub fn create_default_ascending_sort_exec(
     input: Arc<dyn ExecutionPlan>,
     key_exprs: &[PhysicalExprRef],
+    execution_plan_metrics: Option<ExecutionPlanMetricsSet>,
 ) -> Arc<dyn ExecutionPlan> {
-    Arc::new(SortExec::new(
+    let mut sort_exec = SortExec::new(
         input,
         key_exprs
             .iter()
@@ -117,7 +118,11 @@ pub fn create_default_ascending_sort_exec(
             })
             .collect(),
         None,
-    ))
+    );
+    if let Some(execution_plan_metrics) = execution_plan_metrics {
+        sort_exec.metrics = execution_plan_metrics;
+    }
+    Arc::new(sort_exec)
 }
 
 impl DisplayAs for SortExec {

@@ -117,6 +117,10 @@ impl Agg for AggBloomFilter {
         let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
         let bloom_filter = match acc_idx {
             IdxSelection::Single(idx) => {
+                if idx >= accs.num_records() {
+                    accs.resize(idx + 1);
+                }
+
                 let bf = &mut accs.bloom_filters[idx];
                 if bf.is_none() {
                     *bf = Some(SparkBloomFilter::new_with_expected_num_items(
@@ -168,15 +172,20 @@ impl Agg for AggBloomFilter {
 
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                let acc_bloom_filter = &mut accs.bloom_filters[acc_idx];
-                let merging_acc_bloom_filter = std::mem::replace(&mut merging_accs.bloom_filters[merging_acc_idx], None);
+                if acc_idx < accs.num_records() {
+                    let acc_bloom_filter = &mut accs.bloom_filters[acc_idx];
+                    let merging_acc_bloom_filter = std::mem::replace(&mut merging_accs.bloom_filters[merging_acc_idx], None);
 
-                if let Some(merging_acc_bloom_filter) = merging_acc_bloom_filter {
-                    if let Some(acc_bloom_filter) = acc_bloom_filter {
-                        acc_bloom_filter.put_all(&merging_acc_bloom_filter);
-                    } else {
-                        *acc_bloom_filter = Some(merging_acc_bloom_filter);
+                    if let Some(merging_acc_bloom_filter) = merging_acc_bloom_filter {
+                        if let Some(acc_bloom_filter) = acc_bloom_filter {
+                            acc_bloom_filter.put_all(&merging_acc_bloom_filter);
+                        } else {
+                            *acc_bloom_filter = Some(merging_acc_bloom_filter);
+                        }
                     }
+                } else {
+                    let merging_acc_bloom_filter = std::mem::replace(&mut merging_accs.bloom_filters[merging_acc_idx], None);
+                    accs.bloom_filters.push(merging_acc_bloom_filter);
                 }
             }
         }
@@ -209,6 +218,10 @@ struct AccBloomFilterColumn {
 }
 
 impl AccColumn for AccBloomFilterColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

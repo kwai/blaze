@@ -444,10 +444,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             AggFunction::Udaf => {
                                 let udaf = agg_node.udaf.as_ref().unwrap();
                                 let serialized = udaf.serialized.clone();
-                                let input_schema = Arc::new(convert_required!(udaf.input_schema)?);
                                 create_udaf_agg(
                                     serialized,
-                                    input_schema,
                                     convert_required!(udaf.return_type)?,
                                     agg_children_exprs,
                                 )?

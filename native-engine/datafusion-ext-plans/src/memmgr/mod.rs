@@ -242,10 +242,14 @@ pub trait MemConsumer: Send + Sync {
     where
         Self: Sized,
     {
-        update_consumer_mem_used_with_custom_updater(self, |consumer_status| {
-            let old_used = std::mem::replace(&mut consumer_status.mem_used, new_used);
-            (old_used, new_used)
-        })
+        update_consumer_mem_used_with_custom_updater(
+            self,
+            |consumer_status| {
+                let old_used = std::mem::replace(&mut consumer_status.mem_used, new_used);
+                (old_used, new_used)
+            },
+            false,
+        )
         .await
     }
 
@@ -253,17 +257,28 @@ pub trait MemConsumer: Send + Sync {
     where
         Self: Sized,
     {
-        update_consumer_mem_used_with_custom_updater(self, |consumer_status| {
-            let old_used = consumer_status.mem_used;
-            let new_used = if diff_used > 0 {
-                old_used.saturating_add(diff_used as usize)
-            } else {
-                old_used.saturating_sub(-diff_used as usize)
-            };
-            consumer_status.mem_used = new_used;
-            (old_used, new_used)
-        })
+        update_consumer_mem_used_with_custom_updater(
+            self,
+            |consumer_status| {
+                let old_used = consumer_status.mem_used;
+                let new_used = if diff_used > 0 {
+                    old_used.saturating_add(diff_used as usize)
+                } else {
+                    old_used.saturating_sub(-diff_used as usize)
+                };
+                consumer_status.mem_used = new_used;
+                (old_used, new_used)
+            },
+            false,
+        )
         .await
+    }
+
+    async fn force_spill(&self) -> Result<()>
+    where
+        Self: Sized,
+    {
+        update_consumer_mem_used_with_custom_updater(self, |_| (0, 0), true).await
     }
 
     /// spills this consumer and returns used memory after spilling
@@ -275,6 +290,7 @@ pub trait MemConsumer: Send + Sync {
 async fn update_consumer_mem_used_with_custom_updater(
     consumer: &dyn MemConsumer,
     updater: impl Fn(&mut MemConsumerStatus) -> (usize, usize),
+    forced: bool,
 ) -> Result<()> {
     let consumer_name = consumer.name();
     let mm = MemManager::get();
@@ -297,6 +313,10 @@ async fn update_consumer_mem_used_with_custom_updater(
         let (old_used, new_used) = updater(&mut consumer_status);
         let spillable = consumer_status.spillable;
         let diff_used = new_used as isize - old_used as isize;
+        assert!(
+            !forced || spillable,
+            "forced spilling an unspillable memory consumer"
+        );
 
         // update mm status
         let total_used = mm_status.update_total_used_with_diff(diff_used);
@@ -307,8 +327,8 @@ async fn update_consumer_mem_used_with_custom_updater(
             mm_status.mem_spillables = (mm_status.mem_spillables as isize + diff_used) as usize;
         }
 
-        // consumer is unspillable/shrinking, no need to wait or spill
-        if old_used == 0 || !spillable || new_used < old_used {
+        // consumer is empty or unspillable, no need to wait or spill
+        if !forced && (old_used == 0 || new_used == 0 || !spillable) {
             return Ok(());
         }
 
@@ -332,11 +352,12 @@ async fn update_consumer_mem_used_with_custom_updater(
 
         let total_overflowed = total_used > total_managed;
         let consumer_overflowed = new_used > consumer_mem_max;
-        let operation = if (total_overflowed || consumer_overflowed)
-            && new_used > MIN_TRIGGER_SIZE
-            && new_used > old_used
+        let operation = if forced
+            || ((total_overflowed || consumer_overflowed)
+                && new_used > MIN_TRIGGER_SIZE
+                && new_used > old_used)
         {
-            if spillable && new_used > consumer_mem_min {
+            if forced || (spillable && new_used > consumer_mem_min) {
                 Operation::Spill
             } else {
                 Operation::Wait

@@ -442,6 +442,7 @@ pub struct JavaClasses<'a> {
     pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
     pub cSparkUDAFWrapperContext: SparkUDAFWrapperContext<'a>,
     pub cSparkUDTFWrapperContext: SparkUDTFWrapperContext<'a>,
+    pub cSparkUDAFMemTracker: SparkUDAFMemTracker<'a>,
     pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
     pub cBlazeCallNativeWrapper: BlazeCallNativeWrapper<'a>,
@@ -504,6 +505,7 @@ impl JavaClasses<'static> {
                 cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)?,
                 cSparkUDAFWrapperContext: SparkUDAFWrapperContext::new(env)?,
                 cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env)?,
+                cSparkUDAFMemTracker: SparkUDAFMemTracker::new(env)?,
                 cBlazeConf: BlazeConf::new(env)?,
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env)?,
                 cBlazeCallNativeWrapper: BlazeCallNativeWrapper::new(env)?,
@@ -1219,8 +1221,10 @@ pub struct SparkUDAFWrapperContext<'a> {
     pub method_serializeRows_ret: ReturnType,
     pub method_deserializeRows: JMethodID,
     pub method_deserializeRows_ret: ReturnType,
-    pub method_memUsed: JMethodID,
-    pub method_memUsed_ret: ReturnType,
+    pub method_spill: JMethodID,
+    pub method_spill_ret: ReturnType,
+    pub method_unspill: JMethodID,
+    pub method_unspill_ret: ReturnType,
 }
 impl<'a> SparkUDAFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFWrapperContext";
@@ -1272,12 +1276,18 @@ impl<'a> SparkUDAFWrapperContext<'a> {
                 "(Ljava/nio/ByteBuffer;)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
             )?,
             method_deserializeRows_ret: ReturnType::Object,
-            method_memUsed: env.get_method_id(
+            method_spill: env.get_method_id(
                 class,
-                "memUsed",
-                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;)I",
+                "spill",
+                "(Lorg/apache/spark/sql/blaze/SparkUDAFMemTracker;Lorg/apache/spark/sql/blaze/BufferRowsColumn;[IJ)I",
             )?,
-            method_memUsed_ret: ReturnType::Primitive(Primitive::Int),
+            method_spill_ret: ReturnType::Primitive(Primitive::Int),
+            method_unspill: env.get_method_id(
+                class,
+                "unspill",
+                "(Lorg/apache/spark/sql/blaze/SparkUDAFMemTracker;IJ)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
+            )?,
+            method_unspill_ret: ReturnType::Object,
         })
     }
 }
@@ -1303,6 +1313,39 @@ impl<'a> SparkUDTFWrapperContext<'a> {
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
             method_terminate: env.get_method_id(class, "terminate", "(IJ)V")?,
             method_terminate_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkUDAFMemTracker<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+    pub method_addColumn: JMethodID,
+    pub method_addColumn_ret: ReturnType,
+    pub method_reset: JMethodID,
+    pub method_reset_ret: ReturnType,
+    pub method_updateUsed: JMethodID,
+    pub method_updateUsed_ret: ReturnType,
+}
+impl<'a> SparkUDAFMemTracker<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFMemTracker";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDAFMemTracker<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkUDAFMemTracker {
+            class,
+            ctor: env.get_method_id(class, "<init>", "()V")?,
+            method_addColumn: env.get_method_id(
+                class,
+                "addColumn",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;)V",
+            )?,
+            method_addColumn_ret: ReturnType::Primitive(Primitive::Void),
+            method_reset: env.get_method_id(class, "reset", "()V")?,
+            method_reset_ret: ReturnType::Primitive(Primitive::Void),
+            method_updateUsed: env.get_method_id(class, "updateUsed", "()Z")?,
+            method_updateUsed_ret: ReturnType::Primitive(Primitive::Boolean),
         })
     }
 }
