@@ -18,30 +18,20 @@ package org.apache.spark.sql.execution.blaze.columnar
 import scala.collection.JavaConverters._
 
 import org.apache.arrow.vector.VectorSchemaRoot
-import org.apache.spark.sql.catalyst.InternalRow
 
 object ColumnarHelper {
-  def rootRowsIter(root: VectorSchemaRoot): Iterator[InternalRow] = {
-    val vectors = root.getFieldVectors.asScala.toArray
+  def rootRowsIter(root: VectorSchemaRoot): Iterator[BlazeColumnarBatchRow] = {
+    val row = rootRowReuseable(root)
     val numRows = root.getRowCount
-    val row = new BlazeColumnarBatchRow(
-      vectors.map(new BlazeArrowColumnVector(_).asInstanceOf[BlazeColumnVector]))
-
     Range(0, numRows).iterator.map { rowId =>
       row.rowId = rowId
-      row.asInstanceOf[InternalRow]
+      row
     }
   }
 
-  def rootRowsArray(root: VectorSchemaRoot): Array[InternalRow] = {
+  def rootRowReuseable(root: VectorSchemaRoot): BlazeColumnarBatchRow = {
     val vectors = root.getFieldVectors.asScala.toArray
-    val numRows = root.getRowCount
-    val row = new BlazeColumnarBatchRow(
+    new BlazeColumnarBatchRow(
       vectors.map(new BlazeArrowColumnVector(_).asInstanceOf[BlazeColumnVector]))
-    (0 until numRows).map { rowId =>
-      row.rowId = rowId
-      row.asInstanceOf[InternalRow]
-    }.toArray
   }
-
 }

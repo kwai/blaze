@@ -75,7 +75,7 @@ pub enum AggFunction {
     BloomFilter,
     BrickhouseCollect,
     BrickhouseCombineUnique,
-    Declarative,
+    Udaf,
 }
 
 #[derive(Debug, Clone)]

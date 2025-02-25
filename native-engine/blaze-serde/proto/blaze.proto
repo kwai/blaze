@@ -141,7 +141,7 @@ enum AggFunction {
   BLOOM_FILTER = 9;
   BRICKHOUSE_COLLECT = 1000;
   BRICKHOUSE_COMBINE_UNIQUE = 1001;
-  DECLARATIVE = 1002;
+  UDAF = 1002;
 }
 
 message PhysicalAggExprNode {
@@ -606,10 +606,10 @@ message FetchLimit {
 
 message PhysicalRepartition {
   oneof RepartitionType {
-      PhysicalSingleRepartition single_repartition = 1;
-      PhysicalHashRepartition hash_repartition = 2;
-      PhysicalRoundRobinRepartition round_robin_repartition = 3;
-      PhysicalRangeRepartition range_repartition = 4;
+    PhysicalSingleRepartition single_repartition = 1;
+    PhysicalHashRepartition hash_repartition = 2;
+    PhysicalRoundRobinRepartition round_robin_repartition = 3;
+    PhysicalRangeRepartition range_repartition = 4;
   }
 }
 

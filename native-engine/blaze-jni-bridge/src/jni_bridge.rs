@@ -228,9 +228,39 @@ macro_rules! jni_get_byte_array_region {
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             $crate::jni_map_error_with_env!(
                 env,
-                env.get_byte_array_region($value, $start as i32, unsafe {
+                env.get_byte_array_region($value.cast(), $start as i32, unsafe {
                     std::mem::transmute::<_, &mut [i8]>($buf)
                 })
+            )
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_get_byte_array_len {
+    ($value:expr) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(
+                env,
+                env.get_array_length($value.cast()).map(|s| s as usize)
+            )
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_new_prim_array {
+    ($ty:ident, $value:expr) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(
+                env,
+                paste::paste! {env.[<new_ $ty _array>]($value.len() as i32)}
+                    .and_then(|array| {
+                        let value = unsafe { std::mem::transmute($value) };
+                        paste::paste! {env.[<set_ $ty _array_region>](array, 0, value)}
+                            .map(|_| array)
+                    })
+                    .map(|s| $crate::jni_bridge::LocalRef(unsafe { JObject::from_raw(s.into()) }))
             )
         })
     }};
@@ -1203,49 +1233,49 @@ impl<'a> SparkUDAFWrapperContext<'a> {
             method_initialize: env.get_method_id(
                 class,
                 "initialize",
-                "(I)Lscala/collection/mutable/ArrayBuffer;",
+                "(I)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
             )?,
             method_initialize_ret: ReturnType::Object,
             method_resize: env.get_method_id(
                 class,
                 "resize",
-                "(Lscala/collection/mutable/ArrayBuffer;I)V",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;I)V",
             )?,
             method_resize_ret: ReturnType::Primitive(Primitive::Void),
             method_update: env.get_method_id(
                 class,
                 "update",
-                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;J[J)V",
             )?,
             method_update_ret: ReturnType::Primitive(Primitive::Void),
             method_merge: env.get_method_id(
                 class,
                 "merge",
-                "(Lscala/collection/mutable/ArrayBuffer;Lscala/collection/mutable/ArrayBuffer;J)V",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;Lorg/apache/spark/sql/blaze/BufferRowsColumn;[J)V",
             )?,
             method_merge_ret: ReturnType::Primitive(Primitive::Void),
             method_eval: env.get_method_id(
                 class,
                 "eval",
-                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;[IJ)V",
             )?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
             method_serializeRows: env.get_method_id(
                 class,
                 "serializeRows",
-                "(Lscala/collection/mutable/ArrayBuffer;JJ)V",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;[I)[B",
             )?,
-            method_serializeRows_ret: ReturnType::Primitive(Primitive::Void),
+            method_serializeRows_ret: ReturnType::Array,
             method_deserializeRows: env.get_method_id(
                 class,
                 "deserializeRows",
-                "(Ljava/nio/ByteBuffer;)Lscala/collection/mutable/ArrayBuffer;",
+                "(Ljava/nio/ByteBuffer;)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
             )?,
             method_deserializeRows_ret: ReturnType::Object,
             method_memUsed: env.get_method_id(
                 class,
                 "memUsed",
-                "(Lscala/collection/mutable/ArrayBuffer;)I",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;)I",
             )?,
             method_memUsed_ret: ReturnType::Primitive(Primitive::Int),
         })

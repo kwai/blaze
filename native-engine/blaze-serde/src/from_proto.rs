@@ -60,7 +60,7 @@ use datafusion_ext_exprs::{
 };
 use datafusion_ext_plans::{
     agg::{
-        agg::{create_agg, create_declarative_agg},
+        agg::{create_agg, create_udaf_agg},
         AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
     },
     agg_exec::AggExec,
@@ -441,10 +441,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             .map(|expr| try_parse_physical_expr(expr, &input_schema))
                             .collect::<Result<Vec<_>, _>>()?;
                         let agg = match AggFunction::from(agg_function) {
-                            AggFunction::Declarative => {
+                            AggFunction::Udaf => {
                                 let udaf = agg_node.udaf.as_ref().unwrap();
                                 let serialized = udaf.serialized.clone();
-                                create_declarative_agg(
+                                create_udaf_agg(
                                     serialized,
                                     convert_required!(udaf.return_type)?,
                                     agg_children_exprs,
@@ -571,8 +571,8 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 protobuf::AggFunction::BrickhouseCombineUnique => {
                                     WindowFunction::Agg(AggFunction::BrickhouseCombineUnique)
                                 }
-                                protobuf::AggFunction::Declarative => {
-                                    WindowFunction::Agg(AggFunction::Declarative)
+                                protobuf::AggFunction::Udaf => {
+                                    WindowFunction::Agg(AggFunction::Udaf)
                                 }
                             },
                         };
@@ -849,16 +849,16 @@ fn try_parse_physical_expr(
                                     // cast list values to expr type
                                     e if downcast_any!(e, Literal).is_ok()
                                         && e.data_type(input_schema)? != dt =>
-                                    {
-                                        match TryCastExpr::new(e, dt.clone()).evaluate(
-                                            &RecordBatch::new_empty(input_schema.clone()),
-                                        )? {
-                                            ColumnarValue::Scalar(scalar) => {
-                                                Arc::new(Literal::new(scalar))
+                                        {
+                                            match TryCastExpr::new(e, dt.clone()).evaluate(
+                                                &RecordBatch::new_empty(input_schema.clone()),
+                                            )? {
+                                                ColumnarValue::Scalar(scalar) => {
+                                                    Arc::new(Literal::new(scalar))
+                                                }
+                                                ColumnarValue::Array(_) => unreachable!(),
                                             }
-                                            ColumnarValue::Array(_) => unreachable!(),
                                         }
-                                    }
                                     other => other,
                                 }
                             })

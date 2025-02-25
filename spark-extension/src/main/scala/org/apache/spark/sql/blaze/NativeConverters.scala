@@ -1151,10 +1151,11 @@ object NativeConverters extends Logging {
         aggBuilder.addChildren(convertExpr(udaf.children.head))
       // other udaf aggFunction
       case udaf
-          if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass)
-            || classOf[TypedImperativeAggregate[_]].isAssignableFrom(
-              e.aggregateFunction.getClass) =>
-        aggBuilder.setAggFunction(pb.AggFunction.DECLARATIVE)
+        if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass)
+          || (udaf.getClass.getName != "org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate" &&
+          classOf[TypedImperativeAggregate[_]].isAssignableFrom(
+            e.aggregateFunction.getClass)) =>
+        aggBuilder.setAggFunction(pb.AggFunction.UDAF)
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
 
         val bound = udaf match {

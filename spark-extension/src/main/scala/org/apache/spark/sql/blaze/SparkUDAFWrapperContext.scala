@@ -15,13 +15,14 @@
  */
 package org.apache.spark.sql.blaze
 
-import java.io.{ByteArrayOutputStream, DataOutputStream}
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.nio.ByteBuffer
-import scala.collection.JavaConverters._
+
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.Data
-import org.apache.arrow.vector.IntVector
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
@@ -34,23 +35,22 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.JoinedRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggregate
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.execution.UnsafeRowSerializer
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
-import org.apache.spark.sql.types.{BinaryType, IntegerType, ObjectType, StructField, StructType}
+import org.apache.spark.sql.types.StructField
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.ByteBufferInputStream
 
-case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
-  import org.apache.spark.sql.blaze.SparkUDAFWrapperContext._
-
-  private val (expr, List(javaParamsSchema, javaBufferSchema)) =
-    NativeConverters.deserializeExpression[AggregateFunction, List[StructType]]({
+case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
+  private val (expr, javaParamsSchema) =
+    NativeConverters.deserializeExpression[AggregateFunction, StructType]({
       val bytes = new Array[Byte](serialized.remaining())
       serialized.get(bytes)
       bytes
@@ -72,103 +72,70 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     case _ =>
   }
 
-  private val aggEvaluator = expr match {
-    case declarative: DeclarativeAggregate =>
-      new DeclarativeEvaluator(declarative, inputAttributes)
-    case imperative: TypedImperativeAggregate[_] =>
-      new TypedImperativeEvaluator(imperative)
+  private val aggEvaluator = {
+    val evaluator = expr match {
+      case declarative: DeclarativeAggregate =>
+        new DeclarativeEvaluator(declarative, inputAttributes)
+      case imperative: TypedImperativeAggregate[B] =>
+        new TypedImperativeEvaluator(imperative)
+    }
+    evaluator.asInstanceOf[AggregateEvaluator[B]]
   }
 
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
 
   private val inputSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
-  private val paramsToUnsafe = {
-    val toUnsafe = UnsafeProjection.create(javaParamsSchema)
-    toUnsafe.initialize(Option(TaskContext.get()).map(_.partitionId()).getOrElse(0))
-    toUnsafe
-  }
 
-  def initialize(numRow: Int): ArrayBuffer[InternalRow] = {
-    val rows = ArrayBuffer[InternalRow]()
-    resize(rows, numRow)
+  def initialize(numRow: Int): BufferRowsColumn[B] = {
+    val rows = aggEvaluator.createEmptyColumn()
+    rows.resize(numRow, aggEvaluator.initialize())
     rows
   }
 
-  def resize(rows: ArrayBuffer[InternalRow], len: Int): Unit = {
-    if (rows.length < len) {
-      rows.append(Range(rows.length, len).map(_ => aggEvaluator.initialize()): _*)
-    } else {
-      rows.trimEnd(rows.length - len)
-    }
+  def resize(rows: BufferRowsColumn[B], len: Int): Unit = {
+    rows.resize(len, aggEvaluator.initialize())
   }
 
   def update(
-      rows: ArrayBuffer[InternalRow],
-      importIdxFFIArrayPtr: Long,
-      importBatchFFIArrayPtr: Long): Unit = {
+              rows: BufferRowsColumn[B],
+              importBatchFFIArrayPtr: Long,
+              zippedIndices: Array[Long]): Unit = {
     Using.resources(
       VectorSchemaRoot.create(inputSchema, ROOT_ALLOCATOR),
-      VectorSchemaRoot.create(indexTupleSchema, ROOT_ALLOCATOR),
-      ArrowArray.wrap(importBatchFFIArrayPtr),
-      ArrowArray.wrap(importIdxFFIArrayPtr)) { (inputRoot, idxRoot, inputArray, idxArray) =>
+      ArrowArray.wrap(importBatchFFIArrayPtr)) { (inputRoot, inputArray) =>
       // import into params root
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, inputArray, inputRoot, dictionaryProvider)
-      val inputRows = ColumnarHelper.rootRowsArray(inputRoot)
+      val inputRow = ColumnarHelper.rootRowReuseable(inputRoot)
 
-      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
-      val fieldVectors = idxRoot.getFieldVectors.asScala
-      val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
-      val inputIdxVector = fieldVectors(1).asInstanceOf[IntVector]
-
-      for (i <- 0 until idxRoot.getRowCount) {
-        val rowIdx = rowIdxVector.get(i)
-        val row = rows(rowIdx)
-        val input = paramsToUnsafe(inputRows(inputIdxVector.get(i)))
-        rows(rowIdx) = aggEvaluator.update(row, input)
+      for (zippedIdx <- zippedIndices) {
+        val rowIdx = ((zippedIdx >> 32) & 0xffffffff).toInt
+        val updatingRowIdx = ((zippedIdx >> 0) & 0xffffffff).toInt
+        inputRow.rowId = updatingRowIdx
+        rows.update(rowIdx, row => aggEvaluator.update(row, inputRow))
       }
     }
   }
 
   def merge(
-      rows: ArrayBuffer[InternalRow],
-      mergeRows: ArrayBuffer[InternalRow],
-      importIdxFFIArrayPtr: Long): Unit = {
-    Using.resources(
-      VectorSchemaRoot.create(indexTupleSchema, ROOT_ALLOCATOR),
-      ArrowArray.wrap(importIdxFFIArrayPtr)) { (idxRoot, idxArray) =>
-      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
-      val fieldVectors = idxRoot.getFieldVectors.asScala
-      val rowIdxVector = fieldVectors(0).asInstanceOf[IntVector]
-      val mergeIdxVector = fieldVectors(1).asInstanceOf[IntVector]
+             rows: BufferRowsColumn[B],
+             mergeRows: BufferRowsColumn[B],
+             zippedIndices: Array[Long]): Unit = {
 
-      for (i <- 0 until idxRoot.getRowCount) {
-        val rowIdx = rowIdxVector.get(i)
-        val mergeIdx = mergeIdxVector.get(i)
-        val row = rows(rowIdx)
-        val mergeRow = mergeRows(mergeIdx)
-        rows(rowIdx) = aggEvaluator.merge(row, mergeRow)
-      }
+    for (zippedIdx <- zippedIndices) {
+      val rowIdx = ((zippedIdx >> 32) & 0xffffffff).toInt
+      val mergingRowIdx = ((zippedIdx >> 0) & 0xffffffff).toInt
+      rows.update(rowIdx, aggEvaluator.merge(_, mergeRows.row(mergingRowIdx)))
     }
   }
 
-  def eval(
-      rows: ArrayBuffer[InternalRow],
-      importIdxFFIArrayPtr: Long,
-      exportFFIArrayPtr: Long): Unit = {
+  def eval(rows: BufferRowsColumn[B], indices: Array[Int], exportFFIArrayPtr: Long): Unit = {
     Using.resources(
-      VectorSchemaRoot.create(indexSchema, ROOT_ALLOCATOR),
       VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
-      ArrowArray.wrap(importIdxFFIArrayPtr),
-      ArrowArray.wrap(exportFFIArrayPtr)) { (idxRoot, outputRoot, idxArray, exportArray) =>
-      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, idxArray, idxRoot, dictionaryProvider)
-      val fieldVectors = idxRoot.getFieldVectors.asScala
-      val rowIdxVector = fieldVectors.head.asInstanceOf[IntVector]
-
+      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
       // evaluate expression and write to output root
       val outputWriter = ArrowWriter.create(outputRoot)
-      for (i <- 0 until idxRoot.getRowCount) {
-        val row = rows(rowIdxVector.get(i))
-        outputWriter.write(aggEvaluator.eval(row))
+      for (i <- indices) {
+        outputWriter.write(aggEvaluator.eval(rows.row(i)))
       }
       outputWriter.finish()
 
@@ -177,81 +144,74 @@ case class SparkUDAFWrapperContext(serialized: ByteBuffer) extends Logging {
     }
   }
 
-  def serializeRows(
-      rows: ArrayBuffer[InternalRow],
-      importFFIArrayPtr: Long,
-      exportFFIArrayPtr: Long): Unit = {
-    Using.resources(
-      VectorSchemaRoot.create(serializedRowSchema, ROOT_ALLOCATOR),
-      VectorSchemaRoot.create(indexSchema, ROOT_ALLOCATOR)) { (exportDataRoot, importIdxRoot) =>
-      Using.resources(ArrowArray.wrap(importFFIArrayPtr), ArrowArray.wrap(exportFFIArrayPtr)) {
-        (importArray, exportArray) =>
-          // import into params root
-          Data.importIntoVectorSchemaRoot(
-            ROOT_ALLOCATOR,
-            importArray,
-            importIdxRoot,
-            dictionaryProvider)
+  def serializeRows(rows: BufferRowsColumn[B], indices: Array[Int]): Array[Byte] = {
+    aggEvaluator.serializeRows(indices.iterator.map(i => rows.row(i)))
+  }
 
-          // write serialized row into sequential raw bytes
-          val importIdxArray = importIdxRoot.getFieldVectors.get(0).asInstanceOf[IntVector]
-          val rowsIter = (0 until importIdxRoot.getRowCount).map(i => rows(importIdxArray.get(i)))
-          val serializedBytes = aggEvaluator.serializeRows(rowsIter)
+  def deserializeRows(dataBuffer: ByteBuffer): BufferRowsColumn[B] = {
+    val rows = aggEvaluator.createEmptyColumn()
+    rows.append(aggEvaluator.deserializeRows(dataBuffer): _*)
+    rows
+  }
 
-          // export serialized data as a single row batch using root allocator
-          val outputWriter = ArrowWriter.create(exportDataRoot)
-          outputWriter.write(InternalRow(serializedBytes))
-          outputWriter.finish()
-          Data.exportVectorSchemaRoot(
-            ROOT_ALLOCATOR,
-            exportDataRoot,
-            dictionaryProvider,
-            exportArray)
+  def memUsed(rows: BufferRowsColumn[B]): Int = {
+    rows.memUsed
+  }
+}
+
+abstract class BufferRowsColumn[B] {
+  protected var rows: ArrayBuffer[B] = ArrayBuffer[B]()
+  protected var rowsMemUsed: Int = 0
+
+  def length: Int = rows.length
+  def memUsed: Int = rowsMemUsed
+
+  def resize(len: Int, initializer: => B): Unit = {
+    if (rows.length < len) {
+      for (_ <- rows.length until len) {
+        val newRow = initializer
+        rowsMemUsed += getRowMemUsage(newRow)
+        rows.append(newRow)
       }
+    } else {
+      for (i <- len until rows.length) {
+        rowsMemUsed -= getRowMemUsage(rows(i))
+      }
+      rows.trimEnd(rows.length - len)
     }
-
   }
 
-  def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
-    aggEvaluator.deserializeRows(dataBuffer)
+  def row(i: Int): B = rows(i)
+
+  def append(appendedRows: B*): Unit = {
+    rowsMemUsed += appendedRows.map(getRowMemUsage).sum
+    rows.append(appendedRows: _*)
   }
 
-  def memUsed(rows: ArrayBuffer[InternalRow]): Int = {
-    aggEvaluator.memUsed(rows)
+  def update(i: Int, updater: B => B): Unit = {
+    rowsMemUsed -= getRowMemUsage(rows(i))
+    rows(i) = updater(rows(i))
+    rowsMemUsed += getRowMemUsage(rows(i))
   }
+
+  def getRowMemUsage(row: B): Int
 }
 
-object SparkUDAFWrapperContext {
-  private val indexTupleSchema = {
-    val schema = StructType(Seq(StructField("", IntegerType), StructField("", IntegerType)))
-    ArrowUtils.toArrowSchema(schema)
-  }
-
-  private val indexSchema = {
-    val schema = StructType(Seq(StructField("", IntegerType, nullable = false)))
-    ArrowUtils.toArrowSchema(schema)
-  }
-
-  private val serializedRowSchema = {
-    val schema = StructType(Seq(StructField("", BinaryType, nullable = false)))
-    ArrowUtils.toArrowSchema(schema)
-  }
-}
-
-trait AggregateEvaluator extends Logging {
-  def initialize(): InternalRow
-  def update(mutableAggBuffer: InternalRow, row: InternalRow): InternalRow
-  def merge(row1: InternalRow, row2: InternalRow): InternalRow
-  def eval(row: InternalRow): InternalRow
-  def serializeRows(rows: Seq[InternalRow]): Array[Byte]
-  def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow]
-  def memUsed(rows: Seq[InternalRow]): Int
+trait AggregateEvaluator[B] extends Logging {
+  def createEmptyColumn(): BufferRowsColumn[B]
+  def initialize(): B
+  def update(mutableAggBuffer: B, row: InternalRow): B
+  def merge(row1: B, row2: B): B
+  def eval(row: B): InternalRow
+  def serializeRows(rows: Iterator[B]): Array[Byte]
+  def deserializeRows(dataBuffer: ByteBuffer): Seq[B]
 }
 
 class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attribute])
-    extends AggregateEvaluator {
+  extends AggregateEvaluator[UnsafeRow] {
 
   private val initializer = UnsafeProjection.create(agg.initialValues)
+  private val initializedRow = initializer(InternalRow.empty)
 
   private val updater =
     UnsafeProjection.create(agg.updateExpressions, agg.aggBufferAttributes ++ inputAttributes)
@@ -263,23 +223,33 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
   private val evaluator =
     UnsafeProjection.create(agg.evaluateExpression :: Nil, agg.aggBufferAttributes)
 
-  override def initialize(): InternalRow = {
-    initializer.apply(InternalRow.empty)
+  private val joiner = new JoinedRow
+
+  override def createEmptyColumn(): BufferRowsColumn[UnsafeRow] = {
+    new BufferRowsColumn[UnsafeRow]() {
+      override def getRowMemUsage(row: UnsafeRow): Int = {
+        row.getSizeInBytes
+      }
+    }
   }
 
-  override def update(mutableAggBuffer: InternalRow, row: InternalRow): InternalRow = {
-    updater(new JoinedRow(mutableAggBuffer, row)).copy()
+  override def initialize(): UnsafeRow = {
+    initializedRow.copy()
   }
 
-  override def merge(row1: InternalRow, row2: InternalRow): InternalRow = {
-    merger(new JoinedRow(row1, row2)).copy()
+  override def update(mutableAggBuffer: UnsafeRow, row: InternalRow): UnsafeRow = {
+    updater(joiner(mutableAggBuffer, row)).copy()
   }
 
-  override def eval(row: InternalRow): InternalRow = {
+  override def merge(row1: UnsafeRow, row2: UnsafeRow): UnsafeRow = {
+    merger(joiner(row1, row2))
+  }
+
+  override def eval(row: UnsafeRow): UnsafeRow = {
     evaluator(row)
   }
 
-  override def serializeRows(rows: Seq[InternalRow]): Array[Byte] = {
+  override def serializeRows(rows: Iterator[UnsafeRow]): Array[Byte] = {
     val numFields = agg.aggBufferSchema.length
     val outputDataStream = new ByteArrayOutputStream()
     val serializer = new UnsafeRowSerializer(numFields).newInstance()
@@ -292,11 +262,11 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
     outputDataStream.toByteArray
   }
 
-  override def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
+  override def deserializeRows(dataBuffer: ByteBuffer): Seq[UnsafeRow] = {
     val numFields = agg.aggBufferSchema.length
     val deserializer = new UnsafeRowSerializer(numFields).newInstance()
     val inputDataStream = new ByteBufferInputStream(dataBuffer)
-    val rows = new ArrayBuffer[InternalRow]()
+    val rows = new ArrayBuffer[UnsafeRow]()
 
     Using.resource(deserializer.deserializeStream(inputDataStream)) { deser =>
       for (row <- deser.asKeyValueIterator.map(_._2.asInstanceOf[UnsafeRow].copy())) {
@@ -305,72 +275,61 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
     }
     rows
   }
-
-  override def memUsed(rows: Seq[InternalRow]): Int = {
-    var mem = 0
-    for (row <- rows) {
-      mem = mem + row.asInstanceOf[UnsafeRow].getSizeInBytes
-    }
-    mem
-  }
 }
 
-class TypedImperativeEvaluator[T](
-    agg: TypedImperativeAggregate[T])
-    extends AggregateEvaluator {
+class TypedImperativeEvaluator[B](agg: TypedImperativeAggregate[B])
+  extends AggregateEvaluator[B] {
+  private val evalRow = InternalRow(0)
 
-  private val bufferSchema = agg.aggBufferAttributes.map(_.dataType)
-  private val anyObjectType = ObjectType(classOf[AnyRef])
+  override def createEmptyColumn(): BufferRowsColumn[B] = {
+    new BufferRowsColumn[B]() {
+      override def getRowMemUsage(row: B): Int = {
+        64 // estimated size of object
+      }
 
-  private def getBufferObject(buffer: InternalRow): T = {
-    buffer.get(0, anyObjectType).asInstanceOf[T]
+      override def update(i: Int, updater: B => B): Unit = {
+        rows(i) = updater(rows(i))
+      }
+    }
   }
-  override def initialize(): InternalRow = {
-    val row = InternalRow(bufferSchema)
-    agg.initialize(row)
-    row
+
+  override def initialize(): B = {
+    agg.createAggregationBuffer()
   }
 
-  override def update(buffer: InternalRow, row: InternalRow): InternalRow = {
+  override def update(buffer: B, row: InternalRow): B = {
     agg.update(buffer, row)
-    buffer
   }
 
-  override def merge(row1: InternalRow, row2: InternalRow): InternalRow = {
-    val Object1 = getBufferObject(row1)
-    val Object2 = getBufferObject(row2)
-    row1.update(0, agg.merge(Object1, Object2))
-    row1
+  override def merge(row1: B, row2: B): B = {
+    agg.merge(row1, row2)
   }
 
-  override def eval(row: InternalRow): InternalRow = {
-    InternalRow(agg.eval(row))
+  override def eval(row: B): InternalRow = {
+    evalRow.update(0, agg.eval(row))
+    evalRow
   }
 
-  override def serializeRows(rows: Seq[InternalRow]): Array[Byte] = {
+  override def serializeRows(rows: Iterator[B]): Array[Byte] = {
     val outputStream = new ByteArrayOutputStream()
     val dataOut = new DataOutputStream(outputStream)
     for (row <- rows) {
-      val byteBuffer = agg.serialize(row.get(0, anyObjectType).asInstanceOf[T])
+      val byteBuffer = agg.serialize(row)
       dataOut.writeInt(byteBuffer.length)
-      outputStream.write(byteBuffer)
+      dataOut.write(byteBuffer)
     }
     outputStream.toByteArray
   }
 
-  override def deserializeRows(dataBuffer: ByteBuffer): ArrayBuffer[InternalRow] = {
-    val rows = ArrayBuffer[InternalRow]()
+  override def deserializeRows(dataBuffer: ByteBuffer): Seq[B] = {
+    val rows = ArrayBuffer[B]()
     while (dataBuffer.hasRemaining) {
       val length = dataBuffer.getInt()
       val byteBuffer = new Array[Byte](length)
       dataBuffer.get(byteBuffer)
-      val row = InternalRow(agg.deserialize(byteBuffer))
+      val row = agg.deserialize(byteBuffer)
       rows.append(row)
     }
     rows
-  }
-
-  override def memUsed(rows: Seq[InternalRow]): Int = {
-    rows.length * 192
   }
 }

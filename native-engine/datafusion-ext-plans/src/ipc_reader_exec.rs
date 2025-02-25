@@ -408,11 +408,7 @@ impl HeapByteBufferReader {
     fn read_impl(&mut self, buf: &mut [u8]) -> Result<usize> {
         let read_len = buf.len().min(self.remaining);
 
-        jni_get_byte_array_region!(
-            self.byte_array.as_obj().cast(),
-            self.pos,
-            &mut buf[..read_len]
-        )?;
+        jni_get_byte_array_region!(self.byte_array.as_obj(), self.pos, &mut buf[..read_len])?;
         self.pos += read_len;
         self.remaining -= read_len;
         Ok(read_len)
