@@ -128,7 +128,7 @@ impl ExecutionContext {
     ) -> SendableRecordBatchStream {
         let (batch_sender, mut batch_receiver) = tokio::sync::mpsc::channel(1);
 
-        tokio::task::spawn_blocking(move || {
+        let joiner = tokio::task::spawn_blocking(move || {
             let mut blocking_stream = block_on_stream(input);
             while is_task_running()
                 && let Some(batch_result) = blocking_stream.next()
@@ -144,6 +144,15 @@ impl ExecutionContext {
                 && let Some(batch_result) = batch_receiver.recv().await
             {
                 sender.send(batch_result?).await;
+            }
+            match joiner.await {
+                Err(e) if is_task_running() => {
+                    if e.is_panic() {
+                        std::panic::resume_unwind(e.into_panic());
+                    }
+                    return df_execution_err!("{e}");
+                }
+                _ => {}
             }
             Ok(())
         })
