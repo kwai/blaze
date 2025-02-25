@@ -138,6 +138,7 @@ impl From<protobuf::AggFunction> for AggFunction {
             protobuf::AggFunction::BloomFilter => AggFunction::BloomFilter,
             protobuf::AggFunction::BrickhouseCollect => AggFunction::BrickhouseCollect,
             protobuf::AggFunction::BrickhouseCombineUnique => AggFunction::BrickhouseCombineUnique,
+            protobuf::AggFunction::Udaf => AggFunction::Udaf,
         }
     }
 }

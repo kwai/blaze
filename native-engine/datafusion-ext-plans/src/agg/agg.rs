@@ -24,7 +24,7 @@ use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::{
     acc::AccColumnRef, avg, bloom_filter, brickhouse, collect, first, first_ignores_null, maxmin,
-    sum, AggFunction,
+    spark_udaf_wrapper::SparkUDAFWrapper, sum, AggFunction,
 };
 
 pub trait Agg: Send + Sync + Debug {
@@ -75,6 +75,33 @@ impl IdxSelection<'_> {
             IdxSelection::IndicesU32(indices) => indices.len(),
             IdxSelection::Range(begin, end) => end - begin,
         }
+    }
+
+    pub fn to_int32_vec(&self) -> Vec<i32> {
+        let mut vec = Vec::with_capacity(self.len());
+
+        match self {
+            IdxSelection::Single(idx) => {
+                vec.push(*idx as i32);
+            }
+
+            IdxSelection::Indices(indices) => {
+                for &idx in *indices {
+                    vec.push(idx as i32);
+                }
+            }
+            IdxSelection::IndicesU32(indices_u32) => {
+                for &idx in *indices_u32 {
+                    vec.push(idx as i32);
+                }
+            }
+            IdxSelection::Range(start, end) => {
+                for idx in *start..*end {
+                    vec.push(idx as i32);
+                }
+            }
+        }
+        vec
     }
 }
 
@@ -271,5 +298,22 @@ pub fn create_agg(
                 arg_list_inner_type,
             )?)
         }
+        AggFunction::Udaf => {
+            unreachable!("UDAF should be handled in create_udaf_agg")
+        }
     })
+}
+
+pub fn create_udaf_agg(
+    serialized: Vec<u8>,
+    input_schema: SchemaRef,
+    return_type: DataType,
+    children: Vec<Arc<dyn PhysicalExpr>>,
+) -> Result<Arc<dyn Agg>> {
+    Ok(Arc::new(SparkUDAFWrapper::try_new(
+        serialized,
+        input_schema,
+        return_type,
+        children,
+    )?))
 }

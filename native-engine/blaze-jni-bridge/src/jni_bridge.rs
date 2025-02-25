@@ -228,9 +228,39 @@ macro_rules! jni_get_byte_array_region {
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
             $crate::jni_map_error_with_env!(
                 env,
-                env.get_byte_array_region($value, $start as i32, unsafe {
+                env.get_byte_array_region($value.cast(), $start as i32, unsafe {
                     std::mem::transmute::<_, &mut [i8]>($buf)
                 })
+            )
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_get_byte_array_len {
+    ($value:expr) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(
+                env,
+                env.get_array_length($value.cast()).map(|s| s as usize)
+            )
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! jni_new_prim_array {
+    ($ty:ident, $value:expr) => {{
+        $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            $crate::jni_map_error_with_env!(
+                env,
+                paste::paste! {env.[<new_ $ty _array>]($value.len() as i32)}
+                    .and_then(|array| {
+                        let value = unsafe { std::mem::transmute($value) };
+                        paste::paste! {env.[<set_ $ty _array_region>](array, 0, value)}
+                            .map(|_| array)
+                    })
+                    .map(|s| $crate::jni_bridge::LocalRef(unsafe { JObject::from_raw(s.into()) }))
             )
         })
     }};
@@ -410,6 +440,7 @@ pub struct JavaClasses<'a> {
     pub cSparkSQLMetric: SparkSQLMetric<'a>,
     pub cSparkMetricNode: SparkMetricNode<'a>,
     pub cSparkUDFWrapperContext: SparkUDFWrapperContext<'a>,
+    pub cSparkUDAFWrapperContext: SparkUDAFWrapperContext<'a>,
     pub cSparkUDTFWrapperContext: SparkUDTFWrapperContext<'a>,
     pub cBlazeConf: BlazeConf<'a>,
     pub cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase<'a>,
@@ -471,6 +502,7 @@ impl JavaClasses<'static> {
                 cSparkSQLMetric: SparkSQLMetric::new(env)?,
                 cSparkMetricNode: SparkMetricNode::new(env)?,
                 cSparkUDFWrapperContext: SparkUDFWrapperContext::new(env)?,
+                cSparkUDAFWrapperContext: SparkUDAFWrapperContext::new(env)?,
                 cSparkUDTFWrapperContext: SparkUDTFWrapperContext::new(env)?,
                 cBlazeConf: BlazeConf::new(env)?,
                 cBlazeRssPartitionWriterBase: BlazeRssPartitionWriterBase::new(env)?,
@@ -1165,6 +1197,87 @@ impl<'a> SparkUDFWrapperContext<'a> {
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
             method_eval: env.get_method_id(class, "eval", "(JJ)V")?,
             method_eval_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct SparkUDAFWrapperContext<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+    pub method_initialize: JMethodID,
+    pub method_initialize_ret: ReturnType,
+    pub method_resize: JMethodID,
+    pub method_resize_ret: ReturnType,
+    pub method_update: JMethodID,
+    pub method_update_ret: ReturnType,
+    pub method_merge: JMethodID,
+    pub method_merge_ret: ReturnType,
+    pub method_eval: JMethodID,
+    pub method_eval_ret: ReturnType,
+    pub method_serializeRows: JMethodID,
+    pub method_serializeRows_ret: ReturnType,
+    pub method_deserializeRows: JMethodID,
+    pub method_deserializeRows_ret: ReturnType,
+    pub method_memUsed: JMethodID,
+    pub method_memUsed_ret: ReturnType,
+}
+impl<'a> SparkUDAFWrapperContext<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDAFWrapperContext";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<SparkUDAFWrapperContext<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(SparkUDAFWrapperContext {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
+            method_initialize: env.get_method_id(
+                class,
+                "initialize",
+                "(I)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
+            )?,
+            method_initialize_ret: ReturnType::Object,
+            method_resize: env.get_method_id(
+                class,
+                "resize",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;I)V",
+            )?,
+            method_resize_ret: ReturnType::Primitive(Primitive::Void),
+            method_update: env.get_method_id(
+                class,
+                "update",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;J[J)V",
+            )?,
+            method_update_ret: ReturnType::Primitive(Primitive::Void),
+            method_merge: env.get_method_id(
+                class,
+                "merge",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;Lorg/apache/spark/sql/blaze/BufferRowsColumn;[J)V",
+            )?,
+            method_merge_ret: ReturnType::Primitive(Primitive::Void),
+            method_eval: env.get_method_id(
+                class,
+                "eval",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;[IJ)V",
+            )?,
+            method_eval_ret: ReturnType::Primitive(Primitive::Void),
+            method_serializeRows: env.get_method_id(
+                class,
+                "serializeRows",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;[I)[B",
+            )?,
+            method_serializeRows_ret: ReturnType::Array,
+            method_deserializeRows: env.get_method_id(
+                class,
+                "deserializeRows",
+                "(Ljava/nio/ByteBuffer;)Lorg/apache/spark/sql/blaze/BufferRowsColumn;",
+            )?,
+            method_deserializeRows_ret: ReturnType::Object,
+            method_memUsed: env.get_method_id(
+                class,
+                "memUsed",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;)I",
+            )?,
+            method_memUsed_ret: ReturnType::Primitive(Primitive::Int),
         })
     }
 }
