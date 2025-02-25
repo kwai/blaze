@@ -78,7 +78,6 @@ impl WindowFunctionProcessor for AggProcessor {
                 IdxSelection::Single(0),
                 &children_cols,
                 IdxSelection::Single(row_idx),
-                batch.schema(),
             )?;
             output.push(
                 self.agg

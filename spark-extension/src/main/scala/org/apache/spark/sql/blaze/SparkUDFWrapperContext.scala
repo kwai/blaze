@@ -36,11 +36,12 @@ import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 
 case class SparkUDFWrapperContext(serialized: ByteBuffer) extends Logging {
-  private val (expr, javaParamsSchema) = NativeConverters.deserializeExpression[Expression, StructType]({
-    val bytes = new Array[Byte](serialized.remaining())
-    serialized.get(bytes)
-    bytes
-  })
+  private val (expr, javaParamsSchema) =
+    NativeConverters.deserializeExpression[Expression, StructType]({
+      val bytes = new Array[Byte](serialized.remaining())
+      serialized.get(bytes)
+      bytes
+    })
 
   // initialize all nondeterministic children exprs
   expr.foreach {

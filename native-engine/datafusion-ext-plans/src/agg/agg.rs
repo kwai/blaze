@@ -46,7 +46,6 @@ pub trait Agg: Send + Sync + Debug {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        batch_schema: SchemaRef,
     ) -> Result<()>;
 
     fn partial_merge(
@@ -300,18 +299,20 @@ pub fn create_agg(
             )?)
         }
         AggFunction::Udaf => {
-            unreachable!("UDAF should be handled in create_declarative_agg")
+            unreachable!("UDAF should be handled in create_udaf_agg")
         }
     })
 }
 
 pub fn create_udaf_agg(
     serialized: Vec<u8>,
+    input_schema: SchemaRef,
     return_type: DataType,
     children: Vec<Arc<dyn PhysicalExpr>>,
 ) -> Result<Arc<dyn Agg>> {
     Ok(Arc::new(SparkUDAFWrapper::try_new(
         serialized,
+        input_schema,
         return_type,
         children,
     )?))

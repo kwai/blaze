@@ -51,13 +51,14 @@ pub struct SparkUDAFWrapper {
     pub return_type: DataType,
     child: Vec<Arc<dyn PhysicalExpr>>,
     import_schema: SchemaRef,
-    params_schema: OnceCell<SchemaRef>,
+    params_schema: SchemaRef,
     jcontext: OnceCell<GlobalRef>,
 }
 
 impl SparkUDAFWrapper {
     pub fn try_new(
         serialized: Vec<u8>,
+        input_schema: SchemaRef,
         return_type: DataType,
         child: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
@@ -66,7 +67,7 @@ impl SparkUDAFWrapper {
             return_type: return_type.clone(),
             child,
             import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
-            params_schema: OnceCell::new(),
+            params_schema: input_schema,
             jcontext: OnceCell::new(),
         })
     }
@@ -121,7 +122,7 @@ impl Agg for SparkUDAFWrapper {
 
         let jcontext = self.jcontext().unwrap();
         let obj = jni_new_global_ref!(rows.as_obj()).unwrap();
-        Box::new(AccUnsafeRowsColumn {
+        Box::new(AccUDAFBufferRowsColumn {
             obj,
             jcontext,
             num_rows,
@@ -131,6 +132,7 @@ impl Agg for SparkUDAFWrapper {
     fn with_new_exprs(&self, _exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
+            self.params_schema.clone(),
             self.return_type.clone(),
             self.child.clone(),
         )?))
@@ -142,24 +144,11 @@ impl Agg for SparkUDAFWrapper {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        batch_schema: SchemaRef,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
 
         let params = partial_args.to_vec();
-        let params_schema = self
-            .params_schema
-            .get_or_try_init(|| -> Result<SchemaRef> {
-                let mut param_fields = Vec::with_capacity(self.child.len());
-                for child in &self.child {
-                    param_fields.push(Field::new(
-                        "",
-                        child.data_type(batch_schema.as_ref())?,
-                        child.nullable(batch_schema.as_ref())?,
-                    ));
-                }
-                Ok(Arc::new(Schema::new(param_fields)))
-            })?;
+        let params_schema = self.params_schema.clone();
         let params_batch = RecordBatch::try_new_with_options(
             params_schema.clone(),
             params.clone(),
@@ -192,8 +181,8 @@ impl Agg for SparkUDAFWrapper {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccUnsafeRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut AccUDAFBufferRowsColumn).unwrap();
 
         // create zipped indices
         let max_len = std::cmp::max(acc_idx.len(), merging_acc_idx.len());
@@ -213,7 +202,7 @@ impl Agg for SparkUDAFWrapper {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccUnsafeRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
         let acc_indices = acc_idx.to_int32_vec();
 
         let acc_idx_array = jni_new_prim_array!(int, &acc_indices[..])?;
@@ -234,13 +223,13 @@ impl Agg for SparkUDAFWrapper {
     }
 }
 
-struct AccUnsafeRowsColumn {
+struct AccUDAFBufferRowsColumn {
     obj: GlobalRef,
     jcontext: GlobalRef,
     num_rows: usize,
 }
 
-impl AccColumn for AccUnsafeRowsColumn {
+impl AccColumn for AccUDAFBufferRowsColumn {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

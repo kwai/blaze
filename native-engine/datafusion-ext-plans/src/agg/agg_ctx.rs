@@ -333,13 +333,7 @@ impl AggContext {
         if self.need_partial_update {
             for (agg_idx, agg) in &self.need_partial_update_aggs {
                 let acc_col = &mut acc_table.cols_mut()[*agg_idx];
-                agg.partial_update(
-                    acc_col,
-                    acc_idx,
-                    &input_arrays[*agg_idx],
-                    input_idx,
-                    batch_schema.clone(),
-                )?;
+                agg.partial_update(acc_col, acc_idx, &input_arrays[*agg_idx], input_idx)?;
             }
         }
         Ok(())

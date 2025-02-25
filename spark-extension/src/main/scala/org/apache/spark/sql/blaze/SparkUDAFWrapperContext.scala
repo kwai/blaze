@@ -97,9 +97,9 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
   }
 
   def update(
-              rows: BufferRowsColumn[B],
-              importBatchFFIArrayPtr: Long,
-              zippedIndices: Array[Long]): Unit = {
+      rows: BufferRowsColumn[B],
+      importBatchFFIArrayPtr: Long,
+      zippedIndices: Array[Long]): Unit = {
     Using.resources(
       VectorSchemaRoot.create(inputSchema, ROOT_ALLOCATOR),
       ArrowArray.wrap(importBatchFFIArrayPtr)) { (inputRoot, inputArray) =>
@@ -117,9 +117,9 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
   }
 
   def merge(
-             rows: BufferRowsColumn[B],
-             mergeRows: BufferRowsColumn[B],
-             zippedIndices: Array[Long]): Unit = {
+      rows: BufferRowsColumn[B],
+      mergeRows: BufferRowsColumn[B],
+      zippedIndices: Array[Long]): Unit = {
 
     for (zippedIdx <- zippedIndices) {
       val rowIdx = ((zippedIdx >> 32) & 0xffffffff).toInt
@@ -208,7 +208,7 @@ trait AggregateEvaluator[B] extends Logging {
 }
 
 class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attribute])
-  extends AggregateEvaluator[UnsafeRow] {
+    extends AggregateEvaluator[UnsafeRow] {
 
   private val initializer = UnsafeProjection.create(agg.initialValues)
   private val initializedRow = initializer(InternalRow.empty)
@@ -278,7 +278,7 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
 }
 
 class TypedImperativeEvaluator[B](agg: TypedImperativeAggregate[B])
-  extends AggregateEvaluator[B] {
+    extends AggregateEvaluator[B] {
   private val evalRow = InternalRow(0)
 
   override def createEmptyColumn(): BufferRowsColumn[B] = {

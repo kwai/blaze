@@ -23,7 +23,6 @@ use arrow::{
     array::{ArrayRef, AsArray, BinaryBuilder},
     datatypes::{DataType, Int64Type},
 };
-use arrow_schema::SchemaRef;
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{
@@ -114,7 +113,6 @@ impl Agg for AggBloomFilter {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        _batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
         let bloom_filter = match acc_idx {

@@ -92,7 +92,6 @@ impl Agg for AggCount {
         acc_idx: IdxSelection<'_>,
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
-        _batch_schema: SchemaRef,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
 

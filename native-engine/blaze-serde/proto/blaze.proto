@@ -152,8 +152,9 @@ message PhysicalAggExprNode {
 
 message AggUdaf {
   bytes serialized = 1;
-  ArrowType return_type = 2;
-  bool return_nullable = 3;
+  Schema input_schema = 2;
+  ArrowType return_type = 3;
+  bool return_nullable = 4;
 }
 
 message PhysicalIsNull {
