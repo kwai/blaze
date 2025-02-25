@@ -849,16 +849,16 @@ fn try_parse_physical_expr(
                                     // cast list values to expr type
                                     e if downcast_any!(e, Literal).is_ok()
                                         && e.data_type(input_schema)? != dt =>
-                                        {
-                                            match TryCastExpr::new(e, dt.clone()).evaluate(
-                                                &RecordBatch::new_empty(input_schema.clone()),
-                                            )? {
-                                                ColumnarValue::Scalar(scalar) => {
-                                                    Arc::new(Literal::new(scalar))
-                                                }
-                                                ColumnarValue::Array(_) => unreachable!(),
+                                    {
+                                        match TryCastExpr::new(e, dt.clone()).evaluate(
+                                            &RecordBatch::new_empty(input_schema.clone()),
+                                        )? {
+                                            ColumnarValue::Scalar(scalar) => {
+                                                Arc::new(Literal::new(scalar))
                                             }
+                                            ColumnarValue::Array(_) => unreachable!(),
                                         }
+                                    }
                                     other => other,
                                 }
                             })

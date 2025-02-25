@@ -1149,12 +1149,13 @@ object NativeConverters extends Logging {
               defaultValue = true) =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COMBINE_UNIQUE)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
-      // other udaf aggFunction
-      case udaf
-        if classOf[DeclarativeAggregate].isAssignableFrom(e.aggregateFunction.getClass)
-          || (udaf.getClass.getName != "org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate" &&
-          classOf[TypedImperativeAggregate[_]].isAssignableFrom(
-            e.aggregateFunction.getClass)) =>
+
+      case udaf =>
+        Shims.get.convertMoreAggregateExpr(e) match {
+          case Some(converted) => return converted
+          case _ =>
+        }
+        // other udaf aggFunction
         aggBuilder.setAggFunction(pb.AggFunction.UDAF)
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
 
@@ -1195,13 +1196,6 @@ object NativeConverters extends Logging {
             .setReturnType(convertDataType(bound.dataType))
             .setReturnNullable(bound.nullable))
         aggBuilder.addAllChildren(convertedChildren.keys.asJava)
-
-      case _ =>
-        Shims.get.convertMoreAggregateExpr(e) match {
-          case Some(converted) => return converted
-          case _ =>
-        }
-        throw new NotImplementedError(s"unsupported aggregate expression: (${e.getClass}) $e")
     }
     pb.PhysicalExprNode
       .newBuilder()

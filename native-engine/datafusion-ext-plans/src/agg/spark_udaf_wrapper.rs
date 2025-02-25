@@ -117,7 +117,7 @@ impl Agg for SparkUDAFWrapper {
         let rows = jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).initialize(
             num_rows as i32,
         )-> JObject)
-            .unwrap();
+        .unwrap();
 
         let jcontext = self.jcontext().unwrap();
         let obj = jni_new_global_ref!(rows.as_obj()).unwrap();
@@ -250,7 +250,7 @@ impl AccColumn for AccUnsafeRowsColumn {
             self.obj.as_obj(),
             len as i32,
         )-> ())
-            .unwrap();
+        .unwrap();
         self.num_rows = len;
     }
 
@@ -265,7 +265,7 @@ impl AccColumn for AccUnsafeRowsColumn {
             SparkUDAFWrapperContext(self.jcontext.as_obj()).memUsed(
                 self.obj.as_obj())
             -> i32)
-            .unwrap() as usize
+        .unwrap() as usize
     }
 
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
