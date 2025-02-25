@@ -31,7 +31,7 @@ pub trait Handler {
 
 pub trait HTTPServer: Send + Sync {
     fn start(&self);
-    fn register_handler(&self, handler: impl Handler + 'static);
+    fn register_handler(&self, handler: Box<dyn Handler + Send + Sync>);
 }
 
 pub struct DefaultHTTPServer {
@@ -81,26 +81,28 @@ impl HTTPServer for DefaultHTTPServer {
         }
     }
 
-    fn register_handler(&self, handler: impl Handler + 'static) {
+    fn register_handler(&self, handler: Box<dyn Handler + Send + Sync>) {
         let mut handlers = self.handlers.lock().unwrap();
-        handlers.push(Box::new(handler));
+        handlers.push(handler);
     }
 }
 
-pub struct HttpService;
+pub struct HttpService {
+    _server: Box<dyn HTTPServer>,
+}
 
 impl HttpService {
     pub fn init() -> Self {
-        let server = DefaultHTTPServer::new();
+        let server = Box::new(DefaultHTTPServer::new());
         #[cfg(feature = "jemalloc-pprof")]
         {
             use crate::http::pprof::PProfHandler;
-            server.register_handler(PProfHandler::default());
+            server.register_handler(Box::new(PProfHandler::default()));
 
             use crate::http::memory_profiling::MemoryProfileHandler;
-            server.register_handler(MemoryProfileHandler::default());
+            server.register_handler(Box::new(MemoryProfileHandler::default()));
         }
         server.start();
-        Self
+        Self { _server: server }
     }
 }
