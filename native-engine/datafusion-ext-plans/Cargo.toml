@@ -44,7 +44,7 @@ tempfile = "3"
 tokio = "1.43.0"
 unchecked-index = "0.2.2"
 uuid = "1.14.0"
-zstd = "0.13.2"
+zstd = "0.13.3"
 
 [dev-dependencies]
 rand = "0.9.0"
