@@ -242,7 +242,7 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
   }
 
   override def merge(row1: UnsafeRow, row2: UnsafeRow): UnsafeRow = {
-    merger(joiner(row1, row2))
+    merger(joiner(row1, row2)).copy()
   }
 
   override def eval(row: UnsafeRow): UnsafeRow = {
@@ -281,10 +281,11 @@ class TypedImperativeEvaluator[B](agg: TypedImperativeAggregate[B])
     extends AggregateEvaluator[B] {
   private val evalRow = InternalRow(0)
 
+  private val memUse = BlazeConf.SUGGESTED_UDAF_ROW_MEM_USAGE.intConf()
   override def createEmptyColumn(): BufferRowsColumn[B] = {
     new BufferRowsColumn[B]() {
       override def getRowMemUsage(row: B): Int = {
-        64 // estimated size of object
+        memUse // estimated size of object
       }
 
       override def update(i: Int, updater: B => B): Unit = {

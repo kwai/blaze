@@ -31,6 +31,9 @@ public enum BlazeConf {
     /// outputs from spark due to different unicode versions.
     CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),
 
+    /// supports UDAF and other aggregate functions not implemented
+    UDAF_CONVERT_ENABLE("spark.blaze.enable.udaf", false),
+
     /// enable extra metrics of input batch statistics
     INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", true),
 
@@ -88,7 +91,10 @@ public enum BlazeConf {
     // suggested memory size for k-way merging
     // use smaller batch memory size for kway merging since there will be multiple
     // batches in memory at the same time
-    SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.blaze.suggested.batch.memSize.multiwayMerging", 1048576);
+    SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.blaze.suggested.batch.memSize.multiwayMerging", 1048576),
+
+    // TypedImperativeAggregate one row mem use size
+    SUGGESTED_UDAF_ROW_MEM_USAGE("spark.blaze.suggested.udaf.memUsedSize", 64);
 
     public final String key;
     private final Object defaultValue;
