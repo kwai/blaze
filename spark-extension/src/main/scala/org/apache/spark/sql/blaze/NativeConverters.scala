@@ -1161,48 +1161,54 @@ object NativeConverters extends Logging {
           case Some(converted) => return converted
           case _ =>
         }
-        // other udaf aggFunction
-        aggBuilder.setAggFunction(pb.AggFunction.UDAF)
-        val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
+        if (BlazeConf.UDAF_CONVERT_ENABLE.booleanConf()) {
+          // other udaf aggFunction
+          aggBuilder.setAggFunction(pb.AggFunction.UDAF)
+          val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
 
-        val bound = udaf match {
-          case declarativeAggregate: DeclarativeAggregate =>
-            declarativeAggregate.mapChildren { p =>
-              val convertedChild = convertExpr(p)
-              val nextBindIndex =
-                convertedChildren.size + declarativeAggregate.inputAggBufferAttributes.length
-              convertedChildren.getOrElseUpdate(
-                convertedChild,
-                BoundReference(nextBindIndex, p.dataType, p.nullable))
-            }
-          case imperativeAggregate: ImperativeAggregate =>
-            imperativeAggregate.mapChildren { p =>
-              val convertedChild = convertExpr(p)
-              val nextBindIndex = convertedChildren.size
-              convertedChildren.getOrElseUpdate(
-                convertedChild,
-                BoundReference(nextBindIndex, p.dataType, p.nullable))
-            }
+          val bound = udaf match {
+            case declarativeAggregate: DeclarativeAggregate =>
+              declarativeAggregate.mapChildren { p =>
+                val convertedChild = convertExpr(p)
+                val nextBindIndex =
+                  convertedChildren.size + declarativeAggregate.inputAggBufferAttributes.length
+                convertedChildren.getOrElseUpdate(
+                  convertedChild,
+                  BoundReference(nextBindIndex, p.dataType, p.nullable))
+              }
+            case imperativeAggregate: ImperativeAggregate =>
+              imperativeAggregate.mapChildren { p =>
+                val convertedChild = convertExpr(p)
+                val nextBindIndex = convertedChildren.size
+                convertedChildren.getOrElseUpdate(
+                  convertedChild,
+                  BoundReference(nextBindIndex, p.dataType, p.nullable))
+              }
+          }
+
+          val paramsSchema = StructType(
+            convertedChildren.values
+              .map(ref => StructField("", ref.dataType, ref.nullable))
+              .toSeq)
+
+          val serialized =
+            serializeExpression(
+              bound.asInstanceOf[AggregateFunction with Serializable],
+              paramsSchema)
+
+          aggBuilder.setUdaf(
+            pb.AggUdaf
+              .newBuilder()
+              .setSerialized(ByteString.copyFrom(serialized))
+              .setInputSchema(NativeConverters.convertSchema(paramsSchema))
+              .setReturnType(convertDataType(bound.dataType))
+              .setReturnNullable(bound.nullable))
+          aggBuilder.addAllChildren(convertedChildren.keys.asJava)
+        } else {
+          throw new NotImplementedError(s"unsupported aggregate expression: (${e.getClass}) $e," +
+            s" set spark.blaze.enable.udaf true to enable")
         }
 
-        val paramsSchema = StructType(
-          convertedChildren.values
-            .map(ref => StructField("", ref.dataType, ref.nullable))
-            .toSeq)
-
-        val serialized =
-          serializeExpression(
-            bound.asInstanceOf[AggregateFunction with Serializable],
-            paramsSchema)
-
-        aggBuilder.setUdaf(
-          pb.AggUdaf
-            .newBuilder()
-            .setSerialized(ByteString.copyFrom(serialized))
-            .setInputSchema(NativeConverters.convertSchema(paramsSchema))
-            .setReturnType(convertDataType(bound.dataType))
-            .setReturnNullable(bound.nullable))
-        aggBuilder.addAllChildren(convertedChildren.keys.asJava)
     }
     pb.PhysicalExprNode
       .newBuilder()

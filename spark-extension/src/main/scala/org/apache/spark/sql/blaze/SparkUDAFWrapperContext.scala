@@ -18,9 +18,7 @@ package org.apache.spark.sql.blaze
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.nio.ByteBuffer
-
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
@@ -242,7 +240,7 @@ class DeclarativeEvaluator(agg: DeclarativeAggregate, inputAttributes: Seq[Attri
   }
 
   override def merge(row1: UnsafeRow, row2: UnsafeRow): UnsafeRow = {
-    merger(joiner(row1, row2))
+    merger(joiner(row1, row2)).copy()
   }
 
   override def eval(row: UnsafeRow): UnsafeRow = {
@@ -281,10 +279,11 @@ class TypedImperativeEvaluator[B](agg: TypedImperativeAggregate[B])
     extends AggregateEvaluator[B] {
   private val evalRow = InternalRow(0)
 
+  private val rowMemUsage = BlazeConf.SUGGESTED_UDAF_ROW_MEM_USAGE.intConf()
   override def createEmptyColumn(): BufferRowsColumn[B] = {
     new BufferRowsColumn[B]() {
       override def getRowMemUsage(row: B): Int = {
-        64 // estimated size of object
+        rowMemUsage // estimated size of object
       }
 
       override def update(i: Int, updater: B => B): Unit = {
