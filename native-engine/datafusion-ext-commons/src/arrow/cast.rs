@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use arrow::{array::*, datatypes::*};
+use bigdecimal::BigDecimal;
 use datafusion::common::Result;
 use num::{Bounded, FromPrimitive, Integer, Signed};
 
@@ -208,11 +209,37 @@ pub fn cast_impl(
                     .build()?,
             )
         }
+        // string to decimal
+        (&DataType::Utf8, DataType::Decimal128(..)) => {
+            arrow::compute::kernels::cast::cast(&to_plain_string_array(array), cast_type)?
+        }
         _ => {
             // default cast
             arrow::compute::kernels::cast::cast(array, cast_type)?
         }
     })
+}
+
+fn to_plain_string_array(array: &dyn Array) -> ArrayRef {
+    let array = array.as_any().downcast_ref::<StringArray>().unwrap();
+    let mut converted_values: Vec<Option<String>> = Vec::with_capacity(array.len());
+    for v in array.iter() {
+        match v {
+            Some(s) => {
+                // support to convert scientific notation
+                if s.contains('e') || s.contains('E') {
+                    match BigDecimal::from_str(s) {
+                        Ok(decimal) => converted_values.push(Some(decimal.to_plain_string())),
+                        Err(_) => converted_values.push(Some(s.to_string())),
+                    }
+                } else {
+                    converted_values.push(Some(s.to_string()))
+                }
+            }
+            None => converted_values.push(None),
+        }
+    }
+    Arc::new(StringArray::from(converted_values))
 }
 
 fn try_cast_string_array_to_integer(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
@@ -413,6 +440,10 @@ mod test {
     fn test_string_to_decimal() {
         let string_array: ArrayRef = Arc::new(StringArray::from_iter(vec![
             None,
+            Some("1e-8"),
+            Some("1.012345678911111111e10"),
+            Some("1.42e-6"),
+            Some("0.00000142"),
             Some("123.456"),
             Some("987.654"),
             Some("123456789012345.678901234567890"),
@@ -423,6 +454,10 @@ mod test {
             as_decimal128_array(&casted).unwrap(),
             &Decimal128Array::from_iter(vec![
                 None,
+                Some(10000000000),
+                Some(10123456789111111110000000000i128),
+                Some(1420000000000),
+                Some(1420000000000),
                 Some(123456000000000000000i128),
                 Some(987654000000000000000i128),
                 Some(123456789012345678901234567890000i128),
