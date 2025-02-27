@@ -126,20 +126,20 @@ impl ExecutionContext {
         self: &Arc<Self>,
         input: SendableRecordBatchStream,
     ) -> SendableRecordBatchStream {
-        let (batch_sender, mut batch_receiver) = tokio::sync::mpsc::channel(1);
-
-        let joiner = tokio::task::spawn_blocking(move || {
-            let mut blocking_stream = block_on_stream(input);
-            while is_task_running()
-                && let Some(batch_result) = blocking_stream.next()
-            {
-                if batch_sender.blocking_send(batch_result).is_err() {
-                    break;
-                }
-            }
-        });
-
         self.output_with_sender("WorkerThreadOnStream", move |sender| async move {
+            let (batch_sender, mut batch_receiver) = tokio::sync::mpsc::channel(1);
+
+            let joiner = tokio::task::spawn_blocking(move || {
+                let mut blocking_stream = block_on_stream(input);
+                while is_task_running()
+                    && let Some(batch_result) = blocking_stream.next()
+                {
+                    if batch_sender.blocking_send(batch_result).is_err() {
+                        break;
+                    }
+                }
+            });
+
             while is_task_running()
                 && let Some(batch_result) = batch_receiver.recv().await
             {
