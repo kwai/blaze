@@ -175,8 +175,7 @@ impl ExecutionPlan for OrcExec {
         )?);
 
         let timed_stream = execute_orc_scan(file_stream, exec_ctx.clone())?;
-        let nonblock_stream = exec_ctx.spawn_worker_thread_on_stream(timed_stream);
-        Ok(exec_ctx.coalesce_with_default_batch_size(nonblock_stream))
+        Ok(exec_ctx.coalesce_with_default_batch_size(timed_stream))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {

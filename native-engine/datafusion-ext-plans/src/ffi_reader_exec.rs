@@ -126,8 +126,7 @@ impl ExecutionPlan for FFIReaderExec {
             jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?.as_obj()
         )?;
 
-        let ffi_stream = read_ffi(self.schema(), exporter, exec_ctx.clone())?;
-        Ok(exec_ctx.spawn_worker_thread_on_stream(ffi_stream))
+        read_ffi(self.schema(), exporter, exec_ctx.clone())
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -162,10 +161,15 @@ fn read_ffi(
                     // load batch from ffi
                     let mut ffi_arrow_array = FFI_ArrowArray::empty();
                     let ffi_arrow_array_ptr = &mut ffi_arrow_array as *mut FFI_ArrowArray as i64;
-                    let has_next = jni_call!(
-                        BlazeArrowFFIExporter(exporter.0.as_obj())
-                            .exportNextBatch(ffi_arrow_array_ptr) -> bool
-                    )?;
+                    let exporter_obj = exporter.0.clone();
+                    let has_next = tokio::task::spawn_blocking(move || {
+                        jni_call!(
+                            BlazeArrowFFIExporter(exporter_obj.as_obj())
+                                .exportNextBatch(ffi_arrow_array_ptr) -> bool
+                        )
+                    })
+                    .await
+                    .expect("tokio spawn_blocking error")?;
 
                     if !has_next {
                         break;

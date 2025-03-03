@@ -311,7 +311,7 @@ impl DisplayAs for BroadcastJoinExec {
 }
 
 async fn execute_join_with_map(
-    mut probed: SendableRecordBatchStream,
+    probed_plan: Arc<dyn ExecutionPlan>,
     map: Arc<JoinHashMap>,
     join_params: JoinParams,
     broadcast_side: JoinSide,
@@ -350,24 +350,27 @@ async fn execute_join_with_map(
         },
     };
 
-    while !joiner.can_early_stop()
-        && let Some(batch) = exec_ctx
-            .baseline_metrics()
-            .elapsed_compute()
-            .exclude_timer_async(probed.next())
-            .await
-            .transpose()?
-    {
-        joiner
-            .as_mut()
-            .join(
-                batch,
-                &probed_side_hash_time,
-                &probed_side_search_time,
-                &probed_side_compare_time,
-                &build_output_time,
-            )
-            .await?;
+    if !joiner.can_early_stop() {
+        let mut probed = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
+        while !joiner.can_early_stop()
+            && let Some(batch) = exec_ctx
+                .baseline_metrics()
+                .elapsed_compute()
+                .exclude_timer_async(probed.next())
+                .await
+                .transpose()?
+        {
+            joiner
+                .as_mut()
+                .join(
+                    batch,
+                    &probed_side_hash_time,
+                    &probed_side_search_time,
+                    &probed_side_compare_time,
+                    &build_output_time,
+                )
+                .await?;
+        }
     }
     joiner.as_mut().finish(&build_output_time).await?;
     exec_ctx
@@ -377,7 +380,7 @@ async fn execute_join_with_map(
 }
 
 async fn execute_join_with_smj_fallback(
-    probed: SendableRecordBatchStream,
+    probed_plan: Arc<dyn ExecutionPlan>,
     built: SendableRecordBatchStream,
     join_params: JoinParams,
     broadcast_side: JoinSide,
@@ -406,6 +409,7 @@ async fn execute_join_with_smj_fallback(
     };
 
     // create sorted streams, build side is already sorted
+    let probed = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
     let (left_exec, right_exec) = match broadcast_side {
         JoinSide::Left => (
             built_sorted,
@@ -491,7 +495,6 @@ async fn execute_join(
         JoinSide::Right => join_params.right_keys.clone(),
     };
 
-    let probed_input = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
     let built_input = if is_built {
         exec_ctx.stat_input(exec_ctx.execute(&built_plan)?)
     } else {
@@ -515,7 +518,7 @@ async fn execute_join(
     match built_collected {
         CollectJoinHashMapResult::Map(map) => {
             let join_with_map = execute_join_with_map(
-                probed_input,
+                probed_plan,
                 map,
                 join_params,
                 broadcast_side,
@@ -534,7 +537,7 @@ async fn execute_join(
                 stream,
             ));
             let join_with_smj_fallback = execute_join_with_smj_fallback(
-                probed_input,
+                probed_plan,
                 built_input,
                 join_params,
                 broadcast_side,
