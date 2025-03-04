@@ -46,7 +46,7 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
 
   private trait QueueState
   private case object NextBatch extends QueueState
-  private case object Finished extends QueueState
+  private case class Finished(t: Option[Throwable]) extends QueueState
 
   private val tc = TaskContext.get()
   private val outputQueue: BlockingQueue[QueueState] = new ArrayBlockingQueue[QueueState](16)
@@ -83,7 +83,11 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
     if (tc != null && (tc.isCompleted() || tc.isInterrupted())) {
       return false
     }
-    outputQueue.take() == NextBatch
+    outputQueue.take() match {
+      case NextBatch => true
+      case Finished(None) => false
+      case Finished(Some(e)) => throw e
+    }
   }
 
   private def startOutputThread(): Thread = {
@@ -97,7 +101,7 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
           override def run(): Unit = {
             while (tc == null || (!tc.isCompleted() && !tc.isInterrupted())) {
               if (!rowIter.hasNext) {
-                outputQueue.put(Finished)
+                outputQueue.put(Finished(None))
                 return
               }
 
@@ -120,7 +124,7 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
                 }
               }
             }
-            outputQueue.put(Finished)
+            outputQueue.put(Finished(None))
           }
         })
       }
@@ -134,8 +138,8 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
     thread.setDaemon(true)
     thread.setUncaughtExceptionHandler(new UncaughtExceptionHandler {
       override def uncaughtException(t: Thread, e: Throwable): Unit = {
-        close()
-        throw e
+        outputQueue.clear()
+        outputQueue.put(Finished(Some(e)))
       }
     })
     thread.start()
@@ -144,6 +148,5 @@ class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) exten
 
   override def close(): Unit = {
     outputThread.interrupt()
-    outputQueue.put(Finished) // to abort any pending call to exportNextBatch()
   }
 }
