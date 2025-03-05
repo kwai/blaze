@@ -33,6 +33,7 @@ use blaze_jni_bridge::{
     jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::{
+    common::DataFusionError,
     error::Result,
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
@@ -142,8 +143,7 @@ impl ExecutionPlan for IpcReaderExec {
         assert!(!blocks_local.as_obj().is_null());
 
         let blocks = jni_new_global_ref!(blocks_local.as_obj())?;
-        let ipc_stream = read_ipc(blocks, exec_ctx.clone())?;
-        Ok(exec_ctx.spawn_worker_thread_on_stream(ipc_stream))
+        read_ipc(blocks, exec_ctx.clone())
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -173,25 +173,32 @@ fn read_ipc(
             let staging_num_rows = AtomicUsize::new(0);
             let staging_mem_size = AtomicUsize::new(0);
 
-            while jni_call!(ScalaIterator(blocks.as_obj()).hasNext() -> bool)? {
-                let block = jni_new_global_ref!(
-                    jni_call!(ScalaIterator(blocks.as_obj()).next() -> JObject)?.as_obj()
-                )?;
-
+            while let Some(block) = {
+                let blocks = blocks.clone();
+                tokio::task::spawn_blocking(move || {
+                    if jni_call!(ScalaIterator(blocks.as_obj()).hasNext() -> bool)? {
+                        let block = jni_call!(ScalaIterator(blocks.as_obj()).next() -> JObject)?;
+                        return Ok(Some(jni_new_global_ref!(block.as_obj())?));
+                    }
+                    Ok::<_, DataFusionError>(None)
+                })
+                .await
+                .expect("tokio spawn_blocking error")?
+            } {
                 // get ipc reader
-                let mut reader = Box::pin(match () {
-                    _ if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? => {
-                        get_file_reader(block.as_obj())?
+                let mut reader = tokio::task::spawn_blocking(move || {
+                    if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? {
+                        return get_file_reader(block.as_obj());
                     }
-                    _ if jni_call!(BlazeBlockObject(block.as_obj()).hasByteBuffer() -> bool)? => {
-                        get_byte_buffer_reader(block.as_obj())?
+                    if jni_call!(BlazeBlockObject(block.as_obj()).hasByteBuffer() -> bool)? {
+                        return get_byte_buffer_reader(block.as_obj());
                     }
-                    _ => get_channel_reader(block.as_obj())?,
-                });
+                    get_channel_reader(block.as_obj())
+                })
+                .await
+                .expect("tokio spawn_blocking error")?;
 
-                while let Some((num_rows, cols)) =
-                    reader.as_mut().read_batch(&exec_ctx.output_schema())?
-                {
+                while let Some((num_rows, cols)) = reader.read_batch(&exec_ctx.output_schema())? {
                     let (cur_staging_num_rows, cur_staging_mem_size) = {
                         let staging_cols_cloned = staging_cols.clone();
                         let mut staging_cols = staging_cols_cloned.lock();
