@@ -53,3 +53,5 @@ spark-extension-shims-spark241kwaiae
 
 # exclude native engine build lib directory
 native-engine/_build
+
+/target-docker/
