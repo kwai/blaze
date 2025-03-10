@@ -106,4 +106,24 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
       checkAnswer(df, Seq(Row(1, 2)))
     }
   }
+
+  test("SPARK-32234 read ORC table with column names all starting with '_col'") {
+    withTable("test_hive_orc_impl") {
+      spark.sql(
+        s"""
+           | CREATE TABLE test_hive_orc_impl
+           | (_col1 INT, _col2 STRING, _col3 INT)
+           | USING ORC
+               """.stripMargin)
+      spark.sql(
+        s"""
+           | INSERT INTO
+           | test_hive_orc_impl
+           | VALUES(9, '12', 2020)
+               """.stripMargin)
+
+      val df = spark.sql("SELECT _col2 FROM test_hive_orc_impl")
+      checkAnswer(df, Row("12"))
+    }
+  }
 }
