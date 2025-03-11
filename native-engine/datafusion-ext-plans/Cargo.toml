@@ -17,7 +17,7 @@ datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }
 orc-rust = { workspace = true }
 
-async-trait = "0.1.86"
+async-trait = "0.1.87"
 base64 = "0.22.1"
 bitvec = "1.0.1"
 byteorder = "1.5.0"
