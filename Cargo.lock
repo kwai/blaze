@@ -535,9 +535,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.16.0"
+version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
+checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "bytemuck"
@@ -3396,10 +3396,11 @@ dependencies = [
 
 [[package]]
 name = "sonic-rs"
-version = "0.3.17"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0275f9f2f07d47556fe60c2759da8bc4be6083b047b491b2d476aa0bfa558eb1"
+checksum = "4f349e0c89e580088ff03d98beed21ea0d1f4deeaba061976d5405a45ab16cf4"
 dependencies = [
+ "ahash",
  "bumpalo",
  "bytes 1.10.1",
  "cfg-if",
