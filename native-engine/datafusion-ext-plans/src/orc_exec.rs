@@ -18,7 +18,9 @@
 use std::{any::Any, fmt, fmt::Formatter, pin::Pin, sync::Arc};
 
 use arrow::{datatypes::SchemaRef, error::ArrowError};
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
+use blaze_jni_bridge::{
+    conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
+};
 use bytes::Bytes;
 use datafusion::{
     datasource::{
@@ -158,6 +160,8 @@ impl ExecutionPlan for OrcExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
+        let force_positional_evolution = conf::ORC_FORCE_POSITIONAL_EVOLUTION.value()?;
+
         let opener = OrcOpener {
             projection,
             batch_size: batch_size(),
@@ -165,6 +169,7 @@ impl ExecutionPlan for OrcExec {
             fs_provider,
             partition_index: partition,
             metrics: self.metrics.clone(),
+            force_positional_evolution,
         };
 
         let file_stream = Box::pin(FileStream::new(
@@ -210,6 +215,7 @@ struct OrcOpener {
     fs_provider: Arc<FsProvider>,
     partition_index: usize,
     metrics: ExecutionPlanMetricsSet,
+    force_positional_evolution: bool,
 }
 
 impl FileOpener for OrcOpener {
@@ -232,7 +238,11 @@ impl FileOpener for OrcOpener {
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-        let schema_adapter = SchemaAdapter::new(self.table_schema.clone(), projected_schema);
+        let schema_adapter = SchemaAdapter::new(
+            self.table_schema.clone(),
+            projected_schema,
+            self.force_positional_evolution,
+        );
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -291,13 +301,19 @@ impl AsyncChunkReader for OrcFileReaderRef {
 struct SchemaAdapter {
     table_schema: SchemaRef,
     projected_schema: SchemaRef,
+    force_positional_evolution: bool,
 }
 
 impl SchemaAdapter {
-    pub fn new(table_schema: SchemaRef, projected_schema: SchemaRef) -> Self {
+    pub fn new(
+        table_schema: SchemaRef,
+        projected_schema: SchemaRef,
+        force_positional_evolution: bool,
+    ) -> Self {
         Self {
             table_schema,
             projected_schema,
+            force_positional_evolution,
         }
     }
 
@@ -309,9 +325,10 @@ impl SchemaAdapter {
         let mut field_mappings = vec![None; self.projected_schema.fields().len()];
 
         let file_named_columns = orc_file_meta.root_data_type().children();
-        if file_named_columns
-            .iter()
-            .all(|named_col| named_col.name().starts_with("_col"))
+        if self.force_positional_evolution
+            || file_named_columns
+                .iter()
+                .all(|named_col| named_col.name().starts_with("_col"))
         {
             let table_schema_fields = self.table_schema.fields();
             assert!(
