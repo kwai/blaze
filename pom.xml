@@ -387,7 +387,7 @@
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.5.4</sparkVersion>
+        <sparkVersion>3.5.5</sparkVersion>
       </properties>
     </profile>
   </profiles>
