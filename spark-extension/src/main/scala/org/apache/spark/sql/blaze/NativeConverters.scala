@@ -1205,8 +1205,9 @@ object NativeConverters extends Logging {
               .setReturnNullable(bound.nullable))
           aggBuilder.addAllChildren(convertedChildren.keys.asJava)
         } else {
-          throw new NotImplementedError(s"unsupported aggregate expression: (${e.getClass}) $e," +
-            s" set spark.blaze.enable.udaf true to enable")
+          throw new NotImplementedError(
+            s"unsupported aggregate expression: (${e.getClass}) $e," +
+              s" set spark.blaze.enable.udaf true to enable")
         }
 
     }

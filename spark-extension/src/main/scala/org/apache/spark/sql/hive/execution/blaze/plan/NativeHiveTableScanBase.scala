@@ -15,7 +15,6 @@
  */
 package org.apache.spark.sql.hive.execution.blaze.plan
 
-import scala.collection.immutable.SortedMap
 import scala.collection.JavaConverters._
 import scala.collection.Seq
 
@@ -34,7 +33,6 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.FilePartition
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
@@ -49,19 +47,8 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     extends LeafExecNode
     with NativeSupports {
 
-  override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
-    NativeHelper
-      .getDefaultNativeMetrics(sparkContext)
-      .filterKeys(Set("stage_id", "output_rows", "elapsed_compute"))
-      .toSeq :+
-      ("predicate_evaluation_errors", SQLMetrics
-        .createMetric(sparkContext, "Native.predicate_evaluation_errors")) :+
-      ("row_groups_pruned", SQLMetrics
-        .createMetric(sparkContext, "Native.row_groups_pruned")) :+
-      ("bytes_scanned", SQLMetrics.createSizeMetric(sparkContext, "Native.bytes_scanned")) :+
-      ("io_time", SQLMetrics.createNanoTimingMetric(sparkContext, "Native.io_time")) :+
-      ("io_time_getfs", SQLMetrics
-        .createNanoTimingMetric(sparkContext, "Native.io_time_getfs")): _*)
+  override lazy val metrics: Map[String, SQLMetric] =
+    NativeHelper.getNativeFileScanMetrics(sparkContext)
 
   override val output: Seq[Attribute] = basedHiveScan.output
   override val outputPartitioning: Partitioning = basedHiveScan.outputPartitioning

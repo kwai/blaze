@@ -122,4 +122,40 @@ object NativeHelper extends Logging {
     }
     metrics
   }
+
+  private def getDefaultNativeFileMetrics(sc: SparkContext): Map[String, SQLMetric] = {
+    TreeMap(
+      "bytes_scanned" -> SQLMetrics.createSizeMetric(sc, "Native.bytes_scanned"),
+      "io_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.io_time"),
+      "io_time_getfs" -> SQLMetrics.createNanoTimingMetric(sc, "Native.io_time_getfs"),
+      // Parquet metrics
+      "predicate_evaluation_errors" -> SQLMetrics.createMetric(
+        sc,
+        "Native.predicate_evaluation_errors"),
+      "row_groups_matched_bloom_filter" -> SQLMetrics.createMetric(
+        sc,
+        "Native.row_groups_matched_bloom_filter"),
+      "row_groups_pruned_bloom_filter" -> SQLMetrics.createMetric(
+        sc,
+        "Native.row_groups_pruned_bloom_filter"),
+      "row_groups_matched_statistics" -> SQLMetrics.createMetric(
+        sc,
+        "Native.row_groups_matched_statistics"),
+      "row_groups_pruned_statistics" -> SQLMetrics.createMetric(
+        sc,
+        "Native.row_groups_pruned_statistics"),
+      "pushdown_rows_filtered" -> SQLMetrics.createMetric(sc, "Native.pushdown_rows_filtered"),
+      "pushdown_eval_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.pushdown_eval_time"),
+      "page_index_rows_filtered" -> SQLMetrics.createMetric(
+        sc,
+        "Native.page_index_rows_filtered"),
+      "page_index_eval_time" -> SQLMetrics.createNanoTimingMetric(
+        sc,
+        "Native.page_index_eval_time"))
+  }
+
+  def getNativeFileScanMetrics(sc: SparkContext): Map[String, SQLMetric] = TreeMap(
+    getDefaultNativeMetrics(sc)
+      .filterKeys(Set("stage_id", "output_rows", "elapsed_compute"))
+      .toSeq ++ getDefaultNativeFileMetrics(sc).toSeq: _*)
 }
