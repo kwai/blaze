@@ -103,7 +103,7 @@ import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ReusedExc
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeShuffledHashJoinExecProvider
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeSortMergeJoinExecProvider
-import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLShuffleReadMetricsReporter}
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.IntegerType
@@ -562,7 +562,20 @@ class ShimsImpl extends Shims with Logging {
         val inputRDD = executeNative(child)
         val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
         val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
-        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
+
+        val requiredMetrics = nativeShuffle.readMetrics ++
+          nativeShuffle.metrics.filterKeys(_ == "shuffle_read_total_time")
+        val metrics = MetricNode(
+          requiredMetrics,
+          inputRDD.metrics :: Nil,
+          Some({
+            case ("output_rows", v) =>
+              val tempMetrics = TaskContext.get.taskMetrics().createTempShuffleReadMetrics()
+              new SQLShuffleReadMetricsReporter(tempMetrics, requiredMetrics).incRecordsRead(v)
+              TaskContext.get().taskMetrics().mergeShuffleReadMetrics()
+            case ("elapsed_compute", v) => requiredMetrics("shuffle_read_total_time") += v
+            case _ =>
+          }))
 
         new NativeRDD(
           shuffledRDD.sparkContext,
@@ -651,7 +664,20 @@ class ShimsImpl extends Shims with Logging {
         val inputRDD = executeNative(child)
         val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
         val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
-        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
+
+        val requiredMetrics = nativeShuffle.readMetrics ++
+          nativeShuffle.metrics.filterKeys(_ == "shuffle_read_total_time")
+        val metrics = MetricNode(
+          requiredMetrics,
+          inputRDD.metrics :: Nil,
+          Some({
+            case ("output_rows", v) =>
+              val tempMetrics = TaskContext.get.taskMetrics().createTempShuffleReadMetrics()
+              new SQLShuffleReadMetricsReporter(tempMetrics, requiredMetrics).incRecordsRead(v)
+              TaskContext.get().taskMetrics().mergeShuffleReadMetrics()
+            case ("elapsed_compute", v) => requiredMetrics("shuffle_read_total_time") += v
+            case _ =>
+          }))
 
         new NativeRDD(
           shuffledRDD.sparkContext,
@@ -730,7 +756,20 @@ class ShimsImpl extends Shims with Logging {
         val inputRDD = executeNative(child)
         val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
         val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
-        val metrics = MetricNode(Map(), inputRDD.metrics :: Nil)
+
+        val requiredMetrics = nativeShuffle.readMetrics ++
+          nativeShuffle.metrics.filterKeys(_ == "shuffle_read_total_time")
+        val metrics = MetricNode(
+          requiredMetrics,
+          inputRDD.metrics :: Nil,
+          Some({
+            case ("output_rows", v) =>
+              val tempMetrics = TaskContext.get.taskMetrics().createTempShuffleReadMetrics()
+              new SQLShuffleReadMetricsReporter(tempMetrics, requiredMetrics).incRecordsRead(v)
+              TaskContext.get().taskMetrics().mergeShuffleReadMetrics()
+            case ("elapsed_compute", v) => requiredMetrics("shuffle_read_total_time") += v
+            case _ =>
+          }))
 
         new NativeRDD(
           shuffledRDD.sparkContext,
