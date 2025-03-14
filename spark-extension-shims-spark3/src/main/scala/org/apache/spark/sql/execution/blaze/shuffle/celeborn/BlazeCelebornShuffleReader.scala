@@ -18,8 +18,7 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 import java.io.InputStream
 import java.io.IOException
 import java.util
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit, TimeoutException}
 import java.util.concurrent.atomic.AtomicReference
 import scala.collection.JavaConverters._
 import org.apache.celeborn.client.ShuffleClient
@@ -120,7 +119,9 @@ class BlazeCelebornShuffleReader[K, C](
       fileGroups = shuffleClient.updateFileGroup(shuffleId, startPartition)
     } catch {
       case ce @ (_: CelebornIOException | _: PartitionUnRetryAbleException) =>
-        handleFetchExceptions(handle.shuffleId, shuffleId, 0, ce)
+        // if a task is interrupted, should not report fetch failure
+        // if a task update file group timeout, should not report fetch failure
+        checkAndReportFetchFailureForUpdateFileGroupFailure(shuffleId, ce)
       case e: Throwable => throw e
     }
 
@@ -319,6 +320,19 @@ class BlazeCelebornShuffleReader[K, C](
     CompletionIterator[(BlockId, InputStream), Iterator[(BlockId, InputStream)]](
       recordIter.map(block => (null, block._2)), // blockId is not used
       () => context.taskMetrics().mergeShuffleReadMetrics())
+  }
+
+  private def checkAndReportFetchFailureForUpdateFileGroupFailure(
+      celebornShuffleId: Int,
+      ce: Throwable): Unit = {
+    if (ce.getCause != null &&
+      (ce.getCause.isInstanceOf[InterruptedException] || ce.getCause
+        .isInstanceOf[TimeoutException])) {
+      logWarning(s"fetch shuffle ${celebornShuffleId} timeout or interrupt", ce)
+      throw ce
+    } else {
+      handleFetchExceptions(handle.shuffleId, celebornShuffleId, 0, ce)
+    }
   }
 
   private def handleFetchExceptions(
