@@ -49,6 +49,7 @@ define_conf!(IntConf, SMJ_FALLBACK_ROWS_THRESHOLD);
 define_conf!(IntConf, SMJ_FALLBACK_MEM_SIZE_THRESHOLD);
 define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE);
 define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE);
+define_conf!(BooleanConf, ORC_FORCE_POSITIONAL_EVOLUTION);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;

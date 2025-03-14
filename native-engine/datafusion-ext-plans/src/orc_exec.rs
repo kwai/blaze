@@ -18,7 +18,9 @@
 use std::{any::Any, fmt, fmt::Formatter, pin::Pin, sync::Arc};
 
 use arrow::{datatypes::SchemaRef, error::ArrowError};
-use blaze_jni_bridge::{jni_call_static, jni_new_global_ref, jni_new_string};
+use blaze_jni_bridge::{
+    conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
+};
 use bytes::Bytes;
 use datafusion::{
     datasource::{
@@ -158,6 +160,8 @@ impl ExecutionPlan for OrcExec {
             None => (0..self.base_config.file_schema.fields().len()).collect(),
         };
 
+        let force_positional_evolution = conf::ORC_FORCE_POSITIONAL_EVOLUTION.value()?;
+
         let opener = OrcOpener {
             projection,
             batch_size: batch_size(),
@@ -165,6 +169,7 @@ impl ExecutionPlan for OrcExec {
             fs_provider,
             partition_index: partition,
             metrics: self.metrics.clone(),
+            force_positional_evolution,
         };
 
         let file_stream = Box::pin(FileStream::new(
@@ -210,6 +215,7 @@ struct OrcOpener {
     fs_provider: Arc<FsProvider>,
     partition_index: usize,
     metrics: ExecutionPlanMetricsSet,
+    force_positional_evolution: bool,
 }
 
 impl FileOpener for OrcOpener {
@@ -232,7 +238,11 @@ impl FileOpener for OrcOpener {
         let batch_size = self.batch_size;
         let projection = self.projection.clone();
         let projected_schema = SchemaRef::from(self.table_schema.project(&projection)?);
-        let schema_adapter = SchemaAdapter::new(projected_schema);
+        let schema_adapter = SchemaAdapter::new(
+            self.table_schema.clone(),
+            projected_schema,
+            self.force_positional_evolution,
+        );
 
         Ok(Box::pin(async move {
             let mut builder = ArrowReaderBuilder::try_new_async(reader)
@@ -290,32 +300,78 @@ impl AsyncChunkReader for OrcFileReaderRef {
 
 struct SchemaAdapter {
     table_schema: SchemaRef,
+    projected_schema: SchemaRef,
+    force_positional_evolution: bool,
 }
 
 impl SchemaAdapter {
-    pub fn new(table_schema: SchemaRef) -> Self {
-        Self { table_schema }
+    pub fn new(
+        table_schema: SchemaRef,
+        projected_schema: SchemaRef,
+        force_positional_evolution: bool,
+    ) -> Self {
+        Self {
+            table_schema,
+            projected_schema,
+            force_positional_evolution,
+        }
     }
 
     fn map_schema(
         &self,
         orc_file_meta: &FileMetadata,
     ) -> Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        let mut projection = Vec::with_capacity(self.table_schema.fields().len());
-        let mut field_mappings = vec![None; self.table_schema.fields().len()];
+        let mut projection = Vec::with_capacity(self.projected_schema.fields().len());
+        let mut field_mappings = vec![None; self.projected_schema.fields().len()];
 
-        for named_column in orc_file_meta.root_data_type().children() {
-            if let Some((table_idx, _table_field)) =
-                self.table_schema.fields().find(named_column.name())
-            {
-                field_mappings[table_idx] = Some(projection.len());
-                projection.push(named_column.data_type().column_index());
+        let file_named_columns = orc_file_meta.root_data_type().children();
+        if self.force_positional_evolution
+            || file_named_columns
+                .iter()
+                .all(|named_col| named_col.name().starts_with("_col"))
+        {
+            let table_schema_fields = self.table_schema.fields();
+            assert!(
+                file_named_columns.len() <= table_schema_fields.len(),
+                "The given table schema {:?} (length:{}) has fewer {} fields than \
+                the actual ORC physical schema {:?} (length:{})",
+                table_schema_fields,
+                table_schema_fields.len(),
+                file_named_columns.len() - table_schema_fields.len(),
+                file_named_columns,
+                file_named_columns.len()
+            );
+            for (proj_idx, project_field) in self.projected_schema.fields.iter().enumerate() {
+                match self.table_schema.fields().find(project_field.name()) {
+                    Some((tbl_idx, _)) => {
+                        if let Some(named_column) = file_named_columns.get(tbl_idx) {
+                            field_mappings[proj_idx] = Some(projection.len());
+                            projection.push(named_column.data_type().column_index());
+                        }
+                    }
+                    None => {
+                        return df_execution_err!(
+                            "Cannot find field {} in table schema {:?}",
+                            project_field.name(),
+                            table_schema_fields
+                        );
+                    }
+                }
+            }
+        } else {
+            for named_column in file_named_columns {
+                if let Some((proj_idx, _)) =
+                    self.projected_schema.fields().find(named_column.name())
+                {
+                    field_mappings[proj_idx] = Some(projection.len());
+                    projection.push(named_column.data_type().column_index());
+                }
             }
         }
 
         Ok((
             Arc::new(BlazeSchemaMapping::new(
-                self.table_schema.clone(),
+                self.projected_schema.clone(),
                 field_mappings,
             )),
             projection,
