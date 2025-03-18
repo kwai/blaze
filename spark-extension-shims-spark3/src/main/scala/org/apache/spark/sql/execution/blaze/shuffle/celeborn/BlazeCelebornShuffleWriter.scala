@@ -22,16 +22,19 @@ import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffle
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.TaskContext
+import org.apache.spark.scheduler.MapStatus
+import org.apache.spark.shuffle.ShuffleWriter
 
 import com.thoughtworks.enableIf
 
-class BlazeCelebornShuffleWriter[K, C](
+class BlazeCelebornShuffleWriter[K, V](
+    celebornShuffleWriter: ShuffleWriter[K, V],
     shuffleClient: ShuffleClient,
     taskContext: TaskContext,
-    handle: CelebornShuffleHandle[K, _, C],
+    handle: CelebornShuffleHandle[K, V, _],
     metrics: ShuffleWriteMetricsReporter,
     shuffleIdTracker: ExecutorShuffleIdTracker)
-    extends BlazeRssShuffleWriterBase[K, C](metrics) {
+    extends BlazeRssShuffleWriterBase[K, V](metrics) {
 
   private val numMappers = handle.numMappers
   private val encodedAttemptId = BlazeCelebornShuffleManager.getEncodedAttemptNumber(taskContext)
@@ -58,4 +61,8 @@ class BlazeCelebornShuffleWriter[K, C](
       System.getProperty("blaze.shim")))
   override def getPartitionLengths(): Array[Long] = partitionLengths
 
+  override def stop(success: Boolean): Option[MapStatus] = {
+    celebornShuffleWriter.write(Iterator.empty) // force flush
+    celebornShuffleWriter.stop(success)
+  }
 }
