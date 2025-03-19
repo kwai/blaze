@@ -19,9 +19,11 @@ import java.nio.ByteBuffer
 
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.celeborn.client.ShuffleClient
+import org.apache.celeborn.client.ShuffleClientImpl
 import org.apache.spark.internal.Logging
 import org.apache.spark.TaskContext
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.ShuffleWriter
 
 class CelebornPartitionWriter(
     shuffleClient: ShuffleClient,
@@ -40,8 +42,7 @@ class CelebornPartitionWriter(
     val numBytes = buffer.limit()
     val bytes = new Array[Byte](numBytes)
     buffer.get(bytes)
-
-    val bytesWritten = shuffleClient.pushData(
+    val bytesWritten = shuffleClient.asInstanceOf[ShuffleClientImpl].pushOrMergeData(
       shuffleId,
       mapId,
       encodedAttemptId,
@@ -50,7 +51,10 @@ class CelebornPartitionWriter(
       0,
       numBytes,
       numMappers,
-      numPartitions)
+      numPartitions,
+      true, // doPush
+      true, // skipCompress
+    )
     metrics.incBytesWritten(bytesWritten)
     mapStatusLengths(partitionId) += bytesWritten
   }

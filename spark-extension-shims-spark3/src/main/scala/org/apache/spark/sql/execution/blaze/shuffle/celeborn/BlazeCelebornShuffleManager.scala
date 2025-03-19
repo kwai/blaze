@@ -127,23 +127,22 @@ class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): BlazeRssShuffleWriterBase[K, V] = {
 
-    // ensure celeborn client is initialized
-    assert(celebornShuffleManager.getWriter(handle, mapId, context, metrics) != null)
+    val celebornShuffleWriter = celebornShuffleManager.getWriter[K, V](handle, mapId, context, metrics)
     val shuffleClient = FieldUtils
       .readField(celebornShuffleManager, "shuffleClient", true)
       .asInstanceOf[ShuffleClient]
 
-    val celebornHandle = handle.asInstanceOf[CelebornShuffleHandle[_, _, _]]
+    val celebornHandle = handle.asInstanceOf[CelebornShuffleHandle[K, V, _]]
     val shuffleIdTracker = FieldUtils
       .readField(celebornShuffleManager, "shuffleIdTracker", true)
       .asInstanceOf[ExecutorShuffleIdTracker]
-    val writer = new BlazeCelebornShuffleWriter(
+    new BlazeCelebornShuffleWriter[K, V](
+      celebornShuffleWriter,
       shuffleClient,
       context,
       celebornHandle,
       metrics,
       shuffleIdTracker)
-    writer.asInstanceOf[BlazeRssShuffleWriterBase[K, V]]
   }
 
   override def getRssShuffleWriter[K, V](
