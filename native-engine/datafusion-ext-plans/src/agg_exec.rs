@@ -22,6 +22,7 @@ use arrow::{
     array::{RecordBatch, RecordBatchOptions},
     datatypes::SchemaRef,
 };
+use blaze_jni_bridge::conf::{IntConf, UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG};
 use datafusion::{
     common::{Result, Statistics},
     error::DataFusionError,
@@ -42,12 +43,14 @@ use crate::{
         agg::IdxSelection,
         agg_ctx::AggContext,
         agg_table::{AggTable, OwnedKey},
+        spark_udaf_wrapper::SparkUDAFWrapper,
         AggExecMode, AggExpr, GroupingExpr,
     },
     common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
     expand_exec::ExpandExec,
     memmgr::MemManager,
     project_exec::ProjectExec,
+    sort_exec::create_default_ascending_sort_exec,
 };
 
 #[derive(Debug)]
@@ -164,7 +167,31 @@ fn execute_agg(
 ) -> Result<SendableRecordBatchStream> {
     Ok(match agg_ctx.exec_mode {
         _ if agg_ctx.groupings.is_empty() => execute_agg_no_grouping(input, exec_ctx, agg_ctx)?,
-        AggExecMode::HashAgg => execute_agg_with_grouping_hash(input, exec_ctx, agg_ctx)?,
+        AggExecMode::HashAgg => {
+            let num_udafs = agg_ctx
+                .aggs
+                .iter()
+                .filter(|agg| downcast_any!(agg.agg, SparkUDAFWrapper).is_ok())
+                .count();
+            if num_udafs
+                >= UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG
+                    .value()
+                    .unwrap_or(1) as usize
+            {
+                let input_sorted = create_default_ascending_sort_exec(
+                    input,
+                    &agg_ctx
+                        .groupings
+                        .iter()
+                        .map(|g| g.expr.clone())
+                        .collect::<Vec<_>>(),
+                    Some(exec_ctx.execution_plan_metrics().clone()),
+                );
+                execute_agg_sorted(input_sorted, exec_ctx, agg_ctx)?
+            } else {
+                execute_agg_with_grouping_hash(input, exec_ctx, agg_ctx)?
+            }
+        }
         AggExecMode::SortAgg => execute_agg_sorted(input, exec_ctx, agg_ctx)?,
     })
 }
@@ -175,7 +202,7 @@ fn execute_agg_with_grouping_hash(
     agg_ctx: Arc<AggContext>,
 ) -> Result<SendableRecordBatchStream> {
     // create tables
-    let tables = Arc::new(AggTable::new(agg_ctx.clone(), exec_ctx.clone()));
+    let tables = Arc::new(AggTable::try_new(agg_ctx.clone(), exec_ctx.clone())?);
     MemManager::register_consumer(tables.clone(), true);
 
     // start processing input batches
@@ -305,6 +332,7 @@ fn execute_agg_sorted(
 
             let mut staging_keys: Vec<OwnedKey> = vec![];
             let mut staging_acc_table = agg_ctx.create_acc_table(0);
+            let mut acc_indices = vec![];
 
             macro_rules! flush_staging {
                 () => {{
@@ -320,7 +348,8 @@ fn execute_agg_sorted(
                     sender.send((batch)).await;
                 }};
             }
-            while let Some(mut batch) = elapsed_compute
+
+            while let Some(batch) = elapsed_compute
                 .exclude_timer_async(coalesced.next())
                 .await
                 .transpose()?
@@ -329,31 +358,39 @@ fn execute_agg_sorted(
                 let grouping_rows = agg_ctx.create_grouping_rows(&batch)?;
 
                 // update to current record
-                let mut acc_indices = vec![];
-                for grouping_row in &grouping_rows {
-                    if Some(grouping_row.as_ref()) != staging_keys.last().map(|key| key.as_ref()) {
+                let mut batch_range_start = 0;
+                let mut batch_range_end = 0;
+                while batch_range_end < batch.num_rows() {
+                    let grouping_row = &grouping_rows.row(batch_range_end);
+                    let same_key =
+                        matches!(staging_keys.last(), Some(k) if k == grouping_row.as_ref());
+                    if !same_key {
                         if staging_keys.len() >= batch_size {
-                            let flushing_len = acc_indices.len();
-                            let flushing_batch = batch.slice(0, flushing_len);
-                            batch = batch.slice(flushing_len, batch.num_rows() - flushing_len);
-                            agg_ctx.update_batch_to_acc_table(
-                                &flushing_batch,
+                            agg_ctx.update_batch_slice_to_acc_table(
+                                &batch,
+                                batch_range_start,
+                                batch_range_end,
                                 &mut staging_acc_table,
                                 IdxSelection::Indices(&acc_indices),
                             )?;
                             acc_indices.clear();
+                            batch_range_start = batch_range_end;
                             flush_staging!();
                         }
                         staging_keys.push(OwnedKey::from(grouping_row.as_ref()));
-                        staging_acc_table.resize(staging_keys.len());
                     }
                     acc_indices.push(staging_keys.len() - 1);
+                    batch_range_end += 1;
                 }
-                agg_ctx.update_batch_to_acc_table(
+
+                agg_ctx.update_batch_slice_to_acc_table(
                     &batch,
+                    batch_range_start,
+                    batch.num_rows(),
                     &mut staging_acc_table,
                     IdxSelection::Indices(&acc_indices),
                 )?;
+                acc_indices.clear();
             }
 
             if !staging_keys.is_empty() {

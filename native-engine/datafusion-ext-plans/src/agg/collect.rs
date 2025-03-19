@@ -118,6 +118,9 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         let accs = downcast_any!(accs, mut C).unwrap();
         idx_for_zipped! {
             ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                if acc_idx >= accs.num_records() {
+                    accs.resize(acc_idx + 1);
+                }
                 let scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
                 if !scalar.is_null() {
                     accs.append_item(acc_idx, &scalar);
@@ -138,6 +141,9 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         let merging_accs = downcast_any!(merging_accs, mut C).unwrap();
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                if acc_idx >= accs.num_records() {
+                    accs.resize(acc_idx + 1);
+                }
                 accs.merge_items(acc_idx, merging_accs, merging_acc_idx);
             }
         }
@@ -254,6 +260,10 @@ impl AccCollectionColumn for AccSetColumn {
 }
 
 impl AccColumn for AccSetColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -363,6 +373,10 @@ impl AccCollectionColumn for AccListColumn {
 }
 
 impl AccColumn for AccListColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -424,10 +438,6 @@ struct AccList {
 }
 
 impl AccList {
-    pub fn from_raw(raw: Vec<u8>) -> Self {
-        Self { raw }
-    }
-
     pub fn mem_size(&self) -> usize {
         self.raw.capacity()
     }

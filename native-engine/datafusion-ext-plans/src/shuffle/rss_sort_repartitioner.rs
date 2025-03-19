@@ -100,7 +100,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         // repartition is lower than other consumers.
         // rss shuffle spill has even lower cost than normal shuffle
         if self.mem_used_percent() > 0.4 {
-            self.spill().await?;
+            self.force_spill().await?;
         }
         Ok(())
     }
@@ -109,7 +109,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
         self.set_spillable(false);
         let has_data = !self.data.lock().await.is_empty();
         if has_data {
-            self.spill().await?;
+            self.force_spill().await?;
         }
         Ok(())
     }

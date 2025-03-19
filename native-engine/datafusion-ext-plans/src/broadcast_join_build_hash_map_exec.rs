@@ -201,7 +201,11 @@ pub fn execute_build_hash_map(
                     .chain(input),
             ));
             let input_exec = create_record_batch_stream_exec(input, exec_ctx.partition_id())?;
-            let sort_exec = create_default_ascending_sort_exec(input_exec, &keys);
+            let sort_exec = create_default_ascending_sort_exec(
+                input_exec,
+                &keys,
+                Some(exec_ctx.execution_plan_metrics().clone()),
+            );
             let mut sorted_stream =
                 sort_exec.execute(exec_ctx.partition_id(), exec_ctx.task_ctx())?;
 

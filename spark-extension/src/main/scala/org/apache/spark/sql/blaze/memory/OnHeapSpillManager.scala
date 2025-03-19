@@ -118,6 +118,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
       .read(buf)
   }
 
+  def getSpillSize(spillId: Int): Long = {
+    spills(spillId).map(_.size).getOrElse(0)
+  }
+
   def getSpillDiskUsage(spillId: Int): Long = {
     spills(spillId).map(_.diskUsed).getOrElse(0)
   }
@@ -139,16 +143,19 @@ class OnHeapSpillManager(taskContext: TaskContext)
   }
 
   override def spill(size: Long, trigger: MemoryConsumer): Long = {
-    if (memUsed == 0) {
+    if (trigger != this && memUsed * 2 < this.taskMemoryManager.getMemoryConsumptionForThisTask) {
       return 0L
     }
+
     logInfo(s"starts spilling to disk, size=${Utils.bytesToString(size)}}")
     dumpStatus()
     var totalFreed = 0L
 
+    // prefer the max spill, to avoid generating too many small files
     Utils.tryWithSafeFinally {
       synchronized {
-        spills.foreach {
+        val sortedSpills = spills.seq.sortBy(0 - _.map(_.memUsed).getOrElse(0L))
+        sortedSpills.foreach {
           case Some(spill) if spill.memUsed > 0 =>
             totalFreed += spill.spill()
             if (totalFreed >= size) {

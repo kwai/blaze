@@ -19,7 +19,10 @@ import java.io.{File, RandomAccessFile}
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util
+
 import org.apache.spark.internal.Logging
+import org.apache.spark.util.Utils
+
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
 
@@ -38,11 +41,18 @@ class MemBasedSpillBuf extends SpillBuf with Logging {
   private var mem: Long = 0
 
   override def write(buf: ByteBuffer): Unit = {
-    val numBytes = buf.limit()
-    val copiedBuf = Unpooled.copiedBuffer(buf)
-    numWrittenBytes += numBytes
-    mem += numBytes
-    bufs.addLast(copiedBuf)
+    if (buf.isDirect) {
+      val numBytes = buf.limit()
+      val copiedBuf = Unpooled.copiedBuffer(buf)
+      numWrittenBytes += numBytes
+      mem += numBytes
+      bufs.addLast(copiedBuf)
+    } else {
+      val numBytes = buf.capacity()
+      numWrittenBytes += numBytes
+      mem += numBytes
+      bufs.addLast(Unpooled.wrappedBuffer(buf))
+    }
   }
 
   override def read(buf: ByteBuffer): Unit = {
@@ -70,7 +80,7 @@ class MemBasedSpillBuf extends SpillBuf with Logging {
   override def size: Long = numWrittenBytes
 
   def spill(hsm: OnHeapSpillManager): FileBasedSpillBuf = {
-    logWarning(s"spilling in-mem spill buffer to disk, size=${size}")
+    logWarning(s"spilling in-mem spill buffer to disk, size=${Utils.bytesToString(size)}")
 
     val startTimeNs = System.nanoTime()
     val file = hsm.blockManager.diskBlockManager.createTempLocalBlock()._2
@@ -83,13 +93,18 @@ class MemBasedSpillBuf extends SpillBuf with Logging {
       }
     }
     val endTimeNs = System.nanoTime
-    new FileBasedSpillBuf(file, channel, endTimeNs - startTimeNs)
+    new FileBasedSpillBuf(numWrittenBytes, file, channel, endTimeNs - startTimeNs)
   }
 }
 
-class FileBasedSpillBuf(file: File, fileChannel: FileChannel, var diskIOTimeNs: Long)
+class FileBasedSpillBuf(
+    numWrittenBytes: Long,
+    file: File,
+    fileChannel: FileChannel,
+    var diskIOTimeNs: Long)
     extends SpillBuf
     with Logging {
+
   private var readPosition: Long = 0
 
   override def write(buf: ByteBuffer): Unit = {
@@ -110,7 +125,7 @@ class FileBasedSpillBuf(file: File, fileChannel: FileChannel, var diskIOTimeNs: 
 
   override def memUsed: Long = 0
   override def diskUsed: Long = fileChannel.size()
-  override def size: Long = diskUsed
+  override def size: Long = numWrittenBytes
 
   override def release(): Unit = {
     fileChannel.close()

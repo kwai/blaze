@@ -14,7 +14,6 @@
 
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
-#![feature(new_uninit)]
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 

@@ -27,7 +27,7 @@ use paste::paste;
 
 use crate::{
     agg::{
-        acc::{AccBytes, AccColumnRef, AccGenericColumn},
+        acc::{AccBytes, AccColumn, AccColumnRef, AccGenericColumn},
         agg::IdxSelection,
         Agg,
     },
@@ -103,6 +103,9 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                      ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                         if acc_idx >= accs.num_records() {
+                             accs.resize(acc_idx + 1);
+                         }
                          if !partial_arg.is_valid(partial_arg_idx) {
                              continue;
                          }
@@ -127,6 +130,9 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if !partial_arg.is_valid(partial_arg_idx) {
                             continue;
                         }
@@ -171,6 +177,9 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             _ => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         let partial_arg_scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
                         if !partial_arg_scalar.is_null() {
                             let acc_scalar = &mut accs.scalar_values_mut()[acc_idx];
@@ -208,6 +217,9 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             ($ty:ty) => {{
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if !merging_accs.prim_valid(merging_acc_idx) {
                             continue;
                         }

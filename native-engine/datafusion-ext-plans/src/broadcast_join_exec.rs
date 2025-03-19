@@ -416,12 +416,14 @@ async fn execute_join_with_smj_fallback(
             create_default_ascending_sort_exec(
                 create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
                 &join_params.right_keys,
+                Some(exec_ctx.execution_plan_metrics().clone()),
             ),
         ),
         JoinSide::Right => (
             create_default_ascending_sort_exec(
                 create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
                 &join_params.left_keys,
+                Some(exec_ctx.execution_plan_metrics().clone()),
             ),
             built_sorted,
         ),

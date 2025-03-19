@@ -98,15 +98,25 @@ impl Agg for AggCount {
         if partial_args.is_empty() {
             idx_for_zipped! {
                 ((acc_idx, _partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                    accs.values[acc_idx] += 1;
+                    if acc_idx >= accs.values.len() {
+                        accs.values.push(1);
+                    } else {
+                        accs.values[acc_idx] += 1;
+                    }
                 }
             }
         } else {
             idx_for_zipped! {
                 ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                    accs.values[acc_idx] += partial_args
-                    .iter()
-                    .all(|arg| arg.is_valid(partial_arg_idx)) as i64;
+                    let add = partial_args
+                        .iter()
+                        .all(|arg| arg.is_valid(partial_arg_idx)) as i64;
+
+                    if acc_idx >= accs.values.len() {
+                        accs.values.push(add);
+                    } else {
+                        accs.values[acc_idx] += add;
+                    }
                 }
             }
         }
@@ -125,7 +135,11 @@ impl Agg for AggCount {
 
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                accs.values[acc_idx] += merging_accs.values[merging_acc_idx];
+                if acc_idx < accs.values.len() {
+                    accs.values[acc_idx] += merging_accs.values[merging_acc_idx];
+                } else {
+                    accs.values.push(merging_accs.values[merging_acc_idx]);
+                }
             }
         }
         Ok(())
@@ -149,6 +163,10 @@ pub struct AccCountColumn {
 }
 
 impl AccColumn for AccCountColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

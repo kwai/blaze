@@ -25,7 +25,7 @@ use paste::paste;
 
 use crate::{
     agg::{
-        acc::{AccColumnRef, AccGenericColumn},
+        acc::{AccColumn, AccColumnRef, AccGenericColumn},
         agg::IdxSelection,
         Agg,
     },
@@ -102,6 +102,9 @@ impl Agg for AggSum {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if partial_arg.is_valid(partial_arg_idx) {
                             let partial_value = partial_arg.value(partial_arg_idx);
                             if !accs.prim_valid(acc_idx) {
@@ -147,6 +150,9 @@ impl Agg for AggSum {
             ($ty:ty) => {{
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if merging_accs.prim_valid(merging_acc_idx) {
                             let merging_value = merging_accs.prim_value::<$ty>(merging_acc_idx);
                             if !accs.prim_valid(acc_idx) {

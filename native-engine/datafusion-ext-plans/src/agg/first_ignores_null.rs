@@ -27,7 +27,7 @@ use datafusion_ext_commons::downcast_any;
 
 use crate::{
     agg::{
-        acc::{AccBytes, AccColumnRef, AccGenericColumn},
+        acc::{AccBytes, AccColumn, AccColumnRef, AccGenericColumn},
         agg::IdxSelection,
         Agg,
     },
@@ -97,6 +97,9 @@ impl Agg for AggFirstIgnoresNull {
                 let partial_arg = downcast_any!(partial_arg, TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if accs.bytes_value(acc_idx).is_none() && partial_arg.is_valid(partial_arg_idx) {
                             accs.set_bytes_value(acc_idx, Some(AccBytes::from(partial_arg.value(partial_arg_idx).as_ref())));
                         }
@@ -109,6 +112,9 @@ impl Agg for AggFirstIgnoresNull {
             partial_arg => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if !accs.prim_valid(acc_idx) && partial_arg.is_valid(partial_arg_idx) {
                             accs.set_prim_valid(acc_idx, true);
                             accs.set_prim_value(acc_idx, partial_arg.value(partial_arg_idx));
@@ -121,6 +127,9 @@ impl Agg for AggFirstIgnoresNull {
             _other => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
                         if accs.scalar_values()[acc_idx].is_null() && partial_arg.is_valid(partial_arg_idx) {
                             accs.scalar_values_mut()[acc_idx] = ScalarValue::try_from_array(partial_arg, partial_arg_idx)?;
                         }
@@ -141,11 +150,14 @@ impl Agg for AggFirstIgnoresNull {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let mut accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
         let mut merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
         let old_heap_mem_used = accs.items_heap_mem_used(acc_idx);
 
-        match (&mut accs, &mut merging_accs) {
+        // safety: bypass borrow checker
+        let accs_values: &mut AccGenericColumn = unsafe { std::mem::transmute(&mut *accs) };
+
+        match (accs_values, &mut merging_accs) {
             (
                 AccGenericColumn::Prim {
                     raw,
@@ -161,6 +173,10 @@ impl Agg for AggFirstIgnoresNull {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
+
                         if !valids[acc_idx] && other_valids[merging_acc_idx] {
                             valids.set(acc_idx, true);
                             let acc_offset = *prim_size * acc_idx;
@@ -179,6 +195,10 @@ impl Agg for AggFirstIgnoresNull {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
+
                         let item = &mut items[acc_idx];
                         let mut other_item = &mut other_items[merging_acc_idx];
                         if item.is_none() && other_item.is_some() {
@@ -195,6 +215,10 @@ impl Agg for AggFirstIgnoresNull {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if acc_idx >= accs.num_records() {
+                            accs.resize(acc_idx + 1);
+                        }
+
                         let item = &mut items[acc_idx];
                         let mut other_item = &mut other_items[merging_acc_idx];
                         if item.is_null() && !other_item.is_null() {
