@@ -16,14 +16,11 @@
 package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
 import org.apache.celeborn.client.ShuffleClient
-import org.apache.spark.shuffle.ShuffleHandle
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffleIdTracker, SparkUtils}
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
-import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.spark.TaskContext
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter, ShuffleWriter}
+import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffleIdTracker, SparkUtils}
+import org.apache.spark.sql.execution.blaze.shuffle.{BlazeRssShuffleWriterBase, RssPartitionWriterBase}
 
 import com.thoughtworks.enableIf
 

@@ -17,18 +17,12 @@ package org.apache.spark.sql.execution.blaze.shuffle
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.Aggregator
-import org.apache.spark.Partitioner
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.SparkEnv
-
+import org.apache.spark.{Aggregator, Partitioner, ShuffleDependency, SparkEnv}
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.BaseShuffleHandle
-import org.apache.spark.shuffle.ShuffleHandle
-import org.apache.spark.shuffle.ShuffleWriteProcessor
+import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleHandle, ShuffleWriteProcessor}
+import org.apache.spark.sql.types.StructType
 
 class BlazeShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],

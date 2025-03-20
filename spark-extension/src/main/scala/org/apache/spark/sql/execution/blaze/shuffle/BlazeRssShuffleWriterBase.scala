@@ -17,26 +17,15 @@ package org.apache.spark.sql.execution.blaze.shuffle
 
 import java.util.UUID
 
-import scala.collection.mutable
-
-import org.apache.spark.SparkEnv
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.sql.blaze.JniBridge
-import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.Shims
-import org.apache.spark.Partition
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.TaskContext
+import org.apache.spark.{Partition, ShuffleDependency, SparkEnv, TaskContext}
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.ShuffleHandle
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.RssShuffleWriterExecNode
+import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
+import org.apache.spark.sql.blaze.{JniBridge, NativeHelper, NativeRDD, Shims}
+import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode}
 
 abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends BlazeShuffleWriterBase[K, V](metrics) {
 
-  private val partitionWriters = mutable.ArrayBuffer[RssPartitionWriterBase]()
   private var mapStatus: Option[MapStatus] = None
 
   def getRssPartitionWriter(
@@ -58,8 +47,6 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
     if (rssShuffleWriterObject == null) {
       throw new RuntimeException("cannot get RssPartitionWriter")
     }
-    partitionWriters.append(rssShuffleWriterObject)
-
     try {
       val jniResourceId = s"RssPartitionWriter:${UUID.randomUUID().toString}"
       JniBridge.resourcesMap.put(jniResourceId, rssShuffleWriterObject)
@@ -90,7 +77,6 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
-    partitionWriters.foreach(_.stop(success))
     super.stop(success)
     mapStatus.filter(_ => success)
   }

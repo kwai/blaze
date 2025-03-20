@@ -15,9 +15,7 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.SparkConf
-import org.apache.spark.TaskContext
+import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle

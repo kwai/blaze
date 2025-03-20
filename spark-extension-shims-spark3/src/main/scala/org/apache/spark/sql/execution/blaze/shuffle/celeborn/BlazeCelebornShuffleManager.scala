@@ -18,21 +18,10 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 import org.apache.celeborn.client.ShuffleClient
 import org.apache.celeborn.common.CelebornConf
 import org.apache.commons.lang3.reflect.FieldUtils
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleManagerBase
-import org.apache.spark.SparkConf
-import org.apache.spark.TaskContext
-import org.apache.spark.shuffle.ShuffleBlockResolver
-import org.apache.spark.shuffle.ShuffleReader
-import org.apache.spark.shuffle.ShuffleWriter
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.shuffle.ShuffleHandle
-import org.apache.spark.shuffle.ShuffleReadMetricsReporter
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.celeborn.SparkShuffleManager
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleReaderBase
-import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
-import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
+import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
+import org.apache.spark.shuffle._
+import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffleIdTracker, SparkShuffleManager}
+import org.apache.spark.sql.execution.blaze.shuffle.{BlazeRssShuffleManagerBase, BlazeRssShuffleReaderBase, BlazeRssShuffleWriterBase}
 
 class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
     extends BlazeRssShuffleManagerBase(conf) {
@@ -127,7 +116,8 @@ class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): BlazeRssShuffleWriterBase[K, V] = {
 
-    val celebornShuffleWriter = celebornShuffleManager.getWriter[K, V](handle, mapId, context, metrics)
+    val celebornShuffleWriter =
+      celebornShuffleManager.getWriter[K, V](handle, mapId, context, metrics)
     val shuffleClient = FieldUtils
       .readField(celebornShuffleManager, "shuffleClient", true)
       .asInstanceOf[ShuffleClient]
