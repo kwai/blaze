@@ -15,10 +15,11 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
-import java.io.{IOException, InputStream}
+import java.io.{InputStream, IOException}
 import java.util
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.{ConcurrentHashMap, TimeUnit, TimeoutException}
+import java.util.concurrent.{ConcurrentHashMap, TimeoutException, TimeUnit}
+
 import scala.collection.JavaConverters._
 
 import org.apache.celeborn.client.ShuffleClient
@@ -31,6 +32,7 @@ import org.apache.celeborn.common.network.protocol.TransportMessage
 import org.apache.celeborn.common.protocol._
 import org.apache.celeborn.common.protocol.message.StatusCode
 import org.apache.celeborn.common.util.{ExceptionMaker, JavaUtils, ThreadUtils, Utils}
+import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.{FetchFailedException, ShuffleReadMetricsReporter}
@@ -242,7 +244,15 @@ class BlazeCelebornShuffleReader[K, C](
             streamHandlers,
             fileGroups.mapAttempts,
             metricsCallback)
+
+          // force disable decompression because compression is skipped in shuffle writer
+          FieldUtils.writeField(
+            inputStream,
+            "shuffleCompressionEnabled",
+            Boolean.box(false).asInstanceOf[Object],
+            true)
           streams.put(partitionId, inputStream)
+
         } catch {
           case e: IOException =>
             logError(s"Exception caught when readPartition $partitionId!", e)
