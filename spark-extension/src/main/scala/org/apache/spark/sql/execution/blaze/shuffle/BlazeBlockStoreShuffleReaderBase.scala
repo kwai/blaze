@@ -15,23 +15,16 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.io.FileInputStream
-import java.io.InputStream
-import java.nio.channels.Channels
-import java.nio.channels.ReadableByteChannel
+import java.io.{FileInputStream, InputStream}
 import java.nio.ByteBuffer
-
+import java.nio.channels.{Channels, ReadableByteChannel}
 import scala.annotation.tailrec
 
-import org.apache.commons.lang3.reflect.FieldUtils
-import org.apache.commons.lang3.reflect.MethodUtils
-import org.apache.spark.InterruptibleIterator
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.TaskContext
+import org.apache.commons.lang3.reflect.{FieldUtils, MethodUtils}
+import org.apache.spark.{InterruptibleIterator, ShuffleDependency, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.LimitedInputStream
-import org.apache.spark.shuffle.BaseShuffleHandle
-import org.apache.spark.shuffle.ShuffleReader
+import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleReader}
 import org.apache.spark.storage.BlockId
 
 abstract class BlazeBlockStoreShuffleReaderBase[K, C](

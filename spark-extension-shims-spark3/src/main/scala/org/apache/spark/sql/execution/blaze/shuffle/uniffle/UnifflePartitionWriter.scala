@@ -70,6 +70,4 @@ class UnifflePartitionWriter[K, V, C](
   }
 
   override def getPartitionLengthMap: Array[Long] = mapStatusLengths
-
-  override def stop(isSuccess: Boolean): Unit = {}
 }

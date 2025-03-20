@@ -19,7 +19,10 @@ import org.apache.spark.sql.Row
 
 import scala.collection.mutable.ArrayBuffer
 
-class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSuite with BlazeSQLTestHelper {
+class BlazeQuerySuite
+    extends org.apache.spark.sql.QueryTest
+    with BaseBlazeSQLSuite
+    with BlazeSQLTestHelper {
   import testImplicits._
 
   test("test partition path has url encoded character") {
@@ -158,18 +161,19 @@ class BlazeQuerySuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSu
   test("SPARK-32864: Support ORC forced positional evolution with partitioned table") {
     Seq(true, false).foreach { forcePositionalEvolution =>
       withEnvConf(
-        BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString,
-      ) {
+        BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString) {
         withTempPath { f =>
           val path = f.getCanonicalPath
           Seq[(Integer, Integer, Integer)]((1, 2, 1), (3, 4, 2), (5, 6, 3), (null, null, 4))
-            .toDF("c1", "c2", "p").write.partitionBy("p").orc(path)
+            .toDF("c1", "c2", "p")
+            .write
+            .partitionBy("p")
+            .orc(path)
           val correctAnswer = Seq(Row(1, 2, 1), Row(3, 4, 2), Row(5, 6, 3), Row(null, null, 4))
           checkAnswer(spark.read.orc(path), correctAnswer)
 
           withTable("t") {
-            sql(
-              s"""
+            sql(s"""
                  |CREATE EXTERNAL TABLE t(c3 INT, c2 INT)
                  |USING ORC
                  |PARTITIONED BY (p int)

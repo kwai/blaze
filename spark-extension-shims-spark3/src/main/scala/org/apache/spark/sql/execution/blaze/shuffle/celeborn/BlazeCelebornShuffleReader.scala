@@ -15,41 +15,28 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
-import java.io.InputStream
-import java.io.IOException
+import java.io.{IOException, InputStream}
 import java.util
-import java.util.concurrent.{ConcurrentHashMap, TimeUnit, TimeoutException}
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit, TimeoutException}
 import scala.collection.JavaConverters._
+
 import org.apache.celeborn.client.ShuffleClient
 import org.apache.celeborn.client.ShuffleClientImpl.ReduceFileGroups
-import org.apache.celeborn.client.read.CelebornInputStream
-import org.apache.celeborn.client.read.MetricsCallback
+import org.apache.celeborn.client.read.{CelebornInputStream, MetricsCallback}
 import org.apache.celeborn.common.CelebornConf
-import org.apache.celeborn.common.exception.CelebornIOException
-import org.apache.celeborn.common.exception.PartitionUnRetryAbleException
+import org.apache.celeborn.common.exception.{CelebornIOException, PartitionUnRetryAbleException}
 import org.apache.celeborn.common.network.client.TransportClient
 import org.apache.celeborn.common.network.protocol.TransportMessage
-import org.apache.celeborn.common.protocol.MessageType
-import org.apache.celeborn.common.protocol.PartitionLocation
-import org.apache.celeborn.common.protocol.PbOpenStreamList
-import org.apache.celeborn.common.protocol.PbOpenStreamListResponse
-import org.apache.celeborn.common.protocol.PbStreamHandler
+import org.apache.celeborn.common.protocol._
 import org.apache.celeborn.common.protocol.message.StatusCode
-import org.apache.celeborn.common.util.JavaUtils
-import org.apache.celeborn.common.util.ThreadUtils
-import org.apache.celeborn.common.util.Utils
-import org.apache.celeborn.common.util.ExceptionMaker
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleReaderBase
+import org.apache.celeborn.common.util.{ExceptionMaker, JavaUtils, ThreadUtils, Utils}
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
-import org.apache.spark.shuffle.ShuffleReadMetricsReporter
-import org.apache.spark.shuffle.celeborn.CelebornShuffleReader
-import org.apache.spark.shuffle.FetchFailedException
+import org.apache.spark.shuffle.{FetchFailedException, ShuffleReadMetricsReporter}
 import org.apache.spark.shuffle.celeborn.CelebornShuffleReader.streamCreatorPool
-import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
-import org.apache.spark.shuffle.celeborn.SparkUtils
+import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, CelebornShuffleReader, ExecutorShuffleIdTracker, SparkUtils}
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleReaderBase
 import org.apache.spark.storage.BlockId
 import org.apache.spark.util.CompletionIterator
 

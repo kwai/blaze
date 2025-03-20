@@ -15,26 +15,15 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.file.Files
-import java.nio.file.Paths
+import java.nio.{ByteBuffer, ByteOrder}
+import java.nio.file.{Files, Paths}
 
-import org.apache.spark.Partition
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.SparkEnv
-import org.apache.spark.TaskContext
-import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.ShuffleWriterExecNode
-
+import org.apache.spark.{Partition, ShuffleDependency, SparkEnv, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.IndexShuffleBlockResolver
-import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.shuffle.ShuffleWriter
-import org.apache.spark.sql.blaze.NativeHelper
-import org.apache.spark.sql.blaze.NativeRDD
-import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.shuffle.{IndexShuffleBlockResolver, ShuffleWriteMetricsReporter, ShuffleWriter}
+import org.apache.spark.sql.blaze.{NativeHelper, NativeRDD, Shims}
+import org.blaze.protobuf.{PhysicalPlanNode, ShuffleWriterExecNode}
 
 abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
