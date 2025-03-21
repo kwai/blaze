@@ -18,26 +18,29 @@ package org.apache.spark.sql.execution.blaze.plan
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+
 import org.apache.spark._
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{ShuffleWriteMetricsReporter, ShuffleWriteProcessor, ShuffleWriter}
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.ShuffleWriteProcessor
+import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriter
-import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
-import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleWriter
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriterBase
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
+
 import com.thoughtworks.enableIf
-import org.apache.spark.sql.execution.blaze.shuffle.uniffle.{BlazeUniffleShuffleManager, BlazeUniffleShuffleWriter}
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -130,44 +133,29 @@ case class NativeShuffleExchangeExec(
           context: TaskContext,
           partition: Partition): MapStatus = {
 
-        val manager = SparkEnv.get.shuffleManager
-        var writer: ShuffleWriter[Any, Any] = null
-        writer = manager.getWriter[Any, Any](
+        val writer = SparkEnv.get.shuffleManager.getWriter(
           dep.shuffleHandle,
           mapId,
           context,
           createMetricsReporter(context))
 
-        SparkEnv.get.shuffleManager match {
-          case _: BlazeCelebornShuffleManager =>
-            writer
-              .asInstanceOf[BlazeCelebornShuffleWriter[_, _]]
-              .nativeRssShuffleWrite(
-                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-                dep,
-                mapId.toInt,
-                context,
-                partition,
-                numPartitions)
-          case _: BlazeUniffleShuffleManager =>
-            writer
-              .asInstanceOf[BlazeUniffleShuffleWriter[_, _, _]]
-              .nativeRssShuffleWrite(
-                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-                dep,
-                mapId.toInt,
-                context,
-                partition,
-                numPartitions)
-          case _ =>
-            writer
-              .asInstanceOf[BlazeShuffleWriter[_, _]]
-              .nativeShuffleWrite(
-                rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
-                dep,
-                mapId.toInt,
-                context,
-                partition)
+        writer match {
+          case writer: BlazeRssShuffleWriterBase[_, _] =>
+            writer.nativeRssShuffleWrite(
+              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+              dep,
+              mapId.toInt,
+              context,
+              partition,
+              numPartitions)
+
+          case writer: BlazeShuffleWriterBase[_, _] =>
+            writer.nativeShuffleWrite(
+              rdd.asInstanceOf[MapPartitionsRDD[_, _]].prev.asInstanceOf[NativeRDD],
+              dep,
+              mapId.toInt,
+              context,
+              partition)
         }
         writer.stop(true).get
       }
