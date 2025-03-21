@@ -15,9 +15,7 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle.uniffle
 
-import com.thoughtworks.enableIf
 import org.apache.spark.internal.Logging
-import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.blaze.shuffle.{BlazeRssShuffleWriterBase, RssPartitionWriterBase}
@@ -29,17 +27,12 @@ class BlazeUniffleShuffleWriter[K, V, C](
     with Logging {
 
   override def getRssPartitionWriter(
-      handle: ShuffleHandle,
-      mapId: Int,
+      _handle: ShuffleHandle,
+      _mapId: Int,
       metrics: ShuffleWriteMetricsReporter,
       numPartitions: Int): RssPartitionWriterBase = {
-    new UnifflePartitionWriter(mapId, numPartitions, metrics, rssShuffleWriter)
+    new UnifflePartitionWriter(numPartitions, metrics, rssShuffleWriter)
   }
-
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
-  override def getPartitionLengths(): Array[Long] = partitionLengths
 
   private def waitAndCheckBlocksSend(): Unit = {
     logInfo(s"Waiting all blocks sending to the remote shuffle servers...")
@@ -48,7 +41,7 @@ class BlazeUniffleShuffleWriter[K, V, C](
     method.invoke(rssShuffleWriter)
   }
 
-  override def stop(success: Boolean): Option[MapStatus] = {
+  override def rssStop(success: Boolean): Unit = {
     waitAndCheckBlocksSend()
     logInfo(s"Reporting the shuffle result...")
     super.stop(success)

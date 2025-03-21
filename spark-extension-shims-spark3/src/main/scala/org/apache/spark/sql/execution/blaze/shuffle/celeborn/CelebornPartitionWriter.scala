@@ -18,10 +18,10 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 import java.nio.ByteBuffer
 
 import org.apache.celeborn.client.{ShuffleClient, ShuffleClientImpl}
-import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
+import org.apache.spark.TaskContext
 
 class CelebornPartitionWriter(
     shuffleClient: ShuffleClient,
@@ -64,8 +64,8 @@ class CelebornPartitionWriter(
   override def close(): Unit = {
     val waitStartTime = System.nanoTime()
     shuffleClient.mapperEnd(shuffleId, mapId, encodedAttemptId, numMappers)
-    metrics.incWriteTime(System.nanoTime() - waitStartTime)
     shuffleClient.cleanup(shuffleId, mapId, encodedAttemptId)
+    metrics.incWriteTime(System.nanoTime() - waitStartTime)
   }
 
   override def getPartitionLengthMap: Array[Long] =

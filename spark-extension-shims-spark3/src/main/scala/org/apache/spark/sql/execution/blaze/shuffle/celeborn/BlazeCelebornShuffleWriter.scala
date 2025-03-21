@@ -17,10 +17,14 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
 import org.apache.celeborn.client.ShuffleClient
 import org.apache.spark.TaskContext
-import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter, ShuffleWriter}
-import org.apache.spark.shuffle.celeborn.{CelebornShuffleHandle, ExecutorShuffleIdTracker, SparkUtils}
-import org.apache.spark.sql.execution.blaze.shuffle.{BlazeRssShuffleWriterBase, RssPartitionWriterBase}
+import org.apache.spark.shuffle.ShuffleHandle
+import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
+import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
+import org.apache.spark.shuffle.celeborn.SparkUtils
+import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
+import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 
 import com.thoughtworks.enableIf
 
@@ -38,7 +42,7 @@ class BlazeCelebornShuffleWriter[K, V](
 
   override def getRssPartitionWriter(
       _handle: ShuffleHandle,
-      _mapId: Int,
+      mapId: Int,
       metrics: ShuffleWriteMetricsReporter,
       numPartitions: Int): RssPartitionWriterBase = {
 
@@ -56,9 +60,9 @@ class BlazeCelebornShuffleWriter[K, V](
   @enableIf(
     Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
       System.getProperty("blaze.shim")))
-  override def getPartitionLengths(): Array[Long] = partitionLengths
+  override def getPartitionLengths(): Array[Long] = celebornShuffleWriter.getPartitionLengths()
 
-  override def stop(success: Boolean): Option[MapStatus] = {
+  override def rssStop(success: Boolean): Unit = {
     celebornShuffleWriter.write(Iterator.empty) // force flush
     celebornShuffleWriter.stop(success)
   }
