@@ -53,6 +53,18 @@ pub trait AccColumn: Send {
     fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()>;
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()>;
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()>;
+
+    fn ensure_size(&mut self, idx: IdxSelection<'_>) {
+        let idx_max_value = match idx {
+            IdxSelection::Single(v) => v,
+            IdxSelection::Indices(v) => v.iter().copied().max().unwrap_or(0),
+            IdxSelection::IndicesU32(v) => v.iter().copied().max().unwrap_or(0) as usize,
+            IdxSelection::Range(_begin, end) => end,
+        };
+        if idx_max_value >= self.num_records() {
+            self.resize(idx_max_value + 1);
+        }
+    }
 }
 
 pub type AccColumnRef = Box<dyn AccColumn>;

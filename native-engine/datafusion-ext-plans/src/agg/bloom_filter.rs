@@ -115,12 +115,10 @@ impl Agg for AggBloomFilter {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        accs.ensure_size(acc_idx);
+
         let bloom_filter = match acc_idx {
             IdxSelection::Single(idx) => {
-                if idx >= accs.num_records() {
-                    accs.resize(idx + 1);
-                }
-
                 let bf = &mut accs.bloom_filters[idx];
                 if bf.is_none() {
                     *bf = Some(SparkBloomFilter::new_with_expected_num_items(

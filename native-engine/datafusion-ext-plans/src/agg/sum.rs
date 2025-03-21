@@ -93,6 +93,7 @@ impl Agg for AggSum {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        accs.ensure_size(acc_idx);
 
         macro_rules! handle {
             ($ty:ident) => {{
@@ -102,9 +103,6 @@ impl Agg for AggSum {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if partial_arg.is_valid(partial_arg_idx) {
                             let partial_value = partial_arg.value(partial_arg_idx);
                             if !accs.prim_valid(acc_idx) {
@@ -145,14 +143,12 @@ impl Agg for AggSum {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
+        accs.ensure_size(acc_idx);
 
         macro_rules! handle {
             ($ty:ty) => {{
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if merging_accs.prim_valid(merging_acc_idx) {
                             let merging_value = merging_accs.prim_value::<$ty>(merging_acc_idx);
                             if !accs.prim_valid(acc_idx) {
