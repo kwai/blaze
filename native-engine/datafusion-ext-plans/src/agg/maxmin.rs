@@ -95,6 +95,8 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        accs.ensure_size(acc_idx);
+
         let old_heap_mem_used = accs.items_heap_mem_used(acc_idx);
 
         macro_rules! handle_prim {
@@ -103,9 +105,6 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                      ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                         if acc_idx >= accs.num_records() {
-                             accs.resize(acc_idx + 1);
-                         }
                          if !partial_arg.is_valid(partial_arg_idx) {
                              continue;
                          }
@@ -130,9 +129,6 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                 let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if !partial_arg.is_valid(partial_arg_idx) {
                             continue;
                         }
@@ -177,9 +173,6 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             _ => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         let partial_arg_scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
                         if !partial_arg_scalar.is_null() {
                             let acc_scalar = &mut accs.scalar_values_mut()[acc_idx];
@@ -210,6 +203,8 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        accs.ensure_size(acc_idx);
+
         let merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
         let old_mem_used = accs.items_heap_mem_used(acc_idx);
 
@@ -217,9 +212,6 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             ($ty:ty) => {{
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if !merging_accs.prim_valid(merging_acc_idx) {
                             continue;
                         }

@@ -116,11 +116,10 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut C).unwrap();
+        accs.ensure_size(acc_idx);
+
         idx_for_zipped! {
             ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                if acc_idx >= accs.num_records() {
-                    accs.resize(acc_idx + 1);
-                }
                 let scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
                 if !scalar.is_null() {
                     accs.append_item(acc_idx, &scalar);
@@ -138,12 +137,11 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut C).unwrap();
+        accs.ensure_size(acc_idx);
+
         let merging_accs = downcast_any!(merging_accs, mut C).unwrap();
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                if acc_idx >= accs.num_records() {
-                    accs.resize(acc_idx + 1);
-                }
                 accs.merge_items(acc_idx, merging_accs, merging_acc_idx);
             }
         }
