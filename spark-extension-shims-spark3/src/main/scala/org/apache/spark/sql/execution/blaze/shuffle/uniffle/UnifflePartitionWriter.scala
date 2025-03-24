@@ -53,6 +53,7 @@ class UnifflePartitionWriter[K, V, C](
         rssShuffleWriterPushBlocksMethod.invoke(rssShuffleWriter, shuffleBlockInfos)
       }
     }
+    metrics.incBytesWritten(bytesWritten)
     mapStatusLengths(partitionId) += bytesWritten
   }
 
