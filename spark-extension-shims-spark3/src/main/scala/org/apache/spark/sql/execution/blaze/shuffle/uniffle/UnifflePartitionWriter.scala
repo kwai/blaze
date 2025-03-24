@@ -15,14 +15,15 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle.uniffle
 
+import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.uniffle.common.ShuffleBlockInfo
 import java.nio.ByteBuffer
-
-import org.apache.spark.TaskContext
 
 class UnifflePartitionWriter[K, V, C](
     numPartitions: Int,
@@ -67,8 +68,8 @@ class UnifflePartitionWriter[K, V, C](
     if (restBlocks != null && !restBlocks.isEmpty) {
       rssShuffleWriterPushBlocksMethod.invoke(rssShuffleWriter, restBlocks)
     }
-    val writtenDurationMs = bufferManager.getWriteTime + (System.currentTimeMillis() - start)
-    metrics.incWriteTime(writtenDurationMs)
+    val writeDurationMs = bufferManager.getWriteTime + (System.currentTimeMillis() - start)
+    metrics.incWriteTime(TimeUnit.MILLISECONDS.toNanos(writeDurationMs))
   }
 
   override def getPartitionLengthMap: Array[Long] = mapStatusLengths
