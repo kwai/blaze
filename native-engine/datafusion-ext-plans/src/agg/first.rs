@@ -93,6 +93,8 @@ impl Agg for AggFirst {
     ) -> Result<()> {
         let partial_arg = &partial_args[0];
         let accs = downcast_any!(accs, mut AccFirstColumn).unwrap();
+        accs.ensure_size(acc_idx);
+
         let old_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
 
         macro_rules! handle_bytes {
@@ -101,9 +103,6 @@ impl Agg for AggFirst {
                 let partial_arg = downcast_any!(partial_arg, TArray).unwrap();
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if !accs.flags.prim_valid(acc_idx) {
                             accs.flags.set_prim_valid(acc_idx, true);
                             if partial_arg.is_valid(partial_arg_idx) {
@@ -121,9 +120,6 @@ impl Agg for AggFirst {
             partial_arg => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if !accs.flags.prim_valid(acc_idx) {
                             accs.flags.set_prim_valid(acc_idx, true);
                             accs.values.set_prim_valid(acc_idx, partial_arg.is_valid(partial_arg_idx));
@@ -137,9 +133,6 @@ impl Agg for AggFirst {
             _other => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
                         if accs.flags.prim_valid(acc_idx) {
                             accs.flags.set_prim_valid(acc_idx, true);
                             accs.values.scalar_values_mut()[acc_idx] = ScalarValue::try_from_array(partial_arg, partial_arg_idx)?;
@@ -164,6 +157,8 @@ impl Agg for AggFirst {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccFirstColumn).unwrap();
         let merging_accs = downcast_any!(merging_accs, mut AccFirstColumn).unwrap();
+        accs.ensure_size(acc_idx);
+
         let old_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
 
         // safety: bypass borrow checker
@@ -184,10 +179,6 @@ impl Agg for AggFirst {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
-
                         if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
                             let acc_offset = *prim_size * acc_idx;
                             let merging_acc_offset = *prim_size * merging_acc_idx;
@@ -207,10 +198,6 @@ impl Agg for AggFirst {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
-
                         if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
                             let item = &mut items[acc_idx];
                             let mut other_item = &mut other_items[merging_acc_idx];
@@ -228,10 +215,6 @@ impl Agg for AggFirst {
             ) => {
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if acc_idx >= accs.num_records() {
-                            accs.resize(acc_idx + 1);
-                        }
-
                         if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
                             let item = & mut items[acc_idx];
                             let mut other_item = & mut other_items[merging_acc_idx];

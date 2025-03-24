@@ -25,11 +25,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   def memUsed: Long = spillBuf.memUsed
   def diskUsed: Long = spillBuf.diskUsed
   def size: Long = spillBuf.size
-  def diskIOTime: Long =
-    spillBuf match {
-      case _: MemBasedSpillBuf => 0
-      case fileBasedBuf: FileBasedSpillBuf => fileBasedBuf.diskIOTimeNs
-    }
+  def diskIOTime: Long = spillBuf.diskIOTime
 
   def write(buf: ByteBuffer): Unit = {
     synchronized {
@@ -66,8 +62,7 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   def release(): Unit = {
     synchronized {
       val oldMemUsed = memUsed
-      spillBuf.release()
-      spillBuf = null
+      spillBuf = new ReleasedSpillBuf(spillBuf)
 
       if (oldMemUsed > 0) {
         hsm.freeMemory(oldMemUsed)

@@ -23,14 +23,15 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.uniffle.common.ShuffleBlockInfo
+import java.nio.ByteBuffer
 
 class UnifflePartitionWriter[K, V, C](
-    mapId: Int,
     numPartitions: Int,
     metrics: ShuffleWriteMetricsReporter,
     rssShuffleWriter: RssShuffleWriter[K, V, C])
     extends RssPartitionWriterBase
     with Logging {
+
   private val mapStatusLengths: Array[Long] = Array.fill(numPartitions)(0L)
   private val rssShuffleWriterPushBlocksMethod = {
     val method = rssShuffleWriter.getClass.getDeclaredMethod(
@@ -54,6 +55,7 @@ class UnifflePartitionWriter[K, V, C](
         rssShuffleWriterPushBlocksMethod.invoke(rssShuffleWriter, shuffleBlockInfos)
       }
     }
+    metrics.incBytesWritten(bytesWritten)
     mapStatusLengths(partitionId) += bytesWritten
   }
 

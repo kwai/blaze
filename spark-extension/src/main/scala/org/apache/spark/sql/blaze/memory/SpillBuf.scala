@@ -32,6 +32,7 @@ abstract class SpillBuf {
   def release(): Unit
   def memUsed: Long
   def diskUsed: Long
+  def diskIOTime: Long
   def size: Long
 }
 
@@ -77,6 +78,7 @@ class MemBasedSpillBuf extends SpillBuf with Logging {
 
   override def memUsed: Long = mem
   override def diskUsed: Long = 0
+  override def diskIOTime: Long = 0
   override def size: Long = numWrittenBytes
 
   def spill(hsm: OnHeapSpillManager): FileBasedSpillBuf = {
@@ -123,8 +125,9 @@ class FileBasedSpillBuf(
     diskIOTimeNs += System.nanoTime() - startTimeNs
   }
 
-  override def memUsed: Long = 0
+  override val memUsed: Long = 0
   override def diskUsed: Long = fileChannel.size()
+  override def diskIOTime: Long = diskIOTimeNs
   override def size: Long = numWrittenBytes
 
   override def release(): Unit = {
@@ -133,4 +136,21 @@ class FileBasedSpillBuf(
       logWarning(s"Was unable to delete spill file: ${file.getAbsolutePath}")
     }
   }
+}
+
+class ReleasedSpillBuf(releasing: SpillBuf) extends SpillBuf {
+  override val memUsed: Long = releasing.memUsed
+  override val diskUsed: Long = releasing.diskUsed
+  override val diskIOTime: Long = releasing.diskIOTime
+  override val size: Long = releasing.size
+
+  releasing.release()
+  
+  override def write(buf: ByteBuffer): Unit =
+    throw new UnsupportedOperationException()
+
+  override def read(buf: ByteBuffer): Unit =
+    throw new UnsupportedOperationException()
+
+  override def release(): Unit = {}
 }
