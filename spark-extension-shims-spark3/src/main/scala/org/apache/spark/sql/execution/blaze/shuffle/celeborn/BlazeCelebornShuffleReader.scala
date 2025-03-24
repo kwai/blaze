@@ -246,11 +246,13 @@ class BlazeCelebornShuffleReader[K, C](
             metricsCallback)
 
           // force disable decompression because compression is skipped in shuffle writer
-          FieldUtils.writeField(
-            inputStream,
-            "shuffleCompressionEnabled",
-            Boolean.box(false).asInstanceOf[Object],
-            true)
+          if (inputStream.totalPartitionsToRead() > 0) {
+            FieldUtils.writeField(
+              inputStream,
+              "shuffleCompressionEnabled",
+              Boolean.box(false).asInstanceOf[Object],
+              true)
+          }
           streams.put(partitionId, inputStream)
 
         } catch {
