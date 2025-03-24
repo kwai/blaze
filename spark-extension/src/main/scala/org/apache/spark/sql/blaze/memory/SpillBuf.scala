@@ -145,7 +145,7 @@ class ReleasedSpillBuf(releasing: SpillBuf) extends SpillBuf {
   override val size: Long = releasing.size
 
   releasing.release()
-  
+
   override def write(buf: ByteBuffer): Unit =
     throw new UnsupportedOperationException()
 

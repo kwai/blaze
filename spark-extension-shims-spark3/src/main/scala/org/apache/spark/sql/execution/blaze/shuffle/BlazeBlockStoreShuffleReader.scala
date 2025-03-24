@@ -18,12 +18,11 @@ package org.apache.spark.sql.execution.blaze.shuffle
 import java.io.InputStream
 
 import org.apache.spark.{MapOutputTracker, SparkEnv, TaskContext}
-import org.apache.spark.internal.{Logging, config}
+import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleReadMetricsReporter}
 import org.apache.spark.storage.{BlockId, BlockManager, BlockManagerId, ShuffleBlockFetcherIterator}
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 class BlazeBlockStoreShuffleReader[K, C](
     handle: BaseShuffleHandle[K, _, C],
@@ -37,9 +36,7 @@ class BlazeBlockStoreShuffleReader[K, C](
     with Logging {
 
   override def readBlocks(): Iterator[(BlockId, InputStream)] = {
-    @enableIf(
-      Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-        System.getProperty("blaze.shim")))
+    @sparkver("3.2 / 3.3 / 3.4 / 3.5")
     def fetchIterator = new ShuffleBlockFetcherIterator(
       context,
       blockManager.blockStoreClient,
@@ -60,7 +57,7 @@ class BlazeBlockStoreShuffleReader[K, C](
       readMetrics,
       fetchContinuousBlocksInBatch).toCompletionIterator
 
-    @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+    @sparkver("3.0 / 3.1")
     def fetchIterator = new ShuffleBlockFetcherIterator(
       context,
       blockManager.blockStoreClient,

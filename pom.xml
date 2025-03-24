@@ -7,6 +7,7 @@
   <packaging>pom</packaging>
 
   <modules>
+    <module>spark-version-annotation-macros</module>
     <module>spark-extension</module>
     <module>${shimPkg}</module>
     <module>hadoop-shim</module>

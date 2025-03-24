@@ -15,8 +15,6 @@
  */
 package org.apache.spark.sql.blaze
 
-import com.thoughtworks.enableIf
-
 import scala.annotation.tailrec
 import scala.collection.mutable
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
@@ -81,6 +79,7 @@ import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
+import org.blaze.sparkver
 
 object BlazeConverters extends Logging {
   val enableScan: Boolean =
@@ -296,12 +295,10 @@ object BlazeConverters extends Logging {
       getShuffleOrigin(exec))
   }
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = Some(exec.shuffleOrigin)
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = None
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {

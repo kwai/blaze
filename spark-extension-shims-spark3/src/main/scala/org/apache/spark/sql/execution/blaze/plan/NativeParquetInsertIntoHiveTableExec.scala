@@ -23,17 +23,14 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeParquetInsertIntoHiveTableExec(
     cmd: InsertIntoHiveTable,
     override val child: SparkPlan)
     extends NativeParquetInsertIntoHiveTableBase(cmd, child) {
 
-  @enableIf(
-    Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1 / 3.2 / 3.3")
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -52,7 +49,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       metrics)
   }
 
-  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.4 / 3.5")
   override protected def getInsertIntoHiveTableCommand(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -71,19 +68,15 @@ case class NativeParquetInsertIntoHiveTableExec(
       metrics)
   }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 
-  @enableIf(
-    Seq("spark-3.0", "spark-3.1", "spark-3.2", "spark-3.3").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1 / 3.2 / 3.3")
   class BlazeInsertIntoHiveTable30(
       table: CatalogTable,
       partition: Map[String, Option[String]],
@@ -108,7 +101,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       super.run(sparkSession, nativeParquetSink)
     }
 
-    @enableIf(Seq("spark-3.2", "spark-3.3").contains(System.getProperty("blaze.shim")))
+    @sparkver("3.2 / 3.3")
     override def basicWriteJobStatsTracker(hadoopConf: org.apache.hadoop.conf.Configuration) = {
       import org.apache.spark.sql.catalyst.InternalRow
       import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
@@ -134,7 +127,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       }
     }
 
-    @enableIf(Seq("spark-3.1").contains(System.getProperty("blaze.shim")))
+    @sparkver("3.1")
     override def basicWriteJobStatsTracker(hadoopConf: org.apache.hadoop.conf.Configuration) = {
       import org.apache.spark.sql.catalyst.InternalRow
       import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
@@ -172,7 +165,7 @@ case class NativeParquetInsertIntoHiveTableExec(
       }
     }
 
-    @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+    @sparkver("3.0")
     override def basicWriteJobStatsTracker(hadoopConf: org.apache.hadoop.conf.Configuration) = {
       import org.apache.spark.sql.catalyst.InternalRow
       import org.apache.spark.sql.execution.datasources.BasicWriteJobStatsTracker
@@ -202,7 +195,7 @@ case class NativeParquetInsertIntoHiveTableExec(
     }
   }
 
-  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.4 / 3.5")
   class BlazeInsertIntoHiveTable34(
       table: CatalogTable,
       partition: Map[String, Option[String]],

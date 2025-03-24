@@ -16,19 +16,16 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.sql.execution.SparkPlan
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeUnionExec(override val children: Seq[SparkPlan])
     extends NativeUnionBase(children) {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[SparkPlan]): SparkPlan =
     copy(children = newChildren)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(children = newChildren)
 }

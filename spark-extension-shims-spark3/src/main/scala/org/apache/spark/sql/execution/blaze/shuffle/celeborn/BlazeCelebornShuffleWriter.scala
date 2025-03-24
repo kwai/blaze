@@ -25,8 +25,7 @@ import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
 import org.apache.spark.shuffle.celeborn.SparkUtils
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 class BlazeCelebornShuffleWriter[K, V](
     celebornShuffleWriter: ShuffleWriter[K, V],
@@ -57,9 +56,7 @@ class BlazeCelebornShuffleWriter[K, V](
       metrics)
   }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def getPartitionLengths(): Array[Long] = celebornShuffleWriter.getPartitionLengths()
 
   override def rssStop(success: Boolean): Unit = {

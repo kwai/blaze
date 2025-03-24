@@ -16,14 +16,11 @@
 package org.apache.spark.sql.execution.blaze.shuffle
 
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 class BlazeShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)
     extends BlazeShuffleWriterBase[K, V](metrics) {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def getPartitionLengths(): Array[Long] = partitionLengths
 }
