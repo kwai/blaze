@@ -22,7 +22,7 @@ use std::{
 };
 
 use arrow::{
-    array::{AsArray, BooleanArray, RecordBatch},
+    array::{Array, AsArray, BooleanArray, RecordBatch},
     datatypes::{DataType, Int64Type, Schema},
 };
 use datafusion::{
@@ -119,7 +119,9 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         })?;
 
         // process with bloom filter
-        let values = self.value_expr.evaluate(&batch)?.into_array(1)?;
+        let value = self.value_expr.evaluate(batch)?;
+        let value_is_scalar = matches!(value, ColumnarValue::Scalar(_));
+        let values = value.into_array(1)?;
         let might_contain = match values.data_type() {
             DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
                 let values = cast(&values, &DataType::Int64)?;
@@ -133,7 +135,14 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
             }),
             other => return df_unimplemented_err!("unsupported data type: {:?}", other),
         };
-        Ok(ColumnarValue::Array(Arc::new(might_contain)))
+
+        Ok(if value_is_scalar {
+            ColumnarValue::Scalar(ScalarValue::from(
+                might_contain.is_valid(0).then_some(might_contain.value(0)),
+            ))
+        } else {
+            ColumnarValue::Array(Arc::new(might_contain))
+        })
     }
 
     fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
