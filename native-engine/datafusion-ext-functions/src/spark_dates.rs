@@ -12,21 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::compute::{date_part, DatePart};
+use arrow::{
+    compute::{date_part, DatePart},
+    datatypes::DataType,
+};
 use datafusion::{common::Result, physical_plan::ColumnarValue};
+use datafusion_ext_commons::arrow::cast::cast;
 
 pub fn spark_year(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-    let input = args[0].clone().into_array(1)?;
+    let input = cast(&args[0].clone().into_array(1)?, &DataType::Date32)?;
     Ok(ColumnarValue::Array(date_part(&input, DatePart::Year)?))
 }
 
 pub fn spark_month(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-    let input = args[0].clone().into_array(1)?;
+    let input = cast(&args[0].clone().into_array(1)?, &DataType::Date32)?;
     Ok(ColumnarValue::Array(date_part(&input, DatePart::Month)?))
 }
 
 pub fn spark_day(args: &[ColumnarValue]) -> Result<ColumnarValue> {
-    let input = args[0].clone().into_array(1)?;
+    let input = cast(&args[0].clone().into_array(1)?, &DataType::Date32)?;
     Ok(ColumnarValue::Array(date_part(&input, DatePart::Day)?))
 }
 
