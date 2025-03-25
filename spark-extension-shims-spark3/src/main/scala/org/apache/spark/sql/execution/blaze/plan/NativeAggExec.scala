@@ -26,8 +26,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.aggregate.BaseAggregateExec
 import org.apache.spark.sql.execution.blaze.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.types.BinaryType
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeAggExec(
     execMode: AggExecMode,
@@ -47,13 +46,11 @@ case class NativeAggExec(
       child)
     with BaseAggregateExec {
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override val requiredChildDistributionExpressions: Option[Seq[Expression]] =
     theRequiredChildDistributionExpressions
 
-  @enableIf(Seq("spark-3.3", "spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.3 / 3.4 / 3.5")
   override val initialInputBufferOffset: Int = theInitialInputBufferOffset
 
   override def output: Seq[Attribute] =
@@ -65,25 +62,19 @@ case class NativeAggExec(
           ExprId.apply(NativeAggBase.AGG_BUF_COLUMN_EXPR_ID))
     }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def isStreaming: Boolean = false
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def numShufflePartitions: Option[Int] = None
 
   override def resultExpressions: Seq[NamedExpression] = output
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

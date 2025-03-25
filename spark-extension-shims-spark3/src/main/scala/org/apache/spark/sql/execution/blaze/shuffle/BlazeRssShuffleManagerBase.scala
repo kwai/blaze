@@ -19,8 +19,7 @@ import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManager with Logging {
   override def registerShuffle[K, V, C](
@@ -73,9 +72,7 @@ abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManag
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V]
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def getReader[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
@@ -106,7 +103,7 @@ abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManag
     }
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override def getReader[K, C](
       handle: ShuffleHandle,
       startPartition: Int,
@@ -121,7 +118,7 @@ abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManag
     }
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override def getReaderForRange[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,

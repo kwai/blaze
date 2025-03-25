@@ -20,14 +20,11 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.BuildSide
 import org.apache.spark.sql.execution.blaze.plan.NativeShuffledHashJoinBase
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case object NativeShuffledHashJoinExecProvider {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   def provide(
       left: SparkPlan,
       right: SparkPlan,
@@ -74,7 +71,7 @@ case object NativeShuffledHashJoinExecProvider {
     NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
   }
 
-  @enableIf(Seq("spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.1")
   def provide(
       left: SparkPlan,
       right: SparkPlan,
@@ -118,7 +115,7 @@ case object NativeShuffledHashJoinExecProvider {
     NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   def provide(
       left: SparkPlan,
       right: SparkPlan,

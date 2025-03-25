@@ -15,6 +15,12 @@
   <dependencies>
     <dependency>
       <groupId>org.blaze</groupId>
+      <artifactId>spark-version-annotation-macros</artifactId>
+      <version>${revision}</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.blaze</groupId>
       <artifactId>proto</artifactId>
       <version>${revision}</version>
     </dependency>
@@ -68,11 +74,6 @@
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scalaVersion}</artifactId>
       <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.thoughtworks.enableIf</groupId>
-      <artifactId>enableif_${scalaVersion}</artifactId>
-      <version>1.2.0</version>
     </dependency>
   </dependencies>
 

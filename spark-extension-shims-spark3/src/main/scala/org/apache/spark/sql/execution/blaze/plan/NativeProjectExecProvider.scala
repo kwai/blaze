@@ -17,11 +17,10 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.execution.SparkPlan
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case object NativeProjectExecProvider {
-  @enableIf(Seq("spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.4 / 3.5")
   def provide(
       projectList: Seq[NamedExpression],
       child: SparkPlan,
@@ -49,7 +48,7 @@ case object NativeProjectExecProvider {
     NativeProjectExec(projectList, child, addTypeCast)
   }
 
-  @enableIf(Seq("spark-3.1", "spark-3.2", "spark-3.3").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3")
   def provide(
       projectList: Seq[NamedExpression],
       child: SparkPlan,
@@ -65,11 +64,11 @@ case object NativeProjectExecProvider {
         with AliasAwareOutputPartitioning
         with AliasAwareOutputOrdering {
 
-      @enableIf(Seq("spark-3.2", "spark-3.3").contains(System.getProperty("blaze.shim")))
+      @sparkver("3.2 / 3.3")
       override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
         copy(child = newChild)
 
-      @enableIf(Seq("spark-3.1").contains(System.getProperty("blaze.shim")))
+      @sparkver("3.1")
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(child = newChildren.head)
 
@@ -82,7 +81,7 @@ case object NativeProjectExecProvider {
     NativeProjectExec(projectList, child, addTypeCast)
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   def provide(
       projectList: Seq[NamedExpression],
       child: SparkPlan,

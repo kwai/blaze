@@ -23,13 +23,11 @@ import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
 import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.sql.blaze.{JniBridge, NativeHelper, NativeRDD, Shims}
 import org.blaze.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode}
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V] {
 
-  private var mapStatus: Option[MapStatus] = None
   private var rpw: RssPartitionWriterBase = _
   private var mapId: Int = 0
 
@@ -70,19 +68,11 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
     } finally {
       rpw.close()
     }
-
-    mapStatus = Some(
-      Shims.get.getMapStatus(
-        SparkEnv.get.blockManager.shuffleServerId,
-        rpw.getPartitionLengthMap,
-        mapId))
   }
 
   def rssStop(success: Boolean): Unit = {}
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def getPartitionLengths(): Array[Long] = rpw.getPartitionLengthMap
 
   override def write(records: Iterator[Product2[K, V]]): Unit = {

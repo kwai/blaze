@@ -21,8 +21,7 @@ import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.sort.SortShuffleManager.canUseBatchFetch
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency.isArrowShuffle
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   val sortShuffleManager = new SortShuffleManager(conf)
@@ -45,9 +44,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     sortShuffleManager.registerShuffle(shuffleId, dependency)
   }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def getReader[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
@@ -60,10 +57,9 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     if (isArrowShuffle(handle)) {
       val baseShuffleHandle = handle.asInstanceOf[BaseShuffleHandle[K, _, C]]
 
-      @enableIf(Seq("spark-3.2").contains(System.getProperty("blaze.shim")))
+      @sparkver("3.2")
       def shuffleMergeFinalized = baseShuffleHandle.dependency.shuffleMergeFinalized
-      @enableIf(
-        Seq("spark-3.3", "spark-3.4", "spark-3.5").contains(System.getProperty("blaze.shim")))
+      @sparkver("3.3 / 3.4 / 3.5")
       def shuffleMergeFinalized = baseShuffleHandle.dependency.isShuffleMergeFinalizedMarked
 
       val (blocksByAddress, canEnableBatchFetch) =
@@ -106,7 +102,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     }
   }
 
-  @enableIf(Seq("spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.1")
   override def getReader[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,
@@ -143,7 +139,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     }
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override def getReader[K, C](
       handle: ShuffleHandle,
       startPartition: Int,
@@ -170,7 +166,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     }
   }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override def getReaderForRange[K, C](
       handle: ShuffleHandle,
       startMapIndex: Int,

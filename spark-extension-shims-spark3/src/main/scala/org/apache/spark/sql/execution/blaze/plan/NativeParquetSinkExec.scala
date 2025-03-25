@@ -19,8 +19,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.metric.SQLMetric
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeParquetSinkExec(
     sparkSession: SparkSession,
@@ -30,13 +29,11 @@ case class NativeParquetSinkExec(
     override val metrics: Map[String, SQLMetric])
     extends NativeParquetSinkBase(sparkSession, table, partition, child, metrics) {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

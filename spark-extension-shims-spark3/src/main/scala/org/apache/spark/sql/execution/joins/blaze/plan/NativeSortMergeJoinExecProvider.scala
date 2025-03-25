@@ -19,14 +19,11 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.NativeSortMergeJoinBase
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case object NativeSortMergeJoinExecProvider {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   def provide(
       left: SparkPlan,
       right: SparkPlan,
@@ -71,7 +68,7 @@ case object NativeSortMergeJoinExecProvider {
     NativeSortMergeJoinExec(left, right, leftKeys, rightKeys, joinType)
   }
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   def provide(
       left: SparkPlan,
       right: SparkPlan,

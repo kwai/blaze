@@ -25,7 +25,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriteProcessor
-import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -33,14 +32,12 @@ import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriter
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleWriterBase
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -165,30 +162,26 @@ case class NativeShuffleExchangeExec(
   // for databricks testing
   val causedBroadcastJoinBuildOOM = false
 
-  @enableIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.5")
   override def advisoryPartitionSize: Option[Long] = None
 
   // If users specify the num partitions via APIs like `repartition`, we shouldn't change it.
   // For `SinglePartition`, it requires exactly one partition and we can't change it either.
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override def canChangeNumPartitions: Boolean =
     outputPartitioning != SinglePartition
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def shuffleOrigin = {
     import org.apache.spark.sql.execution.exchange.ShuffleOrigin;
     _shuffleOrigin.get.asInstanceOf[ShuffleOrigin]
   }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

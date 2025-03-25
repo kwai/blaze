@@ -17,8 +17,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.execution.SparkPlan
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeSortExec(
     sortOrder: Seq[SortOrder],
@@ -26,13 +25,11 @@ case class NativeSortExec(
     override val child: SparkPlan)
     extends NativeSortBase(sortOrder, global, child) {
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
     copy(child = newChild)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(child = newChildren.head)
 }

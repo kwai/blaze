@@ -24,8 +24,7 @@ import org.apache.spark.sql.execution.blaze.plan.BroadcastRight
 import org.apache.spark.sql.execution.blaze.plan.BroadcastSide
 import org.apache.spark.sql.execution.blaze.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.joins.HashJoin
-
-import com.thoughtworks.enableIf
+import org.blaze.sparkver
 
 case class NativeBroadcastJoinExec(
     override val left: SparkPlan,
@@ -47,24 +46,20 @@ case class NativeBroadcastJoinExec(
 
   override val condition: Option[Expression] = None
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def buildSide: org.apache.spark.sql.catalyst.optimizer.BuildSide =
     broadcastSide match {
       case BroadcastLeft => org.apache.spark.sql.catalyst.optimizer.BuildLeft
       case BroadcastRight => org.apache.spark.sql.catalyst.optimizer.BuildRight
     }
 
-  @enableIf(Seq("spark-3.0").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0")
   override val buildSide: org.apache.spark.sql.execution.joins.BuildSide = broadcastSide match {
     case BroadcastLeft => org.apache.spark.sql.execution.joins.BuildLeft
     case BroadcastRight => org.apache.spark.sql.execution.joins.BuildRight
   }
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def requiredChildDistribution = {
     import org.apache.spark.sql.catalyst.plans.physical.BroadcastDistribution
     import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
@@ -79,36 +74,28 @@ case class NativeBroadcastJoinExec(
     }
   }
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def supportCodegen: Boolean = false
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def inputRDDs() = {
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  @enableIf(
-    Seq("spark-3.1", "spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override protected def prepareRelation(
       ctx: org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext)
       : org.apache.spark.sql.execution.joins.HashedRelationInfo = {
     throw new NotImplementedError("NativeBroadcastJoin dose not support codegen")
   }
 
-  @enableIf(
-    Seq("spark-3.2", "spark-3.3", "spark-3.4", "spark-3.5").contains(
-      System.getProperty("blaze.shim")))
+  @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildrenInternal(
       newLeft: SparkPlan,
       newRight: SparkPlan): SparkPlan =
     copy(left = newLeft, right = newRight)
 
-  @enableIf(Seq("spark-3.0", "spark-3.1").contains(System.getProperty("blaze.shim")))
+  @sparkver("3.0 / 3.1")
   override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
     copy(left = newChildren(0), right = newChildren(1))
 }

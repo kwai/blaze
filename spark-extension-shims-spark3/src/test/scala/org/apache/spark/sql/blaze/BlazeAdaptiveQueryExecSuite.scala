@@ -15,9 +15,9 @@
  */
 package org.apache.spark.sql.blaze
 
-import com.thoughtworks.enableMembersIf
+import org.blaze.sparkverEnableMembers
 
-@enableMembersIf(Seq("spark-3.5").contains(System.getProperty("blaze.shim")))
+@sparkverEnableMembers("3.5")
 class BlazeAdaptiveQueryExecSuite
     extends org.apache.spark.sql.QueryTest
     with BaseBlazeSQLSuite
