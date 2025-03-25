@@ -92,7 +92,7 @@ impl SparkBloomFilter {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
             combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
-            self.bits.set((combined_hash & (bit_size - 1)) as usize);
+            self.bits.set((combined_hash % bit_size) as usize);
         }
     }
 
@@ -107,7 +107,7 @@ impl SparkBloomFilter {
             let mut combined_hash = h1 + i * h2;
             // flip all the bits if it's negative (guaranteed positive number)
             combined_hash = combined_hash ^ -((combined_hash < 0) as i32);
-            self.bits.set((combined_hash & (bit_size - 1)) as usize);
+            self.bits.set((combined_hash % bit_size) as usize);
         }
     }
 
