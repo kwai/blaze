@@ -329,6 +329,17 @@ impl HiveGetJsonObjectMatcher {
             Some('.') => {
                 chars.next();
 
+                loop {
+                    match chars.peek() {
+                        Some(' ') => {
+                            chars.next();
+                        }
+                        Some(_) | None => {
+                            break;
+                        }
+                    }
+                }
+
                 if chars.peek().cloned() == Some('[') {
                     return Self::parse(chars); // handle special case like
                                                // $.aaa.[0].xxx
@@ -540,6 +551,15 @@ mod test {
             Some("amy".to_owned())
         );
 
+        let path = "$.  owner";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some("amy".to_owned())
+        );
+
         let path = "$.store.bicycle.price";
         assert_eq!(
             HiveGetJsonObjectEvaluator::try_new(path)
@@ -549,7 +569,25 @@ mod test {
             Some("19.95".to_owned())
         );
 
+        let path = "$.  store.  bicycle.  price";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some("19.95".to_owned())
+        );
+
         let path = "$.store.fruit[0]";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some(r#"{"weight":8,"type":"apple"}"#.to_owned())
+        );
+
+        let path = "$. store.  fruit[0]";
         assert_eq!(
             HiveGetJsonObjectEvaluator::try_new(path)
                 .unwrap()
@@ -576,7 +614,25 @@ mod test {
             Some(r#"[{"weight":8,"type":"apple"},{"weight":9,"type":"pear"}]"#.to_owned())
         );
 
+        let path = "$. store.  fruit[*]";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some(r#"[{"weight":8,"type":"apple"},{"weight":9,"type":"pear"}]"#.to_owned())
+        );
+
         let path = "$.store.fruit.[1].type";
+        assert_eq!(
+            HiveGetJsonObjectEvaluator::try_new(path)
+                .unwrap()
+                .evaluate(input)
+                .unwrap(),
+            Some("pear".to_owned())
+        );
+
+        let path = "$. store.  fruit.  [1]. type";
         assert_eq!(
             HiveGetJsonObjectEvaluator::try_new(path)
                 .unwrap()
