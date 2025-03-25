@@ -21,18 +21,12 @@ import org.blaze.sparkver
 
 case object NativeProjectExecProvider {
   @sparkver("3.4 / 3.5")
-  def provide(
-      projectList: Seq[NamedExpression],
-      child: SparkPlan,
-      addTypeCast: Boolean = false): NativeProjectBase = {
+  def provide(projectList: Seq[NamedExpression], child: SparkPlan): NativeProjectBase = {
     import org.apache.spark.sql.execution.OrderPreservingUnaryExecNode
     import org.apache.spark.sql.execution.PartitioningPreservingUnaryExecNode
 
-    case class NativeProjectExec(
-        projectList: Seq[NamedExpression],
-        override val child: SparkPlan,
-        addTypeCast: Boolean = false)
-        extends NativeProjectBase(projectList, child, addTypeCast)
+    case class NativeProjectExec(projectList: Seq[NamedExpression], override val child: SparkPlan)
+        extends NativeProjectBase(projectList, child)
         with PartitioningPreservingUnaryExecNode
         with OrderPreservingUnaryExecNode {
 
@@ -45,22 +39,16 @@ case object NativeProjectExecProvider {
 
       override def nodeName: String = "NativeProjectExec"
     }
-    NativeProjectExec(projectList, child, addTypeCast)
+    NativeProjectExec(projectList, child)
   }
 
   @sparkver("3.1 / 3.2 / 3.3")
-  def provide(
-      projectList: Seq[NamedExpression],
-      child: SparkPlan,
-      addTypeCast: Boolean = false): NativeProjectBase = {
+  def provide(projectList: Seq[NamedExpression], child: SparkPlan): NativeProjectBase = {
     import org.apache.spark.sql.execution.AliasAwareOutputOrdering
     import org.apache.spark.sql.execution.AliasAwareOutputPartitioning
 
-    case class NativeProjectExec(
-        projectList: Seq[NamedExpression],
-        override val child: SparkPlan,
-        addTypeCast: Boolean = false)
-        extends NativeProjectBase(projectList, child, addTypeCast)
+    case class NativeProjectExec(projectList: Seq[NamedExpression], override val child: SparkPlan)
+        extends NativeProjectBase(projectList, child)
         with AliasAwareOutputPartitioning
         with AliasAwareOutputOrdering {
 
@@ -78,26 +66,20 @@ case object NativeProjectExecProvider {
 
       override def nodeName: String = "NativeProjectExec"
     }
-    NativeProjectExec(projectList, child, addTypeCast)
+    NativeProjectExec(projectList, child)
   }
 
   @sparkver("3.0")
-  def provide(
-      projectList: Seq[NamedExpression],
-      child: SparkPlan,
-      addTypeCast: Boolean = false): NativeProjectBase = {
+  def provide(projectList: Seq[NamedExpression], child: SparkPlan): NativeProjectBase = {
 
-    case class NativeProjectExec(
-        projectList: Seq[NamedExpression],
-        override val child: SparkPlan,
-        addTypeCast: Boolean = false)
-        extends NativeProjectBase(projectList, child, addTypeCast) {
+    case class NativeProjectExec(projectList: Seq[NamedExpression], override val child: SparkPlan)
+        extends NativeProjectBase(projectList, child) {
 
       override def withNewChildren(newChildren: Seq[SparkPlan]): SparkPlan =
         copy(child = newChildren.head)
 
       override def nodeName: String = "NativeProjectExec"
     }
-    NativeProjectExec(projectList, child, addTypeCast)
+    NativeProjectExec(projectList, child)
   }
 }

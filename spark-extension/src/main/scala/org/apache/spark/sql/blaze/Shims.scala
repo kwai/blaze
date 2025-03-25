@@ -127,8 +127,7 @@ abstract class Shims {
 
   def createNativeProjectExec(
       projectList: Seq[NamedExpression],
-      child: SparkPlan,
-      addTypeCast: Boolean = false): NativeProjectBase
+      child: SparkPlan): NativeProjectBase
 
   def createNativeRenameColumnsExec(
       child: SparkPlan,

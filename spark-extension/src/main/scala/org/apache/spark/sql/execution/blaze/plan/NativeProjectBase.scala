@@ -39,11 +39,9 @@ import org.blaze.protobuf.ProjectionExecNode
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.blaze.protobuf.ArrowType
 
-abstract class NativeProjectBase(
-    projectList: Seq[NamedExpression],
-    override val child: SparkPlan,
-    addTypeCast: Boolean = false)
+abstract class NativeProjectBase(projectList: Seq[NamedExpression], override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
 
@@ -64,7 +62,7 @@ abstract class NativeProjectBase(
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
-  private def nativeProject = getNativeProjectBuilder(projectList, addTypeCast).buildPartial()
+  private def nativeProject = getNativeProjectBuilder(projectList).buildPartial()
 
   // check whether native converting is supported
   nativeProject
@@ -92,50 +90,39 @@ abstract class NativeProjectBase(
 }
 
 object NativeProjectBase {
-  def getNativeProjectBuilder(
-      projectList: Seq[NamedExpression],
-      addTypeCast: Boolean = false): ProjectionExecNode.Builder = {
-    val nativeNamedExprs: Seq[(String, PhysicalExprNode)] = {
-      val namedExprs = ArrayBuffer[(String, PhysicalExprNode)]()
-      var numAddedColumns = 0
+  def getNativeProjectBuilder(projectList: Seq[NamedExpression]): ProjectionExecNode.Builder = {
+    val nativeDataTypes = ArrayBuffer[ArrowType]()
+    val nativeNamedExprs = ArrayBuffer[(String, PhysicalExprNode)]()
+    var numAddedColumns = 0
 
-      val castedProjectList = if (!addTypeCast) {
-        projectList
-      } else {
-        projectList.map { projectExpr =>
-          projectExpr
-            .mapChildren(child => Cast(child, child.dataType))
-            .asInstanceOf[NamedExpression]
+    projectList.foreach { projectExpr =>
+      def addNamedExpression(namedExpression: NamedExpression): Unit = {
+        namedExpression match {
+          case star: ResolvedStar =>
+            for (expr <- star.expressions) {
+              addNamedExpression(expr)
+            }
+
+          case alias: Alias =>
+            nativeNamedExprs.append(
+              (Util.getFieldNameByExprId(alias), NativeConverters.convertExpr(alias.child)))
+            nativeDataTypes.append(NativeConverters.convertDataType(alias.dataType))
+            numAddedColumns += 1
+
+          case named =>
+            nativeNamedExprs.append(
+              (Util.getFieldNameByExprId(named), NativeConverters.convertExpr(named)))
+            nativeDataTypes.append(NativeConverters.convertDataType(named.dataType))
+            numAddedColumns += 1
         }
       }
-
-      castedProjectList.foreach { projectExpr =>
-        def addNamedExpression(namedExpression: NamedExpression): Unit = {
-          namedExpression match {
-            case star: ResolvedStar =>
-              for (expr <- star.expressions) {
-                addNamedExpression(expr)
-              }
-
-            case alias: Alias =>
-              namedExprs.append(
-                (Util.getFieldNameByExprId(alias), NativeConverters.convertExpr(alias.child)))
-              numAddedColumns += 1
-
-            case named =>
-              namedExprs.append(
-                (Util.getFieldNameByExprId(named), NativeConverters.convertExpr(named)))
-              numAddedColumns += 1
-          }
-        }
-        addNamedExpression(projectExpr)
-      }
-      namedExprs
+      addNamedExpression(projectExpr)
     }
 
     ProjectionExecNode
       .newBuilder()
       .addAllExprName(nativeNamedExprs.map(_._1).asJava)
       .addAllExpr(nativeNamedExprs.map(_._2).asJava)
+      .addAllDataType(nativeDataTypes.asJava)
   }
 }
