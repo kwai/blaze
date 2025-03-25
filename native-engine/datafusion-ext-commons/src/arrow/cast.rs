@@ -16,6 +16,7 @@ use std::{str::FromStr, sync::Arc};
 
 use arrow::{array::*, datatypes::*};
 use bigdecimal::BigDecimal;
+use chrono::Datelike;
 use datafusion::common::Result;
 use num::{Bounded, FromPrimitive, Integer, Signed};
 
@@ -42,6 +43,11 @@ pub fn cast_impl(
         // spark compatible str to int
         (&DataType::Utf8, to_dt) if to_dt.is_signed_integer() => {
             return try_cast_string_array_to_integer(array, to_dt);
+        }
+
+        // spark compatible str to date
+        (&DataType::Utf8, &DataType::Date32) => {
+            return try_cast_string_array_to_date(array);
         }
 
         // float to int
@@ -268,6 +274,15 @@ fn try_cast_string_array_to_integer(array: &dyn Array, cast_type: &DataType) -> 
     })
 }
 
+fn try_cast_string_array_to_date(array: &dyn Array) -> Result<ArrayRef> {
+    let strings = array.as_string::<i32>();
+    let mut converted_values = Vec::with_capacity(strings.len());
+    for s in strings {
+        converted_values.push(s.and_then(|s| to_date(s)));
+    }
+    Ok(Arc::new(Date32Array::from(converted_values)))
+}
+
 // this implementation is original copied from spark UTF8String.scala
 fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str) -> Option<T> {
     let bytes = input.as_bytes();
@@ -343,6 +358,70 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
         }
     }
     Some(result)
+}
+
+// this implementation is original copied from spark SparkDateTimeUtils.scala
+fn to_date(s: &str) -> Option<i32> {
+    fn is_valid_digits(segment: usize, digits: i32) -> bool {
+        // An integer is able to represent a date within [+-]5 million years.
+        let max_digits_year = 7;
+        (segment == 0 && digits >= 4 && digits <= max_digits_year)
+            || (segment != 0 && digits > 0 && digits <= 2)
+    }
+    let s_trimmed = s.trim();
+    if s_trimmed.is_empty() {
+        return None;
+    }
+    let mut segments = [1, 1, 1];
+    let mut sign = 1;
+    let mut i = 0usize;
+    let mut current_segment_value = 0i32;
+    let mut current_segment_digits = 0i32;
+    let bytes = s_trimmed.as_bytes();
+    let mut j = 0usize;
+    if bytes[j] == b'-' || bytes[j] == b'+' {
+        sign = if bytes[j] == b'-' { -1 } else { 1 };
+        j += 1;
+    }
+    while j < bytes.len() && (i < 3 && !(bytes[j] == b' ' || bytes[j] == b'T')) {
+        let b = bytes[j];
+        if i < 2 && b == b'-' {
+            if !is_valid_digits(i, current_segment_digits) {
+                return None;
+            }
+            segments[i] = current_segment_value;
+            current_segment_value = 0;
+            current_segment_digits = 0;
+            i += 1;
+        } else {
+            let parsed_value = (b - b'0') as i32;
+            if parsed_value < 0 || parsed_value > 9 {
+                return None;
+            } else {
+                current_segment_value = current_segment_value * 10 + parsed_value;
+                current_segment_digits += 1;
+            }
+        }
+        j += 1;
+    }
+    if !is_valid_digits(i, current_segment_digits) {
+        return None;
+    }
+    if i < 2 && j < bytes.len() {
+        // For the `yyyy` and `yyyy-[m]m` formats, entire input must be consumed.
+        return None;
+    }
+    segments[i] = current_segment_value;
+
+    if segments[0] > 9999 || segments[1] > 12 || segments[2] > 31 {
+        return None;
+    }
+    let local_date =
+        chrono::NaiveDate::from_ymd_opt(sign * segments[0], segments[1] as u32, segments[2] as u32);
+    match local_date {
+        Some(local_date) => Some(local_date.num_days_from_ce() - 719163),
+        None => None,
+    }
 }
 
 #[cfg(test)]
@@ -517,6 +596,40 @@ mod test {
                 Some(987),
                 Some(123456789012345),
                 Some(-123456789012345),
+                None,
+            ])
+        );
+    }
+
+    #[test]
+    fn test_string_to_date() {
+        let string_array: ArrayRef = Arc::new(StringArray::from_iter(vec![
+            None,
+            Some("2001-02-03"),
+            Some("2001-03-04"),
+            Some("2001-04-05T06:07:08"),
+            Some("2001-04"),
+            Some("2002"),
+            Some("2001-00"),
+            Some("2001-13"),
+            Some("9999-99"),
+            Some("99999-01"),
+        ]));
+        let casted = cast(&string_array, &DataType::Date32).unwrap();
+        assert_eq!(
+            arrow::compute::cast(&casted, &DataType::Utf8)
+                .unwrap()
+                .as_string(),
+            &StringArray::from_iter(vec![
+                None,
+                Some("2001-02-03"),
+                Some("2001-03-04"),
+                Some("2001-04-05"),
+                Some("2001-04-01"),
+                Some("2002-01-01"),
+                None,
+                None,
+                None,
                 None,
             ])
         );
