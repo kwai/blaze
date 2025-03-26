@@ -32,7 +32,7 @@ panic-message = "0.3.0"
 paste = "1.0.15"
 prost = "0.13.5"
 tokio = "1.44.1"
-poem = { version = "3.1.7", features = ["rustls", "test"] }
+poem = { version = "3.1.8", features = ["rustls", "test"] }
 serde = { version = "1", features = ["derive"] }
 
 [dependencies.tikv-jemalloc-ctl]
