@@ -23,13 +23,12 @@ mod brickhouse;
 mod spark_check_overflow;
 mod spark_dates;
 pub mod spark_get_json_object;
+mod spark_hash;
 mod spark_make_array;
 mod spark_make_decimal;
-mod spark_murmur3_hash;
 mod spark_null_if;
 mod spark_strings;
 mod spark_unscaled_value;
-mod spark_xxhash64;
 
 pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementation> {
     Ok(match name {
@@ -39,8 +38,8 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "UnscaledValue" => Arc::new(spark_unscaled_value::spark_unscaled_value),
         "MakeDecimal" => Arc::new(spark_make_decimal::spark_make_decimal),
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),
-        "Murmur3Hash" => Arc::new(spark_murmur3_hash::spark_murmur3_hash),
-        "XxHash64" => Arc::new(spark_xxhash64::spark_xxhash64),
+        "Murmur3Hash" => Arc::new(spark_hash::spark_murmur3_hash),
+        "XxHash64" => Arc::new(spark_hash::spark_xxhash64),
         "GetJsonObject" => Arc::new(spark_get_json_object::spark_get_json_object),
         "GetParsedJsonObject" => Arc::new(spark_get_json_object::spark_get_parsed_json_object),
         "ParseJson" => Arc::new(spark_get_json_object::spark_parse_json),
