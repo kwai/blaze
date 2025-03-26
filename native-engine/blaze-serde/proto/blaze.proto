@@ -501,6 +501,7 @@ message ProjectionExecNode {
   PhysicalPlanNode input = 1;
   repeated PhysicalExprNode expr = 2;
   repeated string expr_name = 3;
+  repeated ArrowType data_type = 4;
 }
 
 message UnionExecNode {

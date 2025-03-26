@@ -22,7 +22,7 @@ use std::{
 use arrow::{
     array::{ArrayRef, RecordBatch},
     compute::SortOptions,
-    datatypes::{Field, FieldRef, SchemaRef},
+    datatypes::{DataType, Field, FieldRef, SchemaRef},
     row::{RowConverter, SortField},
 };
 use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
@@ -116,17 +116,28 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
         match plan {
             PhysicalPlanType::Projection(projection) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(projection.input)?;
+                let input_schema = input.schema();
+                let data_types: Vec<DataType> = projection
+                    .data_type
+                    .iter()
+                    .map(|data_type| data_type.try_into())
+                    .collect::<Result<Vec<_>, Self::Error>>()?;
                 let exprs = projection
                     .expr
                     .iter()
                     .zip(projection.expr_name.iter())
-                    .map(|(expr, name)| {
-                        Ok((
-                            try_parse_physical_expr(expr, &input.schema())?,
-                            name.to_string(),
-                        ))
+                    .zip(data_types)
+                    .map(|((expr, name), data_type)| {
+                        let physical_expr = try_parse_physical_expr(expr, &input_schema)?;
+                        let casted_expr = if physical_expr.data_type(&input_schema)? == data_type {
+                            physical_expr
+                        } else {
+                            Arc::new(TryCastExpr::new(physical_expr, data_type))
+                        };
+                        Ok((casted_expr, name.to_string()))
                     })
                     .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>()?;
+
                 Ok(Arc::new(ProjectExec::try_new(exprs, input)?))
             }
             PhysicalPlanType::Filter(filter) => {

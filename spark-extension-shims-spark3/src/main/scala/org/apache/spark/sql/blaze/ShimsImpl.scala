@@ -254,9 +254,8 @@ class ShimsImpl extends Shims with Logging {
 
   override def createNativeProjectExec(
       projectList: Seq[NamedExpression],
-      child: SparkPlan,
-      addTypeCast: Boolean = false): NativeProjectBase =
-    NativeProjectExecProvider.provide(projectList, child, addTypeCast)
+      child: SparkPlan): NativeProjectBase =
+    NativeProjectExecProvider.provide(projectList, child)
 
   override def createNativeRenameColumnsExec(
       child: SparkPlan,
