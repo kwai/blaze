@@ -1161,29 +1161,19 @@ object NativeConverters extends Logging {
           case Some(converted) => return converted
           case _ =>
         }
+
+        // fallback to UDAF
         if (BlazeConf.UDAF_FALLBACK_ENABLE.booleanConf()) {
-          // other udaf aggFunction
           aggBuilder.setAggFunction(pb.AggFunction.UDAF)
           val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
-
-          val bound = udaf match {
-            case declarativeAggregate: DeclarativeAggregate =>
-              declarativeAggregate.mapChildren { p =>
-                val convertedChild = convertExpr(p)
-                val nextBindIndex =
-                  convertedChildren.size + declarativeAggregate.inputAggBufferAttributes.length
-                convertedChildren.getOrElseUpdate(
-                  convertedChild,
-                  BoundReference(nextBindIndex, p.dataType, p.nullable))
-              }
-            case imperativeAggregate: ImperativeAggregate =>
-              imperativeAggregate.mapChildren { p =>
-                val convertedChild = convertExpr(p)
-                val nextBindIndex = convertedChildren.size
-                convertedChildren.getOrElseUpdate(
-                  convertedChild,
-                  BoundReference(nextBindIndex, p.dataType, p.nullable))
-              }
+          val bound = udaf.mapChildren {
+            case p: Literal => p
+            case p =>
+              val convertedChild = convertExpr(p)
+              val nextBindIndex = convertedChildren.size
+              convertedChildren.getOrElseUpdate(
+                convertedChild,
+                BoundReference(nextBindIndex, p.dataType, p.nullable))
           }
 
           val paramsSchema = StructType(
@@ -1206,8 +1196,8 @@ object NativeConverters extends Logging {
           aggBuilder.addAllChildren(convertedChildren.keys.asJava)
         } else {
           throw new NotImplementedError(
-            s"unsupported aggregate expression: (${e.getClass}) $e," +
-              s" set spark.blaze.enable.udaf true to enable")
+            s"unsupported aggregate expression: (${e.getClass})," +
+              s" set ${BlazeConf.UDAF_FALLBACK_ENABLE.key} true to enable UDAF fallbacking")
         }
 
     }
