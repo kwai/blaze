@@ -40,7 +40,7 @@ pub struct BloomFilterMightContainExpr {
     uuid: String,
     bloom_filter_expr: Arc<dyn PhysicalExpr>,
     value_expr: Arc<dyn PhysicalExpr>,
-    bloom_filter: OnceCell<Arc<SparkBloomFilter>>,
+    bloom_filter: OnceCell<Arc<Option<SparkBloomFilter>>>,
 }
 
 impl BloomFilterMightContainExpr {
@@ -108,15 +108,22 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         let bloom_filter = self.bloom_filter.get_or_try_init(|| {
             get_cached_bloom_filter(&self.uuid, || {
                 match self.bloom_filter_expr.evaluate(batch)? {
-                    ColumnarValue::Scalar(ScalarValue::Binary(Some(v))) => {
-                        Ok(SparkBloomFilter::read_from(&mut Cursor::new(v.as_slice()))?)
-                    }
+                    ColumnarValue::Scalar(ScalarValue::Binary(Some(v))) => Ok(Some(
+                        SparkBloomFilter::read_from(&mut Cursor::new(v.as_slice()))?,
+                    )),
+                    ColumnarValue::Scalar(ScalarValue::Binary(None)) => Ok(None),
                     _ => {
                         df_execution_err!("bloom_filter_arg must be valid binary scalar value")
                     }
                 }
             })
         })?;
+
+        // always return false if bllom filter is null
+        if bloom_filter.is_none() {
+            return Ok(ColumnarValue::Scalar(ScalarValue::from(false)));
+        }
+        let bloom_filter = bloom_filter.as_ref().as_ref().unwrap();
 
         // process with bloom filter
         let value = self.value_expr.evaluate(batch)?;
@@ -167,13 +174,13 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
     }
 }
 
-type Slot = Arc<Mutex<Weak<SparkBloomFilter>>>;
+type Slot = Arc<Mutex<Weak<Option<SparkBloomFilter>>>>;
 static CACHED_BLOOM_FILTER: OnceCell<Arc<Mutex<HashMap<String, Slot>>>> = OnceCell::new();
 
 fn get_cached_bloom_filter(
     uuid: &str,
-    init: impl FnOnce() -> Result<SparkBloomFilter>,
-) -> Result<Arc<SparkBloomFilter>> {
+    init: impl FnOnce() -> Result<Option<SparkBloomFilter>>,
+) -> Result<Arc<Option<SparkBloomFilter>>> {
     // remove expire keys and insert new key
     let slot = {
         let cached_bloom_filter = CACHED_BLOOM_FILTER.get_or_init(|| Arc::default());
