@@ -38,7 +38,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Boolean](count)
     var i = 0
     while (i < count) {
-      res(i) = getBoolean(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getBoolean(rowId + i)
       i += 1
     }
     res
@@ -50,7 +50,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Byte](count)
     var i = 0
     while (i < count) {
-      res(i) = getByte(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getByte(rowId + i)
       i += 1
     }
     res
@@ -62,7 +62,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Short](count)
     var i = 0
     while (i < count) {
-      res(i) = getShort(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getShort(rowId + i)
       i += 1
     }
     res
@@ -74,7 +74,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Int](count)
     var i = 0
     while (i < count) {
-      res(i) = getInt(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getInt(rowId + i)
       i += 1
     }
     res
@@ -86,7 +86,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Long](count)
     var i = 0
     while (i < count) {
-      res(i) = getLong(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getLong(rowId + i)
       i += 1
     }
     res
@@ -98,7 +98,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Float](count)
     var i = 0
     while (i < count) {
-      res(i) = getFloat(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getFloat(rowId + i)
       i += 1
     }
     res
@@ -110,7 +110,7 @@ abstract class BlazeColumnVector(val dataType: DataType) extends AutoCloseable {
     val res = new Array[Double](count)
     var i = 0
     while (i < count) {
-      res(i) = getDouble(rowId + i)
+      if (!isNullAt(rowId + i)) res(i) = getDouble(rowId + i)
       i += 1
     }
     res
