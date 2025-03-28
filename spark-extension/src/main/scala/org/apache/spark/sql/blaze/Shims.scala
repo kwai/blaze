@@ -154,7 +154,7 @@ abstract class Shims {
       child: SparkPlan,
       metrics: Map[String, SQLMetric]): NativePartialTakeOrderedBase
 
-  def createNativeUnionExec(children: Seq[SparkPlan]): NativeUnionBase
+  def createNativeUnionExec(children: Seq[SparkPlan], output: Seq[Attribute]): NativeUnionBase
 
   def createNativeWindowExec(
       windowExpression: Seq[NamedExpression],

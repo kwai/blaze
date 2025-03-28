@@ -15,11 +15,14 @@
  */
 package org.apache.spark.sql.execution.blaze.plan
 
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
 import org.blaze.sparkver
 
-case class NativeUnionExec(override val children: Seq[SparkPlan])
-    extends NativeUnionBase(children) {
+case class NativeUnionExec(
+    override val children: Seq[SparkPlan],
+    override val output: Seq[Attribute])
+    extends NativeUnionBase(children, output) {
 
   @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[SparkPlan]): SparkPlan =
