@@ -44,7 +44,6 @@ use datafusion::{
             BinaryExpr, CaseExpr, CastExpr, Column, IsNotNullExpr, IsNullExpr, Literal,
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
-        union::UnionExec,
         ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
     },
     prelude::create_udf,
@@ -86,6 +85,7 @@ use datafusion_ext_plans::{
     shuffle_writer_exec::ShuffleWriterExec,
     sort_exec::SortExec,
     sort_merge_join_exec::SortMergeJoinExec,
+    union_exec::UnionExec,
     window::{WindowExpr, WindowFunction, WindowRankType},
     window_exec::WindowExec,
 };
@@ -367,12 +367,20 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::Union(union) => {
-                let inputs: Vec<Arc<dyn ExecutionPlan>> = union
-                    .children
-                    .iter()
-                    .map(|i| i.try_into())
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Arc::new(UnionExec::new(inputs)))
+                let input: Arc<dyn ExecutionPlan> = convert_box_required!(union.input)?;
+                let schema: SchemaRef = Arc::new(convert_required!(union.schema)?);
+                let num_partitions = union.num_partitions as usize;
+                let in_partition = union.in_partition as usize;
+                let num_children = union.num_children as usize;
+                let current_child_index = union.current_child_index as usize;
+                Ok(Arc::new(UnionExec::new(
+                    num_partitions,
+                    in_partition,
+                    input,
+                    num_children,
+                    current_child_index,
+                    schema,
+                )))
             }
             PhysicalPlanType::EmptyPartitions(empty_partitions) => {
                 let schema = Arc::new(convert_required!(empty_partitions.schema)?);

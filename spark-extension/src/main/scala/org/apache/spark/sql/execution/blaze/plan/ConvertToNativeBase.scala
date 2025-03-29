@@ -70,7 +70,6 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       Shims.get.getRDDShuffleReadFull(inputRDD),
       (partition, context) => {
-
         val inputRowIter = inputRDD.compute(partition, context)
         val resourceId = s"ConvertToNativeExec:${UUID.randomUUID().toString}"
         JniBridge.resourcesMap.put(resourceId, new ArrowFFIExporter(inputRowIter, renamedSchema))

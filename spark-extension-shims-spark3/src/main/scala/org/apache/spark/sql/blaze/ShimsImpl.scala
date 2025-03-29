@@ -287,8 +287,10 @@ class ShimsImpl extends Shims with Logging {
       metrics: Map[String, SQLMetric]): NativePartialTakeOrderedBase =
     NativePartialTakeOrderedExec(limit, sortOrder, child, metrics)
 
-  override def createNativeUnionExec(children: Seq[SparkPlan]): NativeUnionBase =
-    NativeUnionExec(children)
+  override def createNativeUnionExec(
+      children: Seq[SparkPlan],
+      output: Seq[Attribute]): NativeUnionBase =
+    NativeUnionExec(children, output)
 
   override def createNativeWindowExec(
       windowExpression: Seq[NamedExpression],
