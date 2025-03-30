@@ -19,10 +19,16 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.language.postfixOps
 import scala.math.max
 import scala.math.min
+
+import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.commons.lang3.reflect.MethodUtils
+
 import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
@@ -41,7 +47,10 @@ import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
+import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.execution.blaze.plan.Util
+import org.apache.spark.sql.execution.ExecSubqueryExpression
+import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.ScalarSubquery
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
@@ -347,6 +356,13 @@ object NativeConverters extends Logging {
       case e: NotImplementedError =>
         logWarning(s"Falling back expression: $e")
 
+        // update subquery result if needed
+        sparkExpr.foreach {
+          case subquery: ExecSubqueryExpression =>
+            prepareExecSubquery(subquery)
+          case _ =>
+        }
+
         // bind all convertible children
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
         val bound = sparkExpr.mapChildren(_.transformDown {
@@ -464,13 +480,8 @@ object NativeConverters extends Logging {
         convertExprWithFallback(alias.child, isPruningExpr, fallback)
 
       // ScalarSubquery
-      case subquery: ScalarSubquery =>
-        // if (!subquery.getTagValue(subqueryEvaluatedTag).getOrElse(false)) {
-        //   subquery.updateResult()
-        //   subquery.setTagValue(subqueryEvaluatedTag, true)
-        // }
-        // val value = Literal.create(subquery.eval(null), subquery.dataType)
-        // convertExprWithFallback(value, isPruningExpr, fallback)
+      case subquery: ExecSubqueryExpression =>
+        prepareExecSubquery(subquery)
         val serialized = serializeExpression(
           subquery.asInstanceOf[Expression with Serializable],
           StructType(Nil))
@@ -1306,6 +1317,31 @@ object NativeConverters extends Logging {
         val expr = ois.readObject().asInstanceOf[E with Serializable]
         val payload = ois.readObject().asInstanceOf[S with Serializable]
         (expr, payload)
+      }
+    }
+  }
+
+  def prepareExecSubquery(subquery: ExecSubqueryExpression): Unit = {
+    val isCanonicalized =
+      MethodUtils.invokeMethod(subquery.plan, true, "isCanonicalizedPlan").asInstanceOf[Boolean]
+      
+    if (!isCanonicalized) {
+      subquery match {
+        case e if e.getClass.getName == "org.apache.spark.sql.execution.ScalarSubquery" =>
+          if (!FieldUtils.readField(e, "updated", true).asInstanceOf[Boolean]) {
+            e.updateResult()
+          }
+        case e if e.getClass.getName == "org.apache.spark.sql.execution.InSubquery" =>
+          if (!FieldUtils.readField(e, "updated", true).asInstanceOf[Boolean]) {
+            e.updateResult()
+          }
+        case e if e.getClass.getName == "org.apache.spark.sql.execution.InSubqueryExec" =>
+          val result = FieldUtils.readField(e, "result", true)
+          val resultBroadcast = FieldUtils.readField(e, "resultBroadcast", true)
+          if (result == null && resultBroadcast == null) {
+            e.updateResult()
+          }
+        case _ =>
       }
     }
   }
