@@ -500,60 +500,70 @@ mod test {
             AggFunction::Sum,
             &[phys_expr::col("a", &input.schema())?],
             &input.schema(),
+            DataType::Int64,
         )?;
 
         let agg_expr_avg = create_agg(
             AggFunction::Avg,
             &[phys_expr::col("b", &input.schema())?],
             &input.schema(),
+            DataType::Float64,
         )?;
 
         let agg_expr_max = create_agg(
             AggFunction::Max,
             &[phys_expr::col("d", &input.schema())?],
             &input.schema(),
+            DataType::Int32,
         )?;
 
         let agg_expr_min = create_agg(
             AggFunction::Min,
             &[phys_expr::col("e", &input.schema())?],
             &input.schema(),
+            DataType::Int32,
         )?;
 
         let agg_expr_count = create_agg(
             AggFunction::Count,
             &[phys_expr::col("f", &input.schema())?],
             &input.schema(),
+            DataType::Int64,
         )?;
 
         let agg_expr_collectlist = create_agg(
             AggFunction::CollectList,
             &[phys_expr::col("g", &input.schema())?],
             &input.schema(),
+            DataType::new_list(DataType::Int32, false),
         )?;
 
         let agg_expr_collectset = create_agg(
             AggFunction::CollectSet,
             &[phys_expr::col("h", &input.schema())?],
             &input.schema(),
+            DataType::new_list(DataType::Int32, false),
         )?;
 
         let agg_expr_collectlist_nil = create_agg(
             AggFunction::CollectList,
             &[Arc::new(phys_expr::Literal::new(ScalarValue::Utf8(None)))],
             &input.schema(),
+            DataType::new_list(DataType::Utf8, false),
         )?;
 
         let agg_expr_collectset_nil = create_agg(
             AggFunction::CollectSet,
             &[Arc::new(phys_expr::Literal::new(ScalarValue::Utf8(None)))],
             &input.schema(),
+            DataType::new_list(DataType::Utf8, false),
         )?;
 
         let agg_expr_firstign = create_agg(
             AggFunction::FirstIgnoresNull,
             &[phys_expr::col("h", &input.schema())?],
             &input.schema(),
+            DataType::Int32,
         )?;
 
         let aggs_agg_expr = vec![

@@ -23,8 +23,18 @@ use datafusion_ext_commons::df_execution_err;
 use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::{
-    acc::AccColumnRef, avg, bloom_filter, brickhouse, collect, first, first_ignores_null, maxmin,
-    spark_udaf_wrapper::SparkUDAFWrapper, sum, AggFunction,
+    acc::AccColumnRef,
+    avg::AggAvg,
+    bloom_filter::AggBloomFilter,
+    brickhouse,
+    collect::{AggCollectList, AggCollectSet},
+    count::AggCount,
+    first::AggFirst,
+    first_ignores_null::AggFirstIgnoresNull,
+    maxmin::{AggMax, AggMin},
+    spark_udaf_wrapper::SparkUDAFWrapper,
+    sum::AggSum,
+    AggFunction,
 };
 
 pub trait Agg: Send + Sync + Debug {
@@ -161,12 +171,8 @@ pub fn create_agg(
     agg_function: AggFunction,
     children: &[Arc<dyn PhysicalExpr>],
     input_schema: &SchemaRef,
+    return_type: DataType,
 ) -> Result<Arc<dyn Agg>> {
-    use arrow::datatypes::DataType;
-    use datafusion::logical_expr::type_coercion::aggregates::*;
-
-    use crate::agg::count;
-
     Ok(match agg_function {
         AggFunction::Count => {
             let return_type = DataType::Int64;
@@ -178,48 +184,31 @@ pub fn create_agg(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            Arc::new(count::AggCount::try_new(children, return_type)?)
+            Arc::new(AggCount::try_new(children, return_type)?)
         }
-        AggFunction::Sum => {
-            let arg_type = children[0].data_type(input_schema)?;
-            let return_type = match arg_type {
-                DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-                    DataType::Int64
-                }
-                DataType::Float32 | DataType::Float64 => DataType::Float64,
-                other => sum_return_type(&other)?,
-            };
-            Arc::new(sum::AggSum::try_new(
-                Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
-                return_type,
-            )?)
-        }
-        AggFunction::Avg => {
-            let arg_type = children[0].data_type(input_schema)?;
-            let return_type = avg_return_type("avg", &arg_type)?;
-            Arc::new(avg::AggAvg::try_new(
-                Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
-                return_type,
-            )?)
-        }
+        AggFunction::Sum => Arc::new(AggSum::try_new(
+            Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
+            return_type,
+        )?),
+        AggFunction::Avg => Arc::new(AggAvg::try_new(
+            Arc::new(TryCastExpr::new(children[0].clone(), return_type.clone())),
+            return_type,
+        )?),
         AggFunction::Max => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(maxmin::AggMax::try_new(children[0].clone(), dt)?)
+            Arc::new(AggMax::try_new(children[0].clone(), dt)?)
         }
         AggFunction::Min => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(maxmin::AggMin::try_new(children[0].clone(), dt)?)
+            Arc::new(AggMin::try_new(children[0].clone(), dt)?)
         }
         AggFunction::First => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(first::AggFirst::try_new(children[0].clone(), dt)?)
+            Arc::new(AggFirst::try_new(children[0].clone(), dt)?)
         }
         AggFunction::FirstIgnoresNull => {
             let dt = children[0].data_type(input_schema)?;
-            Arc::new(first_ignores_null::AggFirstIgnoresNull::try_new(
-                children[0].clone(),
-                dt,
-            )?)
+            Arc::new(AggFirstIgnoresNull::try_new(children[0].clone(), dt)?)
         }
         AggFunction::BloomFilter => {
             let dt = children[0].data_type(input_schema)?;
@@ -234,7 +223,7 @@ pub fn create_agg(
                 .into_array(1)?
                 .as_primitive::<Int64Type>()
                 .value(0);
-            Arc::new(bloom_filter::AggBloomFilter::new(
+            Arc::new(AggBloomFilter::new(
                 children[0].clone(),
                 dt,
                 estimated_num_items as usize,
@@ -243,8 +232,7 @@ pub fn create_agg(
         }
         AggFunction::CollectList => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::new_list(arg_type.clone(), true);
-            Arc::new(collect::AggCollectList::try_new(
+            Arc::new(AggCollectList::try_new(
                 children[0].clone(),
                 return_type,
                 arg_type,
@@ -252,8 +240,7 @@ pub fn create_agg(
         }
         AggFunction::CollectSet => {
             let arg_type = children[0].data_type(input_schema)?;
-            let return_type = DataType::new_list(arg_type.clone(), true);
-            Arc::new(collect::AggCollectSet::try_new(
+            Arc::new(AggCollectSet::try_new(
                 children[0].clone(),
                 return_type,
                 arg_type,
