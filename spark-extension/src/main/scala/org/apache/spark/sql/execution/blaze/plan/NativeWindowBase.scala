@@ -80,6 +80,7 @@ abstract class NativeWindowBase(
   private def nativeWindowExprs = windowExpression.map { named =>
     val field = NativeConverters.convertField(Util.getSchema(named :: Nil).fields(0))
     val windowExprBuilder = pb.WindowExprNode.newBuilder().setField(field)
+    windowExprBuilder.setReturnType(NativeConverters.convertDataType(named.dataType))
 
     named.children.head match {
       case WindowExpression(function, spec) =>

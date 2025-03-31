@@ -264,21 +264,25 @@ mod test {
                 WindowFunction::RankLike(WindowRankType::RowNumber),
                 vec![],
                 Arc::new(Field::new("b1_row_number", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::RankLike(WindowRankType::Rank),
                 vec![],
                 Arc::new(Field::new("b1_rank", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::RankLike(WindowRankType::DenseRank),
                 vec![],
                 Arc::new(Field::new("b1_dense_rank", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::Agg(AggFunction::Sum),
                 vec![Arc::new(Column::new("b1", 1))],
                 Arc::new(Field::new("b1_sum", DataType::Int64, false)),
+                DataType::Int64,
             ),
         ];
         let window = Arc::new(WindowExec::try_new(
@@ -323,21 +327,25 @@ mod test {
                 WindowFunction::RankLike(WindowRankType::RowNumber),
                 vec![],
                 Arc::new(Field::new("b1_row_number", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::RankLike(WindowRankType::Rank),
                 vec![],
                 Arc::new(Field::new("b1_rank", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::RankLike(WindowRankType::DenseRank),
                 vec![],
                 Arc::new(Field::new("b1_dense_rank", DataType::Int32, false)),
+                DataType::Int32,
             ),
             WindowExpr::new(
                 WindowFunction::Agg(AggFunction::Sum),
                 vec![Arc::new(Column::new("b1", 1))],
                 Arc::new(Field::new("b1_sum", DataType::Int64, false)),
+                DataType::Int64,
             ),
         ];
         let window = Arc::new(WindowExec::try_new(

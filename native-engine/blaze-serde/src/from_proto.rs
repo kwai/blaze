@@ -459,20 +459,19 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             .iter()
                             .map(|expr| try_parse_physical_expr(expr, &input_schema))
                             .collect::<Result<Vec<_>, _>>()?;
+                        let return_type = convert_required!(agg_node.return_type)?;
+
                         let agg = match AggFunction::from(agg_function) {
                             AggFunction::Udaf => {
                                 let udaf = agg_node.udaf.as_ref().unwrap();
                                 let serialized = udaf.serialized.clone();
-                                create_udaf_agg(
-                                    serialized,
-                                    convert_required!(udaf.return_type)?,
-                                    agg_children_exprs,
-                                )?
+                                create_udaf_agg(serialized, return_type, agg_children_exprs)?
                             }
                             _ => create_agg(
                                 AggFunction::from(agg_function),
                                 &agg_children_exprs,
                                 &input_schema,
+                                return_type,
                             )?,
                         };
 
@@ -548,6 +547,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                             .iter()
                             .map(|expr| try_parse_physical_expr(expr, &input.schema()))
                             .collect::<Result<Vec<_>, Self::Error>>()?;
+                        let return_type = convert_required!(w.return_type)?;
 
                         let window_func = match w.func_type() {
                             protobuf::WindowFunctionType::Window => match w.window_func() {
@@ -595,7 +595,12 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                                 }
                             },
                         };
-                        Ok::<_, Self::Error>(WindowExpr::new(window_func, children, field))
+                        Ok::<_, Self::Error>(WindowExpr::new(
+                            window_func,
+                            children,
+                            field,
+                            return_type,
+                        ))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 

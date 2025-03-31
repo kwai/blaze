@@ -963,23 +963,42 @@ object NativeConverters extends Logging {
               c.dataType == StringType || c.dataType == ArrayType(StringType)) =>
         buildExtScalarFunction("StringConcatWs", e.children, e.dataType)
 
-      case e: Coalesce => buildScalarFunction(pb.ScalarFunction.Coalesce, e.children, e.dataType)
+      case e: Coalesce =>
+        val children = e.children.map(Cast(_, e.dataType))
+        buildScalarFunction(pb.ScalarFunction.Coalesce, children, e.dataType)
 
-      case If(predicate, trueValue, falseValue) =>
-        val caseWhen = CaseWhen(Seq((predicate, trueValue)), falseValue)
+      case e@If(predicate, trueValue, falseValue) =>
+        val castedTrueValue = trueValue match {
+          case t if t.dataType != e.dataType => Cast(t, e.dataType)
+          case t => t
+        }
+        val castedFalseValue = falseValue match {
+          case f if f.dataType != e.dataType => Cast(f, e.dataType)
+          case f => f
+        }
+        val caseWhen = CaseWhen(Seq((predicate, castedTrueValue)), castedFalseValue)
         convertExprWithFallback(caseWhen, isPruningExpr, fallback)
 
-      case CaseWhen(branches, elseValue) =>
+      case e@CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map { case (w, t) =>
-          val whenThen = pb.PhysicalWhenThen.newBuilder()
-          whenThen.setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
-          whenThen.setThenExpr(convertExprWithFallback(t, isPruningExpr, fallback))
-          whenThen.build()
+          val casted = t match {
+            case t if t.dataType != e.dataType => Cast(t, e.dataType)
+            case t => t
+          }
+          pb.PhysicalWhenThen.newBuilder()
+            .setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
+            .setThenExpr(convertExprWithFallback(casted, isPruningExpr, fallback))
+            .build()
         }
         caseExpr.addAllWhenThenExpr(whenThens.asJava)
-        elseValue.foreach(el =>
-          caseExpr.setElseExpr(convertExprWithFallback(el, isPruningExpr, fallback)))
+        elseValue.foreach { el =>
+          val casted = el match {
+            case el if el.dataType != e.dataType => Cast(el, e.dataType)
+            case el => el
+          }
+          caseExpr.setElseExpr(convertExprWithFallback(casted, isPruningExpr, fallback))
+        }
         pb.PhysicalExprNode.newBuilder().setCase(caseExpr).build()
 
       // expressions for DecimalPrecision rule
@@ -1096,6 +1115,7 @@ object NativeConverters extends Logging {
   def convertAggregateExpr(e: AggregateExpression): pb.PhysicalExprNode = {
     assert(Shims.get.getAggregateExpressionFilter(e).isEmpty)
     val aggBuilder = pb.PhysicalAggExprNode.newBuilder()
+    aggBuilder.setReturnType(convertDataType(e.dataType))
 
     e.aggregateFunction match {
       case e: Max =>
@@ -1201,9 +1221,7 @@ object NativeConverters extends Logging {
             pb.AggUdaf
               .newBuilder()
               .setSerialized(ByteString.copyFrom(serialized))
-              .setInputSchema(NativeConverters.convertSchema(paramsSchema))
-              .setReturnType(convertDataType(bound.dataType))
-              .setReturnNullable(bound.nullable))
+              .setInputSchema(NativeConverters.convertSchema(paramsSchema)))
           aggBuilder.addAllChildren(convertedChildren.keys.asJava)
         } else {
           throw new NotImplementedError(

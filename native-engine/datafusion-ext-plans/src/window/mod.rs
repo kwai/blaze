@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use arrow::{array::ArrayRef, datatypes::FieldRef, record_batch::RecordBatch};
+use arrow_schema::DataType;
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
 use crate::{
@@ -53,6 +54,7 @@ pub struct WindowExpr {
     field: FieldRef,
     func: WindowFunction,
     children: Vec<Arc<dyn PhysicalExpr>>,
+    return_type: DataType,
 }
 
 impl WindowExpr {
@@ -60,11 +62,13 @@ impl WindowExpr {
         func: WindowFunction,
         children: Vec<Arc<dyn PhysicalExpr>>,
         field: FieldRef,
+        return_type: DataType,
     ) -> Self {
         Self {
             field,
             func,
             children,
+            return_type,
         }
     }
 
@@ -83,7 +87,12 @@ impl WindowExpr {
                 Ok(Box::new(RankProcessor::new(true)))
             }
             WindowFunction::Agg(agg_func) => {
-                let agg = create_agg(agg_func, &self.children, &context.input_schema)?;
+                let agg = create_agg(
+                    agg_func.clone(),
+                    &self.children,
+                    &context.input_schema,
+                    self.return_type.clone(),
+                )?;
                 Ok(Box::new(AggProcessor::try_new(agg)?))
             }
         }

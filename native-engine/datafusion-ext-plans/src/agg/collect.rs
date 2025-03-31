@@ -27,7 +27,7 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{
-    downcast_any,
+    df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
 };
 use hashbrown::raw::RawTable;
@@ -49,6 +49,7 @@ pub struct AggGenericCollect<C: AccCollectionColumn> {
     child: Arc<dyn PhysicalExpr>,
     data_type: DataType,
     arg_type: DataType,
+    return_list_nullable: bool,
     _phantom: PhantomData<C>,
 }
 
@@ -58,10 +59,15 @@ impl<C: AccCollectionColumn> AggGenericCollect<C> {
         data_type: DataType,
         arg_type: DataType,
     ) -> Result<Self> {
+        let return_list_nullable = match &data_type {
+            DataType::List(field) => field.is_nullable(),
+            _ => return df_execution_err!("expect DataType::List({arg_type:?}, got {data_type:?}"),
+        };
         Ok(Self {
             child,
-            data_type,
             arg_type,
+            data_type,
+            return_list_nullable,
             _phantom: Default::default(),
         })
     }
@@ -157,7 +163,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
                 list.push(ScalarValue::List(ScalarValue::new_list(
                     &accs.take_values(acc_idx),
                     &self.arg_type,
-                    true,
+                    self.return_list_nullable,
                 )));
             }
         }
