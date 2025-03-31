@@ -15,30 +15,28 @@
  */
 package org.apache.spark.sql.execution.blaze.plan
 
-import scala.collection.mutable.ArrayBuffer
-import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
-import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeHelper
+import org.apache.spark.sql.blaze.NativeRDD
+import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.types.StructType
-import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.UnionExecNode
-import org.apache.spark.sql.blaze.NativeSupports
 
-abstract class NativeUnionBase(override val children: Seq[SparkPlan])
+abstract class NativeUnionBase(
+    override val children: Seq[SparkPlan],
+    override val output: Seq[Attribute])
     extends SparkPlan
     with NativeSupports {
 
@@ -47,22 +45,6 @@ abstract class NativeUnionBase(override val children: Seq[SparkPlan])
       .getDefaultNativeMetrics(sparkContext)
       .filterKeys(Set("stage_id", "output_rows"))
       .toSeq: _*)
-
-  // updating nullability to make all the children consistent
-  override def output: Seq[Attribute] = {
-    children.map(_.output).transpose.map { attrs =>
-      val firstAttr = attrs.head
-      val nullable = attrs.exists(_.nullable)
-      val newDt = attrs.map(_.dataType).reduce((dt1, dt2) => StructType.merge(dt1, dt2))
-      if (firstAttr.dataType == newDt) {
-        firstAttr.withNullability(nullable)
-      } else {
-        AttributeReference(firstAttr.name, newDt, nullable, firstAttr.metadata)(
-          firstAttr.exprId,
-          firstAttr.qualifier)
-      }
-    }
-  }
 
   override def doExecuteNative(): NativeRDD = {
     val rdds = children.map(c => NativeHelper.executeNative(c))
@@ -96,28 +78,21 @@ abstract class NativeUnionBase(override val children: Seq[SparkPlan])
       rdds.forall(_.isShuffleReadFull),
       (partition, taskContext) => {
         val unionPartition = unionedPartitions(partition.index)
-        val unionChildrenExecs = rdds.zipWithIndex.map {
-          case (rdd, rddIndex) if rddIndex == unionPartition.parentRddIndex =>
-            rdd.nativePlan(unionPartition.parentPartition, taskContext)
-          case (rdd, _) =>
-            nativeEmptyPartitionExec(rdd.getNumPartitions)
-        }
-        val union = UnionExecNode.newBuilder().addAllChildren(unionChildrenExecs.asJava)
+        val inputPlan = rdds(unionPartition.parentRddIndex)
+          .nativePlan(unionPartition.parentPartition, taskContext)
+
+        val union = UnionExecNode
+          .newBuilder()
+          .setNumPartitions(unionedPartitions.length)
+          .setInPartition(unionPartition.parentPartition.index)
+          .setNumChildren(rdds.length)
+          .setCurrentChildIndex(unionPartition.parentRddIndex)
+          .setSchema(nativeSchema)
+          .setInput(inputPlan)
         PhysicalPlanNode.newBuilder().setUnion(union).build()
       },
       friendlyName = "NativeRDD.Union")
   }
-
-  private def nativeEmptyPartitionExec(numPartitions: Int) =
-    PhysicalPlanNode
-      .newBuilder()
-      .setEmptyPartitions(
-        EmptyPartitionsExecNode
-          .newBuilder()
-          .setSchema(nativeSchema)
-          .setNumPartitions(numPartitions)
-          .build())
-      .build()
 
   val nativeSchema: Schema = Util.getNativeSchema(output)
 }

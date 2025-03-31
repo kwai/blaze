@@ -368,9 +368,9 @@ object BlazeConverters extends Logging {
 
   def convertUnionExec(exec: UnionExec): SparkPlan = {
     logDebug(s"Converting UnionExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    Shims.get.createNativeUnionExec(exec.children.map(child => {
-      addRenameColumnsExec(convertToNative(child))
-    }))
+    Shims.get.createNativeUnionExec(
+      exec.children.map(child => addRenameColumnsExec(convertToNative(child))),
+      exec.output)
   }
 
   def convertSortMergeJoinExec(exec: SortMergeJoinExec): SparkPlan = {
