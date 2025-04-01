@@ -16,7 +16,9 @@
 package org.apache.spark.sql.execution.blaze.plan
 
 import java.util.UUID
+
 import scala.collection.JavaConverters._
+
 import org.apache.spark.{OneToOneDependency, Partitioner, RangePartitioner, ShuffleDependency, SparkEnv, TaskContext}
 import org.blaze.protobuf.{IpcReaderExecNode, PhysicalExprNode, PhysicalHashRepartition, PhysicalPlanNode, PhysicalRangeRepartition, PhysicalRepartition, PhysicalRoundRobinRepartition, PhysicalSingleRepartition, PhysicalSortExprNode, Schema, SortExecNode}
 import org.apache.spark.rdd.{PartitionPruningRDD, RDD}
@@ -34,7 +36,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, BoundReference, NullsFirst, UnsafeProjection}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
-import org.apache.spark.sql.execution.{SQLExecution, SparkPlan, UnsafeRowSerializer}
+import org.apache.spark.sql.execution.{SparkPlan, SQLExecution, UnsafeRowSerializer}
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleDependency
 import org.apache.spark.util.{CompletionIterator, MutablePair}
@@ -42,11 +44,12 @@ import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.ArrayType
-
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.hashing.byteswap32
+
+import org.apache.spark.sql.catalyst.expressions.Literal
 
 abstract class NativeShuffleExchangeBase(
     override val outputPartitioning: Partitioning,
@@ -231,7 +234,7 @@ abstract class NativeShuffleExchangeBase(
             internal_row.get(index, field.dataType)
           }
           val arrayData = ArrayData.toArrayData(valueList)
-          NativeConverters.convertValue(arrayData, ArrayType(field.dataType))
+          NativeConverters.convertExpr(Literal(arrayData, ArrayType(field.dataType))).getLiteral
         }.toList
 
       case _ => null
