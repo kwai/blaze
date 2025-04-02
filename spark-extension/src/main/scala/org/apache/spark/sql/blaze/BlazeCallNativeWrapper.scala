@@ -188,6 +188,9 @@ object BlazeCallNativeWrapper extends Logging {
         s"nativeMemory=${NativeHelper.nativeMemory}, " +
         s"memoryFraction=${BlazeConf.MEMORY_FRACTION.doubleConf()})")
 
+    // arrow configuration
+    System.setProperty("arrow.struct.conflict.policy", "CONFLICT_APPEND")
+
     assert(classOf[JniBridge] != null) // preload JNI bridge classes
     BlazeCallNativeWrapper.loadLibBlaze()
     ShutdownHookManager.addShutdownHook(() => JniBridge.onExit())
