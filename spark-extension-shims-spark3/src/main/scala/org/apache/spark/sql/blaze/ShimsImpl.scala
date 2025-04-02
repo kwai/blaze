@@ -509,6 +509,7 @@ class ShimsImpl extends Shims with Logging {
       case First(child, ignoresNull) =>
         val aggExpr = pb.PhysicalAggExprNode
           .newBuilder()
+          .setReturnType(NativeConverters.convertDataType(e.dataType))
           .setAggFunction(if (ignoresNull) {
             pb.AggFunction.FIRST_IGNORES_NULL
           } else {
@@ -520,7 +521,10 @@ class ShimsImpl extends Shims with Logging {
       case agg =>
         convertBloomFilterAgg(agg) match {
           case Some(aggExpr) =>
-            return Some(pb.PhysicalExprNode.newBuilder().setAggExpr(aggExpr).build())
+            return Some(pb.PhysicalExprNode
+              .newBuilder()
+              .setAggExpr(aggExpr)
+              .build())
           case None =>
         }
         None
@@ -917,6 +921,7 @@ class ShimsImpl extends Shims with Logging {
         Some(
           pb.PhysicalAggExprNode
             .newBuilder()
+            .setReturnType(NativeConverters.convertDataType(agg.dataType))
             .setAggFunction(pb.AggFunction.BLOOM_FILTER)
             .addChildren(NativeConverters.convertExpr(child))
             .addChildren(NativeConverters.convertExpr(Literal(estimatedNumItems)))
