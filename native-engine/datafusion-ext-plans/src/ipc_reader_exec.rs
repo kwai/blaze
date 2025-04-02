@@ -396,13 +396,14 @@ impl HeapByteBufferReader {
     pub fn try_new(block: JObject, byte_buffer: JObject) -> Result<Self> {
         let block_global_ref = jni_new_global_ref!(block)?;
         let byte_array = jni_call!(JavaBuffer(byte_buffer).array() -> JObject)?;
+        let array_offset = jni_call!(JavaBuffer(byte_buffer).arrayOffset() -> i32)? as usize;
         let pos = jni_call!(JavaBuffer(byte_buffer).position() -> i32)? as usize;
         let remaining = jni_call!(JavaBuffer(byte_buffer).remaining() -> i32)? as usize;
         let byet_array_global_ref = jni_new_global_ref!(byte_array.as_obj())?;
         Ok(Self {
             block: block_global_ref,
             byte_array: byet_array_global_ref,
-            pos,
+            pos: array_offset + pos,
             remaining,
         })
     }
@@ -414,10 +415,11 @@ impl HeapByteBufferReader {
 
     fn read_impl(&mut self, buf: &mut [u8]) -> Result<usize> {
         let read_len = buf.len().min(self.remaining);
-
-        jni_get_byte_array_region!(self.byte_array.as_obj(), self.pos, &mut buf[..read_len])?;
-        self.pos += read_len;
-        self.remaining -= read_len;
+        if read_len > 0 {
+            jni_get_byte_array_region!(self.byte_array.as_obj(), self.pos, &mut buf[..read_len])?;
+            self.pos += read_len;
+            self.remaining -= read_len;
+        }
         Ok(read_len)
     }
 }
