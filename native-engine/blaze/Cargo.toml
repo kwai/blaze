@@ -52,6 +52,7 @@ features = ["disable_initial_exec_tls"]
 
 [dependencies.jemalloc_pprof]
 version = "0.7.0"
+features = ["symbolize"]
 optional = true
 
 [dependencies.pprof]
