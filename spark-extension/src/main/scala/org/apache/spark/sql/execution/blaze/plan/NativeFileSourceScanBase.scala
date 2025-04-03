@@ -31,6 +31,7 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
@@ -91,9 +92,9 @@ abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
     // list input file statuses
     val nativePartitionedFile = (file: PartitionedFile) => {
       val nativePartitionValues = partitionSchema.zipWithIndex.map { case (field, index) =>
-        NativeConverters.convertValue(
-          file.partitionValues.get(index, field.dataType),
-          field.dataType)
+        NativeConverters
+          .convertExpr(Literal(file.partitionValues.get(index, field.dataType), field.dataType))
+          .getLiteral
       }
       pb.PartitionedFile
         .newBuilder()

@@ -79,7 +79,10 @@ impl PhysicalExpr for GetIndexedFieldExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let array = self.arg.evaluate(batch)?.into_array(batch.num_rows())?;
+        let array_value = self.arg.evaluate(batch)?;
+        let array_is_scalar = matches!(array_value, ColumnarValue::Scalar(_));
+        let array = array_value.into_array(1)?;
+
         match (array.data_type(), &self.key) {
             (DataType::List(_) | DataType::Struct(_), _) if self.key.is_null() => {
                 let scalar_null: ScalarValue = array.data_type().try_into()?;
@@ -110,13 +113,22 @@ impl PhysicalExpr for GetIndexedFieldExpr {
                     &take_indices_builder.finish(),
                     None,
                 )?;
+                if array_is_scalar {
+                    return Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                        &taken, 0,
+                    )?));
+                }
                 Ok(ColumnarValue::Array(taken))
             }
             (DataType::Struct(_), ScalarValue::Int32(Some(k))) => {
                 let as_struct_array = as_struct_array(&array)?;
-                Ok(ColumnarValue::Array(
-                    as_struct_array.column(*k as usize).clone(),
-                ))
+                let taken = as_struct_array.column(*k as usize).clone();
+                if array_is_scalar {
+                    return Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                        &taken, 0,
+                    )?));
+                }
+                Ok(ColumnarValue::Array(taken))
             }
             (DataType::List(_), key) => df_execution_err!(
                 "get indexed field is only possible on lists with int64 indexes. \

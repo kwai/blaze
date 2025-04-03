@@ -39,9 +39,11 @@ import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 import org.blaze.{protobuf => pb}
-
 import java.net.URI
 import java.security.PrivilegedExceptionAction
+
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.blaze.sparkver
 
 abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     extends LeafExecNode
@@ -81,9 +83,9 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     // list input file statuses
     val nativePartitionedFile = (file: PartitionedFile) => {
       val nativePartitionValues = partitionSchema.zipWithIndex.map { case (field, index) =>
-        NativeConverters.convertValue(
-          file.partitionValues.get(index, field.dataType),
-          field.dataType)
+        NativeConverters
+          .convertExpr(Literal(file.partitionValues.get(index, field.dataType), field.dataType))
+          .getLiteral
       }
       pb.PartitionedFile
         .newBuilder()
@@ -140,6 +142,7 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
 
   override protected def doCanonicalize(): SparkPlan = basedHiveScan.canonicalized
 
+  @sparkver("3.0 / 3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def simpleString(maxFields: Int): String =
     s"$nodeName (${basedHiveScan.simpleString(maxFields)})"
 }

@@ -827,7 +827,7 @@ fn try_parse_physical_expr(
     let pexpr: Arc<dyn PhysicalExpr> =
         match expr_type {
             ExprType::Column(c) => Arc::new(Column::new(&c.name, input_schema.index_of(&c.name)?)),
-            ExprType::Literal(scalar) => Arc::new(Literal::new(convert_required!(scalar.value)?)),
+            ExprType::Literal(scalar) => Arc::new(Literal::new(scalar.try_into()?)),
             ExprType::BoundReference(bound_reference) => {
                 let pcol: Column = bound_reference.into();
                 Arc::new(pcol)
@@ -1134,7 +1134,11 @@ pub fn parse_protobuf_partitioning(
                     let sort = range_part.sort_expr.clone().unwrap();
                     let exprs = try_parse_physical_sort_expr(&input, &sort).unwrap();
 
-                    let value_list = &range_part.list_value;
+                    let value_list: Vec<ScalarValue> = range_part
+                        .list_value
+                        .iter()
+                        .map(|v| v.try_into())
+                        .collect::<Result<Vec<_>, _>>()?;
 
                     let sort_row_converter = Arc::new(SyncMutex::new(RowConverter::new(
                         exprs
@@ -1151,30 +1155,13 @@ pub fn parse_protobuf_partitioning(
                     let bound_cols: Vec<ArrayRef> = value_list
                         .iter()
                         .map(|x| {
-                            let xx = x.clone().value.unwrap();
-                            let values_ref = match xx {
-                                protobuf::scalar_value::Value::ListValue(scalar_list) => {
-                                    let protobuf::ScalarListValue {
-                                        values,
-                                        datatype: _opt_scalar_type,
-                                    } = scalar_list;
-                                    let value_vec: Vec<ScalarValue> = values
-                                        .iter()
-                                        .map(|val| val.try_into())
-                                        .collect::<Result<Vec<_>, _>>()
-                                        .map_err(|_| {
-                                            proto_error("partition::from_proto() error")
-                                        })?;
-                                    ScalarValue::iter_to_array(value_vec)
-                                        .map_err(|_| proto_error("partition::from_proto() error"))
-                                }
-                                _ => Err(proto_error(
-                                    "partition::from_proto() bound_list type error",
-                                )),
-                            };
-                            values_ref
+                            if let ScalarValue::List(single) = x {
+                                return single.value(0);
+                            } else {
+                                unreachable!("expect list scalar value");
+                            }
                         })
-                        .collect::<Result<Vec<ArrayRef>, _>>()?;
+                        .collect::<Vec<ArrayRef>>();
 
                     let bound_rows = sort_row_converter.lock().convert_columns(&bound_cols)?;
                     Ok(Some(Partitioning::RangePartitioning(
