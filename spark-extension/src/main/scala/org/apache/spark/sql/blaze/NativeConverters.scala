@@ -26,6 +26,10 @@ import scala.language.postfixOps
 import scala.math.max
 import scala.math.min
 
+import org.apache.arrow.c.CDataDictionaryProvider
+import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.commons.lang3.reflect.MethodUtils
 
@@ -33,6 +37,7 @@ import com.google.protobuf.ByteString
 import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, Attribute, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, DayOfMonth, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetJsonObject, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, LeafExpression, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Month, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper, XxHash64, Year}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, AggregateFunction, Average, CollectList, CollectSet, Count, DeclarativeAggregate, First, ImperativeAggregate, Max, Min, Sum}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
@@ -48,10 +53,14 @@ import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.catalyst.plans.QueryPlan
+import org.apache.spark.sql.catalyst.util.MapData
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExecSubqueryExpression
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.ScalarSubquery
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil
 import org.apache.spark.sql.hive.blaze.HiveUDFUtil.getFunctionClassName
 import org.apache.spark.sql.internal.SQLConf
@@ -82,35 +91,6 @@ import org.blaze.protobuf.PhysicalExprNode
 object NativeConverters extends Logging {
   val udfJsonEnabled: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.udf.UDFJson.enabled", defaultValue = true)
-
-  def convertScalarType(dataType: DataType): pb.ScalarType = {
-    val scalarTypeBuilder = dataType match {
-      case NullType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.NULL)
-      case BooleanType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.BOOL)
-      case ByteType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT8)
-      case ShortType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT16)
-      case IntegerType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT32)
-      case LongType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.INT64)
-      case FloatType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.FLOAT32)
-      case DoubleType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.FLOAT64)
-      case StringType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.UTF8)
-      case DateType => pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.DATE32)
-      case TimestampType =>
-        pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.TIMESTAMP_MICROSECOND)
-      case _: DecimalType =>
-        pb.ScalarType.newBuilder().setScalar(pb.PrimitiveScalarType.DECIMAL128)
-      case at: ArrayType =>
-        pb.ScalarType
-          .newBuilder()
-          .setList(
-            pb.ScalarListType
-              .newBuilder()
-              .setElementType(convertScalarType(at.elementType)))
-
-      case _ => throw new NotImplementedError(s"Value conversion not implemented ${dataType}")
-    }
-    scalarTypeBuilder.build()
-  }
 
   def scalarTypeSupported(dataType: DataType): Boolean = {
     dataType match {
@@ -210,50 +190,6 @@ object NativeConverters extends Logging {
         throw new NotImplementedError(s"Data type conversion not implemented ${sparkDataType}")
     }
     arrowTypeBuilder.build()
-  }
-
-  def convertValue(sparkValue: Any, dataType: DataType): pb.ScalarValue = {
-    val scalarValueBuilder = pb.ScalarValue.newBuilder()
-    dataType match {
-      case _ if sparkValue == null => scalarValueBuilder.setNullValue(convertScalarType(dataType))
-      case BooleanType => scalarValueBuilder.setBoolValue(sparkValue.asInstanceOf[Boolean])
-      case ByteType => scalarValueBuilder.setInt8Value(sparkValue.asInstanceOf[Byte])
-      case ShortType => scalarValueBuilder.setInt16Value(sparkValue.asInstanceOf[Short])
-      case IntegerType => scalarValueBuilder.setInt32Value(sparkValue.asInstanceOf[Int])
-      case LongType => scalarValueBuilder.setInt64Value(sparkValue.asInstanceOf[Long])
-      case FloatType => scalarValueBuilder.setFloat32Value(sparkValue.asInstanceOf[Float])
-      case DoubleType => scalarValueBuilder.setFloat64Value(sparkValue.asInstanceOf[Double])
-      case StringType =>
-        scalarValueBuilder.setUtf8Value(if (sparkValue != null) {
-          sparkValue.toString
-        } else {
-          null
-        })
-      case DateType => scalarValueBuilder.setDate32Value(sparkValue.asInstanceOf[Int])
-      case TimestampType =>
-        scalarValueBuilder.setTimestampMicrosecondValue(sparkValue.asInstanceOf[Long])
-      case t: DecimalType =>
-        val decimalValue = sparkValue.asInstanceOf[Decimal]
-        val decimalType = convertDataType(t).getDECIMAL
-        scalarValueBuilder.setDecimalValue(
-          pb.ScalarDecimalValue
-            .newBuilder()
-            .setDecimal(decimalType)
-            .setLongValue(decimalValue.toUnscaledLong))
-
-      case at: ArrayType =>
-        val values =
-          pb.ScalarListValue.newBuilder().setDatatype(convertScalarType(at.elementType))
-        sparkValue
-          .asInstanceOf[ArrayData]
-          .foreach(
-            at.elementType,
-            (_, value) => {
-              values.addValues(convertValue(value, at.elementType))
-            })
-        scalarValueBuilder.setListValue(values)
-    }
-    scalarValueBuilder.build()
   }
 
   def convertField(sparkField: StructField): pb.Field = {
@@ -432,26 +368,27 @@ object NativeConverters extends Logging {
 
     sparkExpr match {
       case e: NativeExprWrapperBase => e.wrapped
-      case Literal(value, dataType) =>
-        buildExprNode { b =>
-          if (value == null) {
-            dataType match {
-              case at: ArrayType =>
-                b.setTryCast(
-                  pb.PhysicalTryCastNode
-                    .newBuilder()
-                    .setArrowType(convertDataType(at))
-                    .setExpr(buildExprNode {
-                      _.setLiteral(
-                        pb.ScalarValue.newBuilder().setNullValue(convertScalarType(NullType)))
-                    }))
-              case _ =>
-                b.setLiteral(
-                  pb.ScalarValue.newBuilder().setNullValue(convertScalarType(dataType)))
-            }
-          } else {
-            b.setLiteral(convertValue(value, dataType))
+      case e: Literal =>
+        val schema = StructType(Seq(StructField("", e.dataType, e.nullable)))
+        val row = InternalRow(e.eval(null))
+        Using.resource(
+          VectorSchemaRoot.create(ArrowUtils.toArrowSchema(schema), ROOT_ALLOCATOR)) { root =>
+          val arrowWriter = ArrowWriter.create(root)
+          arrowWriter.write(row)
+          arrowWriter.finish()
+
+          val dictionaryProvider = new CDataDictionaryProvider()
+          val bo = new ByteArrayOutputStream()
+          Using(new ArrowStreamWriter(root, dictionaryProvider, bo)) { ipcWriter =>
+            ipcWriter.start()
+            ipcWriter.writeBatch()
+            ipcWriter.end()
           }
+          val ipcBytes = bo.toByteArray
+          pb.PhysicalExprNode
+            .newBuilder()
+            .setLiteral(pb.ScalarValue.newBuilder().setIpcBytes(ByteString.copyFrom(ipcBytes)))
+            .build()
         }
 
       case bound: BoundReference =>
@@ -532,7 +469,7 @@ object NativeConverters extends Logging {
                     Literal(utf8string, StringType),
                     isPruningExpr,
                     fallback)
-                case v => convertExprWithFallback(Literal.apply(v), isPruningExpr, fallback)
+                case v => convertExpr(Literal.apply(v))
               }.asJava))
         }
 
@@ -755,7 +692,7 @@ object NativeConverters extends Logging {
         val resultType = e.dataType
         rhs match {
           case rhs: Literal if rhs == Literal.default(rhs.dataType) =>
-            buildExprNode(_.setLiteral(convertValue(null, e.dataType)))
+            convertExpr(Literal(null, e.dataType))
           case rhs: Literal if rhs != Literal.default(rhs.dataType) =>
             buildBinaryExprNode(lhs, rhs, "Modulo")
           case rhs =>
@@ -911,8 +848,7 @@ object NativeConverters extends Logging {
               .setName("starts_with")
               .setFun(pb.ScalarFunction.StartsWith)
               .addArgs(convertExprWithFallback(expr, isPruningExpr, fallback))
-              .addArgs(
-                convertExprWithFallback(Literal(prefix, StringType), isPruningExpr, fallback))
+              .addArgs(convertExpr(Literal(prefix, StringType)))
               .setReturnType(convertDataType(BooleanType))))
       case StartsWith(expr, Literal(prefix, StringType)) =>
         buildExprNode(
@@ -967,7 +903,7 @@ object NativeConverters extends Logging {
         val children = e.children.map(Cast(_, e.dataType))
         buildScalarFunction(pb.ScalarFunction.Coalesce, children, e.dataType)
 
-      case e@If(predicate, trueValue, falseValue) =>
+      case e @ If(predicate, trueValue, falseValue) =>
         val castedTrueValue = trueValue match {
           case t if t.dataType != e.dataType => Cast(t, e.dataType)
           case t => t
@@ -979,14 +915,15 @@ object NativeConverters extends Logging {
         val caseWhen = CaseWhen(Seq((predicate, castedTrueValue)), castedFalseValue)
         convertExprWithFallback(caseWhen, isPruningExpr, fallback)
 
-      case e@CaseWhen(branches, elseValue) =>
+      case e @ CaseWhen(branches, elseValue) =>
         val caseExpr = pb.PhysicalCaseNode.newBuilder()
         val whenThens = branches.map { case (w, t) =>
           val casted = t match {
             case t if t.dataType != e.dataType => Cast(t, e.dataType)
             case t => t
           }
-          pb.PhysicalWhenThen.newBuilder()
+          pb.PhysicalWhenThen
+            .newBuilder()
             .setWhenExpr(convertExprWithFallback(w, isPruningExpr, fallback))
             .setThenExpr(convertExprWithFallback(casted, isPruningExpr, fallback))
             .build()
@@ -1043,15 +980,14 @@ object NativeConverters extends Logging {
             .asInstanceOf[Literal]
             .value
             .isInstanceOf[Number] =>
+        // NOTE: data-fusion index starts from 1
         val ordinalValue = e.ordinal.asInstanceOf[Literal].value.asInstanceOf[Number]
         buildExprNode {
           _.setGetIndexedFieldExpr(
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
               .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-              .setKey(convertValue(
-                ordinalValue.longValue() + 1, // NOTE: data-fusion index starts from 1
-                LongType)))
+              .setKey(convertExpr(Literal(ordinalValue.longValue() + 1, LongType)).getLiteral))
         }
 
       case e: GetMapValue if e.key.isInstanceOf[Literal] =>
@@ -1062,7 +998,7 @@ object NativeConverters extends Logging {
             pb.PhysicalGetMapValueExprNode
               .newBuilder()
               .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-              .setKey(convertValue(value, dataType)))
+              .setKey(convertExpr(Literal(value, dataType)).getLiteral))
         }
 
       case e: GetStructField =>
@@ -1071,7 +1007,7 @@ object NativeConverters extends Logging {
             pb.PhysicalGetIndexedFieldExprNode
               .newBuilder()
               .setExpr(convertExprWithFallback(e.child, isPruningExpr, fallback))
-              .setKey(convertValue(e.ordinal, IntegerType)))
+              .setKey(convertExpr(Literal(e.ordinal, IntegerType)).getLiteral))
         }
 
       case StubExpr("RowNum", _, _) =>
@@ -1342,7 +1278,7 @@ object NativeConverters extends Logging {
   def prepareExecSubquery(subquery: ExecSubqueryExpression): Unit = {
     val isCanonicalized =
       MethodUtils.invokeMethod(subquery.plan, true, "isCanonicalizedPlan").asInstanceOf[Boolean]
-      
+
     if (!isCanonicalized) {
       subquery match {
         case e if e.getClass.getName == "org.apache.spark.sql.execution.ScalarSubquery" =>

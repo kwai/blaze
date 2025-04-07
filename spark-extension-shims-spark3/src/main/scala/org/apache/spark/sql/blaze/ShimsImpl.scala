@@ -521,10 +521,11 @@ class ShimsImpl extends Shims with Logging {
       case agg =>
         convertBloomFilterAgg(agg) match {
           case Some(aggExpr) =>
-            return Some(pb.PhysicalExprNode
-              .newBuilder()
-              .setAggExpr(aggExpr)
-              .build())
+            return Some(
+              pb.PhysicalExprNode
+                .newBuilder()
+                .setAggExpr(aggExpr)
+                .build())
           case None =>
         }
         None

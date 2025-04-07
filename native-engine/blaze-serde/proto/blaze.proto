@@ -53,11 +53,6 @@ message PhysicalPlanNode {
   }
 }
 
-enum JoinConstraint {
-  ON = 0;
-  USING = 1;
-}
-
 // physical expressions
 message PhysicalExprNode {
   oneof ExprType {
@@ -387,6 +382,12 @@ message ScanLimit {
   uint32 limit = 1;
 }
 
+message ColumnStats {
+  ScalarValue min_value = 1;
+  ScalarValue max_value = 2;
+  uint32 null_count = 3;
+  uint32 distinct_count = 4;
+}
 
 message Statistics {
   int64 num_rows = 1;
@@ -636,7 +637,7 @@ message PhysicalRoundRobinRepartition {
 message PhysicalRangeRepartition {
   SortExecNode sort_expr = 1;
   uint64 partition_count = 2;
-  repeated  ScalarValue list_value= 3;
+  repeated ScalarValue list_value = 3;
 }
 
 
@@ -717,59 +718,12 @@ message PartitionId {
   uint32 partition_id = 4;
 }
 
-message PartitionStats {
-  int64 num_rows = 1;
-  int64 num_batches = 2;
-  int64 num_bytes = 3;
-  repeated ColumnStats column_stats = 4;
-}
-
-message ColumnStats {
-  ScalarValue min_value = 1;
-  ScalarValue max_value = 2;
-  uint32 null_count = 3;
-  uint32 distinct_count = 4;
-}
-
-message RunningTask {
-  string executor_id = 1;
-}
-
-message FailedTask {
-  string error = 1;
-}
-
-message CompletedTask {
-  string executor_id = 1;
-  // TODO tasks are currently always shuffle writes but this will not always be the case
-  // so we might want to think about some refactoring of the task definitions
-  repeated ShuffleWritePartition partitions = 2;
-}
-
-message ShuffleWritePartition {
-  uint64 partition_id = 1;
-  string path = 2;
-  uint64 num_batches = 3;
-  uint64 num_rows = 4;
-  uint64 num_bytes = 5;
-}
-
-message TaskStatus {
-  PartitionId partition_id = 1;
-  oneof status {
-    RunningTask running = 2;
-    FailedTask failed = 3;
-    CompletedTask completed = 4;
-  }
-}
-
 message TaskDefinition {
   PartitionId task_id = 1;
   PhysicalPlanNode plan = 2;
   // Output partition for shuffle writer
   PhysicalRepartition output_partitioning = 3;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Arrow Data Types
@@ -853,40 +807,8 @@ message Union {
   UnionMode union_mode = 2;
 }
 
-message ScalarListValue {
-  ScalarType datatype = 1;
-  repeated ScalarValue values = 2;
-}
-
-message ScalarDecimalValue {
-  Decimal decimal = 1;
-  int64 long_value = 2; // datafusion has i128 decimal value, only use i64 for blaze
-}
-
 message ScalarValue {
-  oneof value {
-    bool   bool_value = 1;
-    string utf8_value = 2;
-    string large_utf8_value = 3;
-    int32  int8_value = 4;
-    int32  int16_value = 5;
-    int32  int32_value = 6;
-    int64  int64_value = 7;
-    uint32 uint8_value = 8;
-    uint32 uint16_value = 9;
-    uint32 uint32_value = 10;
-    uint64 uint64_value = 11;
-    float  float32_value = 12;
-    double float64_value = 13;
-    int32  date32_value = 14;
-    int64  timestamp_second_value = 15;
-    int64  timestamp_millisecond_value = 16;
-    int64  timestamp_microsecond_value = 17;
-    int64  timestamp_nanosecond_value = 18;
-    ScalarListValue list_value = 19;
-    ScalarDecimalValue decimal_value = 20;
-    ScalarType null_value = 1000;
-  }
+  bytes ipc_bytes = 1;
 }
 
 // Contains all valid datafusion scalar type except for
@@ -915,17 +837,6 @@ enum PrimitiveScalarType {
   TIMESTAMP_NANOSECOND = 20;
   INTERVAL_YEARMONTH = 21;
   INTERVAL_DAYTIME = 22;
-}
-
-message ScalarListType {
-  ScalarType element_type = 1;
-}
-
-message ScalarType {
-  oneof datatype {
-    PrimitiveScalarType scalar = 1;
-    ScalarListType list = 2;
-  }
 }
 
 // Broke out into multiple message types so that type
