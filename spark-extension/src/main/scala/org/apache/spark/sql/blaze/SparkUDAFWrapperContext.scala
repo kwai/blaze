@@ -83,14 +83,18 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
     case _ =>
   }
 
-  private val aggEvaluator = {
-    val evaluator = expr match {
-      case declarative: DeclarativeAggregate =>
-        new DeclarativeEvaluator(declarative, inputAttributes)
-      case imperative: TypedImperativeAggregate[B] =>
-        new TypedImperativeEvaluator(imperative)
+  private val inputProjection = UnsafeProjection.create(javaParamsSchema)
+
+  private val aggEvaluator = new ThreadLocal[AggregateEvaluator[B, BufferRowsColumn[B]]] {
+    override def initialValue: AggregateEvaluator[B, BufferRowsColumn[B]] = {
+      val evaluator = expr match {
+        case declarative: DeclarativeAggregate =>
+          new DeclarativeEvaluator(declarative, inputAttributes)
+        case imperative: TypedImperativeAggregate[B] =>
+          new TypedImperativeEvaluator(imperative)
+      }
+      evaluator.asInstanceOf[AggregateEvaluator[B, BufferRowsColumn[B]]]
     }
-    evaluator.asInstanceOf[AggregateEvaluator[B, BufferRowsColumn[B]]]
   }
 
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
@@ -98,7 +102,7 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
   private val inputSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
 
   def initialize(numRow: Int): BufferRowsColumn[B] = {
-    val rows = aggEvaluator.createEmptyColumn()
+    val rows = aggEvaluator.get.createEmptyColumn()
     rows.resize(numRow)
     rows
   }
@@ -123,7 +127,7 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
         val rowIdx = ((zippedIdx >> 32) & 0xffffffff).toInt
         val updatingRowIdx = ((zippedIdx >> 0) & 0xffffffff).toInt
         inputRow.rowId = updatingRowIdx
-        rows.updateRow(rowIdx, inputRow)
+        rows.updateRow(rowIdx, inputProjection(inputRow).copy())
       }
     }
   }
@@ -157,11 +161,11 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
   }
 
   def serializeRows(rows: BufferRowsColumn[B], indices: Array[Int]): Array[Byte] = {
-    aggEvaluator.serializeRows(rows, indices.iterator)
+    aggEvaluator.get.serializeRows(rows, indices.iterator)
   }
 
   def deserializeRows(dataBuffer: ByteBuffer): BufferRowsColumn[B] = {
-    aggEvaluator.deserializeRows(dataBuffer)
+    aggEvaluator.get.deserializeRows(dataBuffer)
   }
 
   def spill(
@@ -169,14 +173,14 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
       rows: BufferRowsColumn[B],
       indices: Array[Int],
       spillIdx: Long): Int = {
-    aggEvaluator.spill(memTracker, rows, indices.iterator, spillIdx)
+    aggEvaluator.get.spill(memTracker, rows, indices.iterator, spillIdx)
   }
 
   def unspill(
       memTracker: SparkUDAFMemTracker,
       spillId: Int,
       spillIdx: Long): BufferRowsColumn[B] = {
-    aggEvaluator.unspill(memTracker, spillId, spillIdx)
+    aggEvaluator.get.unspill(memTracker, spillId, spillIdx)
   }
 }
 
@@ -357,7 +361,6 @@ class TypedImperativeEvaluator[B](val agg: TypedImperativeAggregate[B])
     extends AggregateEvaluator[B, TypedImperativeAggRowsColumn[B]] {
 
   val evalRow: InternalRow = InternalRow(0)
-  val initRow: RowType = DeserializedRowType(agg.createAggregationBuffer())
   val releasedRow: RowType = SerializedRowType(new Array[Byte](0))
   var estimatedRowSize: Option[Int] = None
 
@@ -456,17 +459,19 @@ case class TypedImperativeAggRowsColumn[B](
   }
 
   override def resize(len: Int): Unit = {
-    rows.appendAll((rows.length until len).map(_ => evaluator.initRow))
+    rows.appendAll((rows.length until len).map { _ =>
+      DeserializedRowType(evaluator.agg.createAggregationBuffer())
+    })
     rows.trimEnd(rows.length - len)
   }
 
   override def updateRow(i: Int, inputRow: InternalRow): Unit = {
     if (i < rows.length) {
-      rows(i) = DeserializedRowType(evaluator.agg.update(deserializedRow(i), inputRow))
+      val updated = evaluator.agg.update(deserializedRow(i), inputRow)
+      rows(i) = DeserializedRowType(updated)
     } else {
-      rows.append(
-        DeserializedRowType(
-          evaluator.agg.update(evaluator.agg.createAggregationBuffer(), inputRow)))
+      val inserted = evaluator.agg.update(evaluator.agg.createAggregationBuffer(), inputRow)
+      rows.append(DeserializedRowType(inserted))
     }
   }
 
@@ -474,8 +479,9 @@ case class TypedImperativeAggRowsColumn[B](
     mergeRows match {
       case mergeRows @ TypedImperativeAggRowsColumn(_, _) =>
         if (i < rows.length) {
-          rows(i) = DeserializedRowType(
-            evaluator.agg.merge(deserializedRow(i), mergeRows.deserializedRow(mergeIdx)))
+          val merged =
+            evaluator.agg.merge(deserializedRow(i), mergeRows.deserializedRow(mergeIdx))
+          rows(i) = DeserializedRowType(merged)
         } else {
           rows.append(mergeRows.rows(mergeIdx))
         }
@@ -484,8 +490,9 @@ case class TypedImperativeAggRowsColumn[B](
   }
 
   override def evalRow(i: Int): InternalRow = {
-    evaluator.evalRow.update(0, evaluator.agg.eval(deserializedRow(i)))
+    val finalValue = evaluator.agg.eval(deserializedRow(i))
     rows(i) = evaluator.releasedRow
+    evaluator.evalRow.update(0, finalValue)
     evaluator.evalRow
   }
 }

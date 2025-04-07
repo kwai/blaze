@@ -259,21 +259,16 @@ impl AccColumn for AccBloomFilterColumn {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + array.len());
-
-        for (data, offset) in array.iter().zip(offsets) {
-            let mut cursor = Cursor::new(*data);
-            cursor.set_position(*offset as u64);
-
-            if cursor.read_u8()? == 1 {
-                self.bloom_filters[idx] = Some(SparkBloomFilter::read_from(&mut cursor)?);
-            } else {
-                self.bloom_filters[idx] = None;
-            }
-            *offset = cursor.position() as usize;
-            idx += 1;
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        for r in cursors {
+            self.bloom_filters.push({
+                if r.read_u8()? == 1 {
+                    Some(SparkBloomFilter::read_from(r)?)
+                } else {
+                    None
+                }
+            });
         }
         Ok(())
     }
@@ -293,15 +288,15 @@ impl AccColumn for AccBloomFilterColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let idx = self.num_records();
-        self.resize(idx + num_rows);
-
-        for i in idx..idx + num_rows {
-            if r.read_u8()? == 1 {
-                self.bloom_filters[i] = Some(SparkBloomFilter::read_from(r)?);
-            } else {
-                self.bloom_filters[i] = None;
-            }
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        for _ in 0..num_rows {
+            self.bloom_filters.push({
+                if r.read_u8()? == 1 {
+                    Some(SparkBloomFilter::read_from(r)?)
+                } else {
+                    None
+                }
+            });
         }
         Ok(())
     }

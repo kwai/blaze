@@ -386,7 +386,7 @@ fn execute_agg_sorted(
                 agg_ctx.update_batch_slice_to_acc_table(
                     &batch,
                     batch_range_start,
-                    batch.num_rows(),
+                    batch_range_end,
                     &mut staging_acc_table,
                     IdxSelection::Indices(&acc_indices),
                 )?;
