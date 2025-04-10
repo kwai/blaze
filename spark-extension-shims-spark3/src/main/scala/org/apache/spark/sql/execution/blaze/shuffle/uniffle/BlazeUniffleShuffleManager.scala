@@ -27,8 +27,9 @@ class BlazeUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
   private val uniffleShuffleManager: RssShuffleManager = new RssShuffleManager(conf, isDriver);
   override def registerShuffle[K, V, C](
       shuffleId: Int,
+      numMaps: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
-    val handle = uniffleShuffleManager.registerShuffle(shuffleId, dependency)
+    val handle = uniffleShuffleManager.registerShuffle(shuffleId, numMaps, dependency)
     new RssShuffleHandleWrapper(handle.asInstanceOf[RssShuffleHandle[K, V, C]])
   }
 

@@ -24,6 +24,7 @@ import org.blaze.sparkver
 abstract class BlazeRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManager with Logging {
   override def registerShuffle[K, V, C](
       shuffleId: Int,
+      numMaps: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle
 
   override def unregisterShuffle(shuffleId: Int): Boolean

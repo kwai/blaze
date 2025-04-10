@@ -316,7 +316,7 @@ object BlazeConverters extends Logging {
   @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = Some(exec.shuffleOrigin)
 
-  @sparkver("3.0")
+  @sparkver("3.0 / 241kwaiae")
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = None
 
   def convertFileSourceScanExec(exec: FileSourceScanExec): SparkPlan = {

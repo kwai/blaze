@@ -30,8 +30,9 @@ class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
 
   override def registerShuffle[K, V, C](
       shuffleId: Int,
+      numMaps: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
-    celebornShuffleManager.registerShuffle(shuffleId, dependency)
+    celebornShuffleManager.registerShuffle(shuffleId, numMaps, dependency)
   }
 
   override def unregisterShuffle(shuffleId: Int): Boolean = {

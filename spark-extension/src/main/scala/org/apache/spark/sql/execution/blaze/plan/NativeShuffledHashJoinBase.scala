@@ -110,7 +110,7 @@ abstract class NativeShuffledHashJoinBase(
       partitions,
       partitioner,
       dependencies,
-      leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull,
+      rddShuffleReadFull = false, // probed side will not be read if built side is empty
       (partition, taskContext) => {
         val leftPartition = leftRDD.partitions(partition.index)
         val leftChild = leftRDD.nativePlan(leftPartition, taskContext)

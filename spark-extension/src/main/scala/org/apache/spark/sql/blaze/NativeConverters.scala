@@ -48,7 +48,7 @@ import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.optimizer.NormalizeNaNAndZero
+// import org.apache.spark.sql.catalyst.optimizer.NormalizeNaNAndZero
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExecSubqueryExpression
@@ -339,13 +339,16 @@ object NativeConverters extends Logging {
     convertExprWithFallback(
       sparkExpr,
       isPruningExpr = true,
-      { _ =>
-        buildExprNode(
-          _.setColumn(
-            pb.PhysicalColumn
+      { e => // convert unsupported expression to a placeholder
+        pb.PhysicalExprNode
+          .newBuilder()
+          .setScalarFunction(
+            pb.PhysicalScalarFunctionNode
               .newBuilder()
-              .setName("!__unsupported_pruning_expr__")
-              .setIndex(Int.MaxValue)))
+              .setFun(pb.ScalarFunction.SparkExtFunctions)
+              .setName("Placeholder")
+              .setReturnType(NativeConverters.convertDataType(e.dataType)))
+          .build()
       })
   }
 
@@ -359,11 +362,12 @@ object NativeConverters extends Logging {
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
 
-    val buildBinaryExprNode: (Expression, Expression, String) => PhysicalExprNode =
+    val buildBinaryExprNode: (Expression, Expression, String) => pb.PhysicalExprNode =
       this.buildBinaryExprNode(_, _, _, isPruningExpr, fallback)
-    val buildScalarFunction: (pb.ScalarFunction, Seq[Expression], DataType) => PhysicalExprNode =
+    val buildScalarFunction
+        : (pb.ScalarFunction, Seq[Expression], DataType) => pb.PhysicalExprNode =
       this.buildScalarFunctionNode(_, _, _, isPruningExpr, fallback)
-    val buildExtScalarFunction: (String, Seq[Expression], DataType) => PhysicalExprNode =
+    val buildExtScalarFunction: (String, Seq[Expression], DataType) => pb.PhysicalExprNode =
       this.buildExtScalarFunctionNode(_, _, _, isPruningExpr, fallback)
 
     sparkExpr match {
@@ -683,7 +687,6 @@ object NativeConverters extends Logging {
                 .setOp("Divide"))
           }
         }
-
       case e: Remainder =>
         val lhs = e.left
         val rhs = e.right
@@ -957,9 +960,9 @@ object NativeConverters extends Logging {
             .apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
 
-      case e: NormalizeNaNAndZero
-          if e.dataType.isInstanceOf[FloatType] || e.dataType.isInstanceOf[DoubleType] =>
-        buildExtScalarFunction("NormalizeNanAndZero", e.children, e.dataType)
+      // case e: NormalizeNaNAndZero
+      //     if e.dataType.isInstanceOf[FloatType] || e.dataType.isInstanceOf[DoubleType] =>
+      //   buildExtScalarFunction("NormalizeNanAndZero", e.children, e.dataType)
 
       case e: CreateArray => buildExtScalarFunction("MakeArray", e.children, e.dataType)
 

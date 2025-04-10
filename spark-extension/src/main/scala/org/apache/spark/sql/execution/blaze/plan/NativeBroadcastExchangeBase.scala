@@ -64,6 +64,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.BinaryType
 import org.blaze.{protobuf => pb}
+import org.blaze.sparkver
 
 abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)
     extends BroadcastExchangeLike
@@ -125,6 +126,11 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
     val v = mode.transform(dataRows)
     val dummyBroadcasted = new Broadcast[Any](-1) {
       override protected def getValue(): Any = v
+
+      @sparkver("241kwaiae")
+      override def setValue(v: () => (Any, Long => Any)): Any =
+        throw new UnsupportedOperationException("dummyBroadcasted.setValue")
+
       override protected def doUnpersist(blocking: Boolean): Unit = {
         MethodUtils.invokeMethod(broadcast, true, "doUnpersist", Array(blocking))
       }

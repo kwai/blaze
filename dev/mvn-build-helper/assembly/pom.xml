@@ -88,7 +88,7 @@
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/blaze-engine-${shimName}-${releaseMode}-${revision}.jar</outputFile>
+              <outputFile>../../../target/blaze-engine-${shimName}-${releaseMode}-${revision}${pkgSuffix}.jar</outputFile>
             </configuration>
           </execution>
         </executions>

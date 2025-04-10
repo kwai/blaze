@@ -30,6 +30,8 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.shuffle.sort.MapInfo
+import org.apache.spark.shuffle.BaseShuffleHandle
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.blaze.BlazeConverters.ForceNativeExecutionWrapperBase
@@ -109,9 +111,12 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
 import org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
+import org.apache.spark.storage.ShuffleDataBlockId
+import org.apache.spark.util.ExternalBlockStoreUtils
 import org.blaze.{protobuf => pb, sparkver}
 
 class ShimsImpl extends Shims with Logging {
@@ -144,10 +149,12 @@ class ShimsImpl extends Shims with Logging {
     }
   }
 
-  @sparkver("3.0 / 3.1")
-  override def initExtension(): Unit = {
-    if (BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()) {
-      logWarning(s"${BlazeConf.FORCE_SHUFFLED_HASH_JOIN.key} is not supported in $shimVersion")
+  override def onApplyingExtension(extension: SparkSessionExtensions): Unit = {
+    @sparkver("3.0 / 3.1")
+    val _impl: Unit = {
+      if (BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()) {
+        logWarning(s"${BlazeConf.FORCE_SHUFFLED_HASH_JOIN.key} is not supported in $shimVersion")
+      }
     }
   }
 
@@ -365,9 +372,11 @@ class ShimsImpl extends Shims with Logging {
     exec
   }
 
-  override def getRDDShuffleReadFull(rdd: RDD[_]): Boolean = true
+  override def getRDDShuffleReadFull(rdd: RDD[_]): Boolean = rdd.shuffleReadFull
 
-  override def setRDDShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit = {}
+  override def setRDDShuffleReadFull(rdd: RDD[_], shuffleReadFull: Boolean): Unit = {
+    rdd.shuffleReadFull = shuffleReadFull
+  }
 
   override def createFileSegment(
       file: File,
@@ -392,7 +401,44 @@ class ShimsImpl extends Shims with Logging {
       partitionLengths,
       checksums,
       tempDataFile)
-    MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
+
+    // shuffle write on hdfs
+    val blockManager = SparkEnv.get.blockManager
+    val handle = dep.shuffleHandle.asInstanceOf[BaseShuffleHandle[_, _, _]]
+    val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId.toInt)
+    val mapInfo = new MapInfo(partitionLengths, partitionLengths.map(_ => 0L))
+    val totalPartitionLength = mapInfo.lengths.sum
+    var hasExternalData = false
+
+    if (ExternalBlockStoreUtils.writeRemoteEnabled(
+        SparkEnv.get.conf,
+        totalPartitionLength,
+        handle.numMaps)) {
+      if (dataSize != 0) {
+        logInfo(s"KwaiShuffle: Start to write remote, shuffle block id ${ShuffleDataBlockId(
+          dep.shuffleId,
+          mapId.toInt,
+          0).name}, file path is ${output.getPath}/${output.getName}")
+        context.taskMetrics.externalMetrics.writeRemoteShuffle.setValue(1L)
+        val dataBlockId = new ShuffleDataBlockId(
+          dep.shuffleId,
+          mapId.toInt,
+          IndexShuffleBlockResolver.NOOP_REDUCE_ID)
+        val indexFile = shuffleBlockResolver.getIndexFile(dep.shuffleId, mapId.toInt)
+        blockManager.externalBlockStore.externalBlockManager.get.writeExternalShuffleFile(
+          dep.shuffleId,
+          TaskContext.get.partitionId, // in spark3.5, use partition id other than map id
+          dataBlockId,
+          indexFile,
+          output)
+        hasExternalData = true
+      }
+    }
+
+    val mapStatus =
+      getMapStatus(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
+    mapStatus.hasExternal = hasExternalData
+    mapStatus
   }
 
   @sparkver("3.0 / 3.1")
@@ -410,7 +456,7 @@ class ShimsImpl extends Shims with Logging {
       mapId,
       partitionLengths,
       tempDataFile)
-    MapStatus.apply(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
+    getMapStatus(SparkEnv.get.blockManager.shuffleServerId, partitionLengths, mapId)
   }
 
   override def getRssPartitionWriter(
@@ -423,7 +469,7 @@ class ShimsImpl extends Shims with Logging {
       shuffleServerId: BlockManagerId,
       partitionLengthMap: Array[Long],
       mapId: Long): MapStatus =
-    MapStatus.apply(shuffleServerId, partitionLengthMap, mapId)
+    MapStatus.apply(shuffleServerId, partitionLengthMap, partitionLengthMap.map(_ => 0L), mapId)
 
   override def getShuffleWriteExec(
       input: pb.PhysicalPlanNode,
@@ -560,6 +606,7 @@ class ShimsImpl extends Shims with Logging {
         val shuffleHandle = shuffledRDD.dependency.shuffleHandle
 
         val inputRDD = executeNative(child)
+        val inputMetrics = inputRDD.metrics
         val nativeShuffle = getUnderlyingNativePlan(child).asInstanceOf[NativeShuffleExchangeExec]
         val nativeSchema: pb.Schema = nativeShuffle.nativeSchema
 
@@ -583,7 +630,7 @@ class ShimsImpl extends Shims with Logging {
           shuffledRDD.partitions,
           shuffledRDD.partitioner,
           new OneToOneDependency(shuffledRDD) :: Nil,
-          true,
+          shuffledRDD.shuffleReadFull,
           (partition, taskContext) => {
 
             // use reflection to get partitionSpec because ShuffledRowRDDPartition is private
@@ -967,7 +1014,6 @@ class ShimsImpl extends Shims with Logging {
       e: Expression,
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = None
-
 }
 
 case class ForceNativeExecutionWrapper(override val child: SparkPlan)

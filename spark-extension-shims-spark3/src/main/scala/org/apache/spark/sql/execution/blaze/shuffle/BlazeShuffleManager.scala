@@ -46,8 +46,17 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
    */
   override def registerShuffle[K, V, C](
       shuffleId: Int,
+      numMaps: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
-    sortShuffleManager.registerShuffle(shuffleId, dependency)
+
+    val registerShuffleMethod = sortShuffleManager.getClass.getMethod(
+      "registerShuffle",
+      classOf[Int],
+      classOf[Int],
+      classOf[ShuffleDependency[K, V, C]])
+    registerShuffleMethod
+      .invoke(sortShuffleManager, Int.box(shuffleId), Int.box(numMaps), dependency)
+      .asInstanceOf[ShuffleHandle]
   }
 
   @sparkver("3.2 / 3.3 / 3.4 / 3.5")

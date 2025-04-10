@@ -50,7 +50,7 @@ echo -e "old build-checksum: \n$old_checksum\n========"
 echo -e "new build-checksum: \n$new_checksum\n========"
 
 if [ "$new_checksum" != "$old_checksum" ]; then
-    export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
+    export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=skylake"}
     echo "Running cargo fix..."
     cargo fix --all --allow-dirty --allow-staged --allow-no-vcs
 

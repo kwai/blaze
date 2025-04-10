@@ -259,6 +259,7 @@
         <version>0.1.4_0.9.31</version>
         <configuration>
           <config>${session.executionRootDirectory}/scalafix.conf</config>
+          <skipTest>true</skipTest>
         </configuration>
         <dependencies>
           <dependency>
@@ -309,9 +310,27 @@
     </profile>
 
     <profile>
+      <id>spark-241kwaiae</id>
+      <properties>
+        <shimName>spark-241kwaiae</shimName>
+        <pkgSuffix />
+        <shimPkg>spark-extension-shims-spark241kwaiae</shimPkg>
+        <javaVersion>1.8</javaVersion>
+        <scalaVersion>2.11</scalaVersion>
+        <scalaLongVersion>2.11.12</scalaLongVersion>
+        <scalaTestVersion>3.0.8</scalaTestVersion>
+        <scalafmtVersion>3.0.0-RC1</scalafmtVersion>
+        <celebornVersion>0.5.2</celebornVersion>
+        <sparkVersion>2.4.1U1.9.44-master-BETA-SNAPSHOT</sparkVersion>
+        <kwaiRssShuffleSdkVersion>1.3.75-RELEASE</kwaiRssShuffleSdkVersion>
+      </properties>
+    </profile>
+
+    <profile>
       <id>spark-3.0</id>
       <properties>
         <shimName>spark-3.0</shimName>
+        <pkgSuffix />
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -326,6 +345,7 @@
       <id>spark-3.1</id>
       <properties>
         <shimName>spark-3.1</shimName>
+        <pkgSuffix />
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -340,6 +360,7 @@
       <id>spark-3.2</id>
       <properties>
         <shimName>spark-3.2</shimName>
+        <pkgSuffix />
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -354,6 +375,7 @@
       <id>spark-3.3</id>
       <properties>
         <shimName>spark-3.3</shimName>
+        <pkgSuffix />
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -368,6 +390,7 @@
       <id>spark-3.4</id>
       <properties>
         <shimName>spark-3.4</shimName>
+        <pkgSuffix />
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
@@ -378,17 +401,19 @@
       </properties>
     </profile>
 
+    <!-- modified for kwai package -->
     <profile>
       <id>spark-3.5</id>
       <properties>
         <shimName>spark-3.5</shimName>
+        <pkgSuffix>-kwai-cele060</pkgSuffix>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <javaVersion>1.8</javaVersion>
         <scalaVersion>2.12</scalaVersion>
         <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.5.5</sparkVersion>
+        <sparkVersion>3.5.1U0.5-SNAPSHOT</sparkVersion>
       </properties>
     </profile>
   </profiles>

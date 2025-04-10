@@ -15,8 +15,10 @@
  */
 package org.apache.spark.sql.blaze
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.SparkConf
+
+// test is not available in kwai branch
 
 trait BaseBlazeSQLSuite extends SharedSparkSession {
 
@@ -29,5 +31,4 @@ trait BaseBlazeSQLSuite extends SharedSparkSession {
       .set("spark.memory.offHeap.enabled", "false")
       .set("spark.blaze.enable", "true")
   }
-
 }

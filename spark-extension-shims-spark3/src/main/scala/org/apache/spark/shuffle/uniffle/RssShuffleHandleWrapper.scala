@@ -20,4 +20,8 @@ import org.apache.spark.shuffle.{BaseShuffleHandle, RssShuffleHandle}
 class RssShuffleHandleWrapper[K, V, C](val rssShuffleHandleInfo: RssShuffleHandle[K, V, C])
     extends BaseShuffleHandle[K, V, C](
       rssShuffleHandleInfo.getShuffleId,
-      rssShuffleHandleInfo.getDependency) {}
+      numMaps = 0,
+      rssShuffleHandleInfo.getDependency) {
+
+  throw new UnsupportedOperationException("uniffle is not supported yet")
+}
