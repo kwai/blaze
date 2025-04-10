@@ -199,16 +199,10 @@ impl AccColumn for AccCountColumn {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + array.len());
-
-        for (raw, offset) in array.iter().zip(offsets) {
-            let mut cursor = Cursor::new(raw);
-            cursor.set_position(*offset as u64);
-            self.values[idx] = read_len(&mut cursor)? as i64;
-            *offset = cursor.position() as usize;
-            idx += 1;
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        for cursor in cursors {
+            self.values.push(read_len(cursor)? as i64);
         }
         Ok(())
     }
@@ -223,11 +217,9 @@ impl AccColumn for AccCountColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let idx = self.num_records();
-        self.resize(idx + num_rows);
-
-        for i in idx..idx + num_rows {
-            self.values[i] = read_len(r)? as i64;
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        for _ in 0..num_rows {
+            self.values.push(read_len(r)? as i64);
         }
         Ok(())
     }

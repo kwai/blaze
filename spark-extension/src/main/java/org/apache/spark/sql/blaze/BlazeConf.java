@@ -35,7 +35,7 @@ public enum BlazeConf {
     INPUT_BATCH_STATISTICS_ENABLE("spark.blaze.enableInputBatchStatistics", true),
 
     /// supports UDAF and other aggregate functions not implemented
-    UDAF_FALLBACK_ENABLE("spark.blaze.udafFallback.enable", true),
+    UDAF_FALLBACK_ENABLE("spark.blaze.udafFallback.enable", false),
 
     // TypedImperativeAggregate one row mem use size
     SUGGESTED_UDAF_ROW_MEM_USAGE("spark.blaze.suggested.udaf.memUsedSize", 64),

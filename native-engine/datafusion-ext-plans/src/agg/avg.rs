@@ -15,6 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
+    io::Cursor,
     sync::Arc,
 };
 
@@ -209,9 +210,9 @@ impl AccColumn for AccAvgColumn {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        self.sum.unfreeze_from_rows(array, offsets)?;
-        self.count.unfreeze_from_rows(array, offsets)?;
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        self.sum.unfreeze_from_rows(cursors)?;
+        self.count.unfreeze_from_rows(cursors)?;
         Ok(())
     }
 

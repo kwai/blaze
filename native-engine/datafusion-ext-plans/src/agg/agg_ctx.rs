@@ -14,11 +14,12 @@
 
 use std::{
     fmt::{Debug, Formatter},
+    io::Cursor,
     sync::Arc,
 };
 
 use arrow::{
-    array::{Array, ArrayRef, BinaryArray, RecordBatchOptions},
+    array::{ArrayRef, BinaryArray, RecordBatchOptions},
     datatypes::{DataType, Field, Fields, Schema, SchemaRef},
     record_batch::RecordBatch,
     row::{RowConverter, Rows, SortField},
@@ -39,6 +40,7 @@ use crate::{
     agg::{
         acc::AccTable,
         agg::{Agg, IdxSelection},
+        agg_hash_map::AggHashMapKey,
         spark_udaf_wrapper::{AccUDAFBufferRowsColumn, SparkUDAFMemTracker, SparkUDAFWrapper},
         AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
     },
@@ -244,7 +246,9 @@ impl AggContext {
         acc_table: &mut AccTable,
         acc_idx: IdxSelection,
     ) -> Result<()> {
-        let batch_selection = IdxSelection::Range(batch_start_idx, batch_end_idx);
+        // NOTE:
+        // arrow-ffi with sliced batch is buggy in older arrow-java, so we use unsliced
+        // batch with explicit offsets
 
         // partial update
         if self.need_partial_update {
@@ -263,6 +267,7 @@ impl AggContext {
                     input_arrays.push(vec![]);
                 }
             }
+            let batch_selection = IdxSelection::Range(batch_start_idx, batch_end_idx);
             self.partial_update(acc_table, acc_idx, &input_arrays, batch_selection)?;
         }
 
@@ -274,15 +279,21 @@ impl AggContext {
                 let partial_merged_array = as_binary_array(batch.columns().last().unwrap())?;
                 let array = partial_merged_array
                     .iter()
+                    .skip(batch_start_idx)
+                    .take(batch_end_idx - batch_start_idx)
                     .map(|bytes| bytes.unwrap())
                     .collect::<Vec<_>>();
-                let mut offsets = vec![0; partial_merged_array.len()];
+                let mut cursors = array
+                    .iter()
+                    .map(|bytes| Cursor::new(bytes.as_bytes()))
+                    .collect::<Vec<_>>();
 
                 for (agg_idx, _agg) in &self.need_partial_merge_aggs {
                     let acc_col = &mut merging_acc_table.cols_mut()[*agg_idx];
-                    acc_col.unfreeze_from_rows(&array, &mut offsets)?;
+                    acc_col.unfreeze_from_rows(&mut cursors)?;
                 }
             }
+            let batch_selection = IdxSelection::Range(0, batch_end_idx - batch_start_idx);
             self.partial_merge(acc_table, acc_idx, &mut merging_acc_table, batch_selection)?;
         }
         Ok(())
@@ -413,13 +424,6 @@ impl AggContext {
         Ok(vec)
     }
 
-    pub fn unfreeze_acc_table(&self, acc_table: &mut AccTable, data: &[&[u8]]) -> Result<()> {
-        let mut offsets = vec![0; data.len()];
-        for acc_col in acc_table.cols_mut() {
-            acc_col.unfreeze_from_rows(data, &mut offsets)?;
-        }
-        Ok(())
-    }
     pub async fn process_partial_skipped(
         &self,
         batch: RecordBatch,

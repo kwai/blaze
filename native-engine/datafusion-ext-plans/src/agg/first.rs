@@ -15,6 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
+    io::Cursor,
     sync::Arc,
 };
 
@@ -277,9 +278,9 @@ impl AccColumn for AccFirstColumn {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        self.values.unfreeze_from_rows(array, offsets)?;
-        self.flags.unfreeze_from_rows(array, offsets)?;
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        self.values.unfreeze_from_rows(cursors)?;
+        self.flags.unfreeze_from_rows(cursors)?;
         Ok(())
     }
 

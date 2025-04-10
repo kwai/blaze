@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
-    io::Cursor,
+    io::{Cursor, Read, Write},
     sync::Arc,
 };
 
@@ -304,19 +304,17 @@ impl AccUDAFBufferRowsColumn {
                 idx_array.as_obj(),
             ) -> JObject)?;
         let serialized_len = jni_get_byte_array_len!(serialized.as_obj())?;
-        let mut serialized_bytes = vec![0; serialized_len];
+        let mut serialized_bytes = vec![0u8; serialized_len];
         jni_get_byte_array_region!(serialized.as_obj(), 0, &mut serialized_bytes[..])?;
 
         // UnsafeRow is serialized with big-endian i32 length prefix
-        let data = &serialized_bytes;
-        let mut cur = 0;
+        let mut cursor = Cursor::new(&serialized_bytes);
         for i in 0..array.len() {
-            let bytes_len = i32::from_be_bytes(data[cur..][..4].try_into().unwrap()) as usize;
+            let mut bytes_len_buf = [0; 4];
+            cursor.read_exact(&mut bytes_len_buf)?;
+            let bytes_len = i32::from_be_bytes(bytes_len_buf) as usize;
             write_len(bytes_len, &mut array[i])?;
-            cur += 4;
-
-            array[i].extend_from_slice(&data[cur..][..bytes_len]);
-            cur += bytes_len;
+            std::io::copy(&mut (&mut cursor).take(bytes_len as u64), &mut array[i])?;
         }
         Ok(())
     }
@@ -349,6 +347,7 @@ impl AccUDAFBufferRowsColumn {
         mem_tracker: &SparkUDAFMemTracker,
         spill_idx: usize,
     ) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
         let spill_block_size = read_len(r)? as i32;
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .unspill(mem_tracker.as_obj(), spill_block_size, spill_idx as i64) -> JObject)?;
@@ -368,11 +367,11 @@ impl AccColumn for AccUDAFBufferRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj()).resize(
-            self.obj.as_obj(),
-            len as i32,
-        )-> ())
-        .unwrap();
+        if let Err(e) = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
+            .resize(self.obj.as_obj(), len as i32)-> ())
+        {
+            panic!("SparkUDAFBufferRowsColumn::resize failed: {e:?}");
+        }
         self.num_rows = len;
     }
 
@@ -390,23 +389,20 @@ impl AccColumn for AccUDAFBufferRowsColumn {
         self.freeze_to_rows_with_indices_cache(idx, array, &OnceCell::new())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
         let mut data = vec![];
-        for (row_data, offset) in array.iter().zip(offsets) {
-            let mut cur = Cursor::new(&row_data[*offset..]);
-            let bytes_len = read_len(&mut cur)?;
-            data.extend_from_slice(&(bytes_len as i32).to_be_bytes());
-            *offset += cur.position() as usize;
-
-            data.extend_from_slice(&row_data[*offset..][..bytes_len]);
-            *offset += bytes_len;
+        for cursor in cursors.iter_mut() {
+            let bytes_len = read_len(cursor)?;
+            data.write_all((bytes_len as i32).to_be_bytes().as_ref())?;
+            std::io::copy(&mut cursor.take(bytes_len as u64), &mut data)?;
         }
 
         let data_buffer = jni_new_direct_byte_buffer!(data)?;
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .deserializeRows(data_buffer.as_obj()) -> JObject)?;
         self.obj = jni_new_global_ref!(rows.as_obj())?;
-        self.num_rows = array.len();
+        self.num_rows = cursors.len();
         Ok(())
     }
 

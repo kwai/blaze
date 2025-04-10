@@ -191,16 +191,12 @@ pub trait AccCollectionColumn: AccColumn + Send + Sync + 'static {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + array.len());
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        self.resize(cursors.len());
 
-        for (raw, offset) in array.iter().zip(offsets) {
-            let mut cursor = Cursor::new(raw);
-            cursor.set_position(*offset as u64);
-            self.load_raw(idx, &mut cursor)?;
-            *offset = cursor.position() as usize;
-            idx += 1;
+        for (idx, cursor) in cursors.iter_mut().enumerate() {
+            self.load_raw(idx, cursor)?;
         }
         Ok(())
     }
@@ -298,8 +294,8 @@ impl AccColumn for AccSetColumn {
         AccCollectionColumn::freeze_to_rows(self, idx, array)
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        AccCollectionColumn::unfreeze_from_rows(self, array, offsets)
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        AccCollectionColumn::unfreeze_from_rows(self, cursors)
     }
 
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
@@ -312,12 +308,11 @@ impl AccColumn for AccSetColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + num_rows);
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        self.resize(num_rows);
 
-        while idx < self.num_records() {
+        for idx in 0..num_rows {
             self.load_raw(idx, r)?;
-            idx += 1;
         }
         Ok(())
     }
@@ -411,8 +406,8 @@ impl AccColumn for AccListColumn {
         AccCollectionColumn::freeze_to_rows(self, idx, array)
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        AccCollectionColumn::unfreeze_from_rows(self, array, offsets)
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        AccCollectionColumn::unfreeze_from_rows(self, cursors)
     }
 
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
@@ -425,12 +420,10 @@ impl AccColumn for AccListColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + num_rows);
-
-        while idx < self.num_records() {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        self.resize(num_rows);
+        for idx in 0..num_rows {
             self.load_raw(idx, r)?;
-            idx += 1;
         }
         Ok(())
     }

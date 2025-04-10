@@ -30,7 +30,7 @@ use datafusion::{
 };
 use datafusion_ext_commons::{
     assume,
-    io::{read_bytes_into_vec, read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
+    io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
     unchecked,
 };
 use smallvec::SmallVec;
@@ -50,7 +50,7 @@ pub trait AccColumn: Send {
     fn num_records(&self) -> usize;
     fn mem_used(&self) -> usize;
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()>;
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()>;
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()>;
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()>;
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()>;
 
@@ -442,7 +442,6 @@ impl AccColumn for AccGenericColumn {
                         raw.set_len(new_len);
                     } else {
                         raw.truncate(new_len);
-                        raw.set_len(new_len);
                     }
                 }
                 valids.resize(len, false);
@@ -559,9 +558,9 @@ impl AccColumn for AccGenericColumn {
         Ok(())
     }
 
-    fn unfreeze_from_rows(&mut self, array: &[&[u8]], offsets: &mut [usize]) -> Result<()> {
-        let mut idx = self.num_records();
-        self.resize(idx + array.len());
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        self.resize(cursors.len());
 
         match self {
             &mut AccGenericColumn::Prim {
@@ -569,34 +568,28 @@ impl AccColumn for AccGenericColumn {
                 ref mut valids,
                 prim_size,
             } => {
-                for (data, offset) in array.iter().zip(offsets) {
-                    let mut r = Cursor::new(data);
-                    r.set_position(*offset as u64);
-
-                    let valid = r.read_u8()?;
+                for (idx, cursor) in cursors.iter_mut().enumerate() {
+                    let valid = cursor.read_u8()?;
                     if valid == 1 {
-                        r.read_exact(&mut raw.as_raw_bytes_mut()[prim_size * idx..][..prim_size])?;
+                        cursor.read_exact(
+                            &mut raw.as_raw_bytes_mut()[prim_size * idx..][..prim_size],
+                        )?;
                         valids.set(idx, true);
                     } else {
                         valids.set(idx, false);
                     }
-                    *offset = r.position() as usize;
-                    idx += 1;
                 }
             }
             AccGenericColumn::Bytes {
                 items,
                 heap_mem_used,
             } => {
-                for (data, offset) in array.iter().zip(offsets) {
-                    let mut r = Cursor::new(data);
-                    r.set_position(*offset as u64);
-
-                    let len = read_len(&mut r)?;
+                for (idx, cursor) in cursors.iter_mut().enumerate() {
+                    let len = read_len(cursor)?;
                     if len > 0 {
                         let len = len - 1;
                         let bytes = AccBytes::from_vec({
-                            let vec: Vec<u8> = read_bytes_slice(&mut r, len)?.into();
+                            let vec: Vec<u8> = read_bytes_slice(cursor, len)?.into();
                             vec
                         });
                         if bytes.spilled() {
@@ -606,8 +599,6 @@ impl AccColumn for AccGenericColumn {
                     } else {
                         items[idx] = None;
                     }
-                    *offset = r.position() as usize;
-                    idx += 1;
                 }
             }
             AccGenericColumn::Scalar {
@@ -615,14 +606,9 @@ impl AccColumn for AccGenericColumn {
                 dt,
                 heap_mem_used,
             } => {
-                for (data, offset) in array.iter().zip(offsets) {
-                    let mut r = Cursor::new(data);
-                    r.set_position(*offset as u64);
-
-                    items[idx] = read_scalar(&mut r, dt, true)?;
+                for (idx, cursor) in cursors.iter_mut().enumerate() {
+                    items[idx] = read_scalar(cursor, dt, true)?;
                     *heap_mem_used += items[idx].size() - size_of::<ScalarValue>();
-                    *offset = r.position() as usize;
-                    idx += 1;
                 }
             }
         }
@@ -678,8 +664,8 @@ impl AccColumn for AccGenericColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        let idx = self.num_records();
-        self.resize(idx + num_rows);
+        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
+        self.resize(num_rows);
 
         match self {
             &mut AccGenericColumn::Prim {
@@ -687,14 +673,11 @@ impl AccColumn for AccGenericColumn {
                 ref mut valids,
                 prim_size,
             } => {
-                let mut valid_buf = vec![];
-                let valid_len = (num_rows + 7) / 8;
-                read_bytes_into_vec(r, &mut valid_buf, valid_len)?;
-                let unfreezed_valids = BitVec::<u8>::from_vec(valid_buf);
-                valids.truncate(idx);
-                valids.extend_from_bitslice(unfreezed_valids.as_bitslice());
-
-                for i in idx..idx + num_rows {
+                let mut bits: BitVec<u8> = BitVec::repeat(false, num_rows);
+                r.read_exact(bits.as_raw_mut_slice())?;
+                valids.clear();
+                valids.extend_from_bitslice(bits.as_bitslice());
+                for i in 0..num_rows {
                     if valids[i] {
                         r.read_exact(&mut raw.as_raw_bytes_mut()[prim_size * i..][..prim_size])?;
                     }
@@ -704,7 +687,7 @@ impl AccColumn for AccGenericColumn {
                 items,
                 heap_mem_used,
             } => {
-                for i in idx..idx + num_rows {
+                for i in 0..num_rows {
                     let len = read_len(r)?;
                     if len > 0 {
                         let len = len - 1;
@@ -721,7 +704,7 @@ impl AccColumn for AccGenericColumn {
                 dt,
                 heap_mem_used,
             } => {
-                for i in idx..idx + num_rows {
+                for i in 0..num_rows {
                     items[i] = read_scalar(r, dt, true)?;
                     *heap_mem_used += items[i].size() - size_of::<ScalarValue>();
                 }
