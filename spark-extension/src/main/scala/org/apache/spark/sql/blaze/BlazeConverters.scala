@@ -327,9 +327,11 @@ object BlazeConverters extends Logging {
     logDebug(s"  dataFilters: ${dataFilters}")
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
     relation.fileFormat match {
-      case p if p.getClass().getName().endsWith("ParquetFileFormat") =>
+      case p if p.getClass.getName.endsWith("ParquetFileFormat") =>
+        assert(SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.parquet", true))
         addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
-      case p if p.getClass().getName().endsWith("OrcFileFormat") =>
+      case p if p.getClass.getName.endsWith("OrcFileFormat") =>
+        assert(SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.orc", true))
         addRenameColumnsExec(Shims.get.createNativeOrcScanExec(exec))
       case _ => throw new NotImplementedError("Cannot convert non parquet/orc scan exec")
     }
