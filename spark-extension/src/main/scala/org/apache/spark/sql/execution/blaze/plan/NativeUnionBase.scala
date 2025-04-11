@@ -17,10 +17,12 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import scala.collection.immutable.SortedMap
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters.asJavaIterableConverter
 
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
+import org.apache.spark.rdd.PartitionerAwareUnionRDDPartition
 import org.apache.spark.rdd.UnionPartition
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeHelper
@@ -30,9 +32,11 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.Schema
 import org.blaze.protobuf.UnionExecNode
+import org.blaze.protobuf.UnionInput
 
 abstract class NativeUnionBase(
     override val children: Seq[SparkPlan],
@@ -50,49 +54,61 @@ abstract class NativeUnionBase(
     val rdds = children.map(c => NativeHelper.executeNative(c))
     val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))
 
-    def unionedPartitions: Array[UnionPartition[InternalRow]] = {
-      val array = new Array[UnionPartition[InternalRow]](rdds.map(_.partitions.length).sum)
-      var pos = 0
-      for ((rdd, rddIndex) <- rdds.zipWithIndex; split <- rdd.partitions) {
-        array(pos) = new UnionPartition(pos, rdd, rddIndex, split.index)
-        pos += 1
-      }
-      array
-    }
-
-    def dependencies: Seq[Dependency[_]] = {
-      val deps = new ArrayBuffer[Dependency[_]]
-      var pos = 0
-      for (rdd <- rdds) {
-        deps += new RangeDependency(rdd, 0, pos, rdd.partitions.length)
-        pos += rdd.partitions.length
-      }
-      deps
-    }
+    val unionRDD = sparkContext.union(rdds)
+    val unionedPartitions = unionRDD.partitions
+    val dependencies = unionRDD.dependencies
 
     new NativeRDD(
       sparkContext,
       nativeMetrics,
-      unionedPartitions.asInstanceOf[Array[Partition]],
+      unionedPartitions,
       dependencies,
       rdds.forall(_.isShuffleReadFull),
       (partition, taskContext) => {
-        val unionPartition = unionedPartitions(partition.index)
-        val inputPlan = rdds(unionPartition.parentRddIndex)
-          .nativePlan(unionPartition.parentPartition, taskContext)
+        val unionInputs = ArrayBuffer[(PhysicalPlanNode, Int)]()
+        partition match {
+          case p: UnionPartition[_] =>
+            val input = rdds(p.parentRddIndex).nativePlan(p.parentPartition, taskContext)
+            for (childIndex <- rdds.indices) {
+              if (childIndex == p.parentRddIndex) {
+                unionInputs.append((input, p.parentPartition.index))
+              } else {
+                unionInputs.append((nativeEmptyPartitionExec(1), 0))
+              }
+            }
+          case p: PartitionerAwareUnionRDDPartition =>
+            for ((rdd, partition) <- rdds.zip(p.parents)) {
+              unionInputs.append((rdd.nativePlan(partition, taskContext), partition.index))
+            }
+        }
 
         val union = UnionExecNode
           .newBuilder()
+          .addAllInput(unionInputs.map { case (input, partition) =>
+            UnionInput
+              .newBuilder()
+              .setInput(input)
+              .setPartition(partition)
+              .build()
+          }.asJava)
           .setNumPartitions(unionedPartitions.length)
-          .setInPartition(unionPartition.parentPartition.index)
-          .setNumChildren(rdds.length)
-          .setCurrentChildIndex(unionPartition.parentRddIndex)
+          .setCurPartition(partition.index)
           .setSchema(nativeSchema)
-          .setInput(inputPlan)
         PhysicalPlanNode.newBuilder().setUnion(union).build()
       },
       friendlyName = "NativeRDD.Union")
   }
+
+  private def nativeEmptyPartitionExec(numPartitions: Int) =
+    PhysicalPlanNode
+      .newBuilder()
+      .setEmptyPartitions(
+        EmptyPartitionsExecNode
+          .newBuilder()
+          .setSchema(nativeSchema)
+          .setNumPartitions(numPartitions)
+          .build())
+      .build()
 
   val nativeSchema: Schema = Util.getNativeSchema(output)
 }
