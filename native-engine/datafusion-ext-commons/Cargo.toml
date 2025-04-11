@@ -28,7 +28,7 @@ paste = "1.0.15"
 radsort = "0.1.1"
 tempfile = "3"
 thrift = "0.17.0"
-tokio = "1.44.1"
+tokio = "1.44.2"
 unchecked-index = "0.2.2"
 
 [dev-dependencies]
