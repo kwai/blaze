@@ -69,6 +69,7 @@ class BlazeCelebornShuffleReader[K, C](
 
   override protected def readBlocks(): Iterator[(BlockId, InputStream)] = {
 
+    val startTime = System.currentTimeMillis()
     val shuffleId = SparkUtils.celebornShuffleId(shuffleClient, handle, context, false)
     shuffleIdTracker.track(handle.shuffleId, shuffleId)
     logDebug(
@@ -96,7 +97,6 @@ class BlazeCelebornShuffleReader[K, C](
       }
     }
 
-    val startTime = System.currentTimeMillis()
     val fetchTimeoutMs = conf.clientFetchTimeoutMs
     val localFetchEnabled = conf.enableReadLocalShuffleFile
     val localHostAddress = Utils.localHostName(conf)
@@ -114,6 +114,7 @@ class BlazeCelebornShuffleReader[K, C](
       case e: Throwable => throw e
     }
 
+    val batchOpenStreamStartTime = System.currentTimeMillis()
     // host-port -> (TransportClient, PartitionLocation Array, PbOpenStreamList)
     val workerRequestMap = new util.HashMap[
       String,
@@ -196,7 +197,9 @@ class BlazeCelebornShuffleReader[K, C](
     // wait for all futures to complete
     futures.foreach(f => f.get())
     val end = System.currentTimeMillis()
-    logInfo(s"BatchOpenStream for $partCnt cost ${end - startTime}ms")
+    // readTime should include batchOpenStreamTime, getShuffleId Rpc time and updateFileGroup Rpc time
+    metricsCallback.incReadTime(end - startTime)
+    logInfo(s"BatchOpenStream for $partCnt cost ${end - batchOpenStreamStartTime}ms")
 
     val streams = JavaUtils.newConcurrentHashMap[Integer, CelebornInputStream]()
 
@@ -281,6 +284,7 @@ class BlazeCelebornShuffleReader[K, C](
         if (handle.numMappers > 0) {
           val startFetchWait = System.nanoTime()
           var inputStream: CelebornInputStream = streams.get(partitionId)
+          var sleepCnt = 0L
           while (inputStream == null) {
             if (exceptionRef.get() != null) {
               exceptionRef.get() match {
@@ -289,9 +293,16 @@ class BlazeCelebornShuffleReader[K, C](
                 case e => throw e
               }
             }
-            log.info("inputStream is null, sleeping...")
-            Thread.sleep(50)
+            if (sleepCnt == 0) {
+              logInfo(s"inputStream for partition: $partitionId is null, sleeping 5ms")
+            }
+            sleepCnt += 1
+            Thread.sleep(5)
             inputStream = streams.get(partitionId)
+          }
+          if (sleepCnt > 0) {
+            logInfo(
+              s"inputStream for partition: $partitionId is not null, sleep $sleepCnt times for ${5 * sleepCnt} ms")
           }
           metricsCallback.incReadTime(
             TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startFetchWait))
