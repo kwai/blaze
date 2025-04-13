@@ -231,11 +231,7 @@ impl Agg for SparkUDAFWrapper {
 
         let jcontext = self.jcontext().unwrap();
         let obj = jni_new_global_ref!(rows.as_obj()).unwrap();
-        Box::new(AccUDAFBufferRowsColumn {
-            obj,
-            jcontext,
-            num_rows,
-        })
+        Box::new(AccUDAFBufferRowsColumn { obj, jcontext })
     }
 
     fn with_new_exprs(&self, _exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
@@ -286,7 +282,6 @@ impl Agg for SparkUDAFWrapper {
 pub struct AccUDAFBufferRowsColumn {
     obj: GlobalRef,
     jcontext: GlobalRef,
-    num_rows: usize,
 }
 
 impl AccUDAFBufferRowsColumn {
@@ -352,7 +347,7 @@ impl AccUDAFBufferRowsColumn {
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .unspill(mem_tracker.as_obj(), spill_block_size, spill_idx as i64) -> JObject)?;
         self.obj = jni_new_global_ref!(rows.as_obj())?;
-        self.num_rows = num_rows;
+        assert_eq!(self.num_records(), num_rows, "unspill rows count mismatch");
         Ok(())
     }
 }
@@ -367,18 +362,23 @@ impl AccColumn for AccUDAFBufferRowsColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        if let Err(e) = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
+        match jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .resize(self.obj.as_obj(), len as i32)-> ())
         {
-            panic!("SparkUDAFBufferRowsColumn::resize failed: {e:?}");
+            Ok(_) => {}
+            Err(e) => panic!("SparkUDAFBufferRowsColumn::resize failed: {e:?}"),
         }
-        self.num_rows = len;
     }
 
     fn shrink_to_fit(&mut self) {}
 
     fn num_records(&self) -> usize {
-        self.num_rows
+        match jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
+            .numRecords(self.obj.as_obj()) -> i32)
+        {
+            Ok(n) => n as usize,
+            Err(e) => panic!("SparkUDAFBufferRowsColumn::num_records failed: {e:?}"),
+        }
     }
 
     fn mem_used(&self) -> usize {
@@ -402,7 +402,11 @@ impl AccColumn for AccUDAFBufferRowsColumn {
         let rows = jni_call!(SparkUDAFWrapperContext(self.jcontext.as_obj())
             .deserializeRows(data_buffer.as_obj()) -> JObject)?;
         self.obj = jni_new_global_ref!(rows.as_obj())?;
-        self.num_rows = cursors.len();
+        assert_eq!(
+            self.num_records(),
+            cursors.len(),
+            "unfreeze rows count mismatch"
+        );
         Ok(())
     }
 

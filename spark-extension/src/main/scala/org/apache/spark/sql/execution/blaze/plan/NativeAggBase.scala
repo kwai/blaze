@@ -172,6 +172,7 @@ abstract class NativeAggBase(
       sparkContext,
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
+      rddPartitioner = inputRDD.partitioner,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.isShuffleReadFull,
       (partition, taskContext) => {

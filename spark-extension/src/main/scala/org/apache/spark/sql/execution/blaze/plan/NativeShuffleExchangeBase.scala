@@ -140,6 +140,7 @@ abstract class NativeShuffleExchangeBase(
       sparkContext,
       nativeMetrics,
       rddPartitions = rdd.partitions,
+      rddPartitioner = rdd.partitioner,
       rddDependencies = shuffleDependency :: Nil,
       Shims.get.getRDDShuffleReadFull(rdd),
       (partition, taskContext) => {
@@ -244,6 +245,7 @@ abstract class NativeShuffleExchangeBase(
       nativeInputRDD.sparkContext,
       nativeMetrics,
       nativeInputRDD.partitions,
+      nativeInputRDD.partitioner,
       new OneToOneDependency(nativeInputRDD) :: Nil,
       nativeInputRDD.isShuffleReadFull,
       (partition, taskContext) => {

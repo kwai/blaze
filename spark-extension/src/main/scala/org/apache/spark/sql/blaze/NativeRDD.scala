@@ -24,6 +24,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
+import org.apache.spark.Partitioner
 import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
 import org.blaze.protobuf.PhysicalPlanNode
@@ -32,6 +33,7 @@ class NativeRDD(
     @transient private val rddSparkContext: SparkContext,
     val metrics: MetricNode,
     private val rddPartitions: Array[Partition],
+    private val rddPartitioner: Option[Partitioner],
     private val rddDependencies: Seq[Dependency[_]],
     private val rddShuffleReadFull: Boolean,
     @transient private val nativePlan: (Partition, TaskContext) => PhysicalPlanNode,
@@ -56,6 +58,7 @@ class NativeRDD(
 
   override protected def getPartitions: Array[Partition] = rddPartitions
   override protected def getDependencies: Seq[Dependency[_]] = rddDependencies
+  override val partitioner: Option[Partitioner] = rddPartitioner
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
     val computingNativePlan = nativePlanWrapper.plan(split, context)

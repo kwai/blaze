@@ -95,6 +95,7 @@ abstract class NativeFilterBase(condition: Expression, override val child: Spark
       sparkContext,
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
+      rddPartitioner = inputRDD.partitioner,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.isShuffleReadFull,
       (partition, taskContext) => {
