@@ -35,7 +35,7 @@ class BlazeBlockStoreShuffleReader[K, C](
     extends BlazeBlockStoreShuffleReaderBase[K, C](handle, context)
     with Logging {
 
-  override def readBlocks(): Iterator[(BlockId, InputStream)] = {
+  override def readBlocks(): Iterator[InputStream] = {
     @sparkver("3.2 / 3.3 / 3.4 / 3.5")
     def fetchIterator = new ShuffleBlockFetcherIterator(
       context,
@@ -55,7 +55,7 @@ class BlazeBlockStoreShuffleReader[K, C](
       false, // checksums not supported
       "ChecksumAlgorithmsNotSupported",
       readMetrics,
-      fetchContinuousBlocksInBatch).toCompletionIterator
+      fetchContinuousBlocksInBatch).toCompletionIterator.map(_._2)
 
     @sparkver("3.0 / 3.1")
     def fetchIterator = new ShuffleBlockFetcherIterator(
@@ -72,7 +72,7 @@ class BlazeBlockStoreShuffleReader[K, C](
       SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
       SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
       readMetrics,
-      fetchContinuousBlocksInBatch).toCompletionIterator
+      fetchContinuousBlocksInBatch).toCompletionIterator.map(_._2)
 
     fetchIterator
   }

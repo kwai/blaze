@@ -35,12 +35,10 @@ abstract class BlazeBlockStoreShuffleReaderBase[K, C](
   import BlazeBlockStoreShuffleReaderBase._
 
   protected val dep: ShuffleDependency[K, _, C] = handle.dependency
-  protected def readBlocks(): Iterator[(BlockId, InputStream)]
+  protected def readBlocks(): Iterator[InputStream]
 
   def readIpc(): Iterator[BlockObject] = {
-    val ipcIterator = readBlocks().map { case (_, inputStream) =>
-      createBlockObject(inputStream)
-    }
+    val ipcIterator = readBlocks().map(inputStream => createBlockObject(inputStream))
 
     // An interruptible iterator must be used here in order to support task cancellation
     new InterruptibleIterator[BlockObject](context, ipcIterator)

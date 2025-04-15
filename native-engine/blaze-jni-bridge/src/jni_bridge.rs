@@ -1164,8 +1164,6 @@ pub struct BlazeRssPartitionWriterBase<'a> {
     pub method_write_ret: ReturnType,
     pub method_flush: JMethodID,
     pub method_flush_ret: ReturnType,
-    pub method_close: JMethodID,
-    pub method_close_ret: ReturnType,
 }
 
 impl<'a> BlazeRssPartitionWriterBase<'_> {
@@ -1180,8 +1178,6 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
             method_write_ret: ReturnType::Primitive(Primitive::Void),
             method_flush: env.get_method_id(class, "flush", "()V")?,
             method_flush_ret: ReturnType::Primitive(Primitive::Void),
-            method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

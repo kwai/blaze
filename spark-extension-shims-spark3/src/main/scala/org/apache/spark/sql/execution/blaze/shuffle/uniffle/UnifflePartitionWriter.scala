@@ -23,7 +23,6 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.apache.uniffle.common.ShuffleBlockInfo
-import java.nio.ByteBuffer
 
 class UnifflePartitionWriter[K, V, C](
     numPartitions: Int,
@@ -61,11 +60,11 @@ class UnifflePartitionWriter[K, V, C](
 
   override def flush(): Unit = {}
 
-  override def close(): Unit = {
+  override def close(success: Boolean): Unit = {
     val start = System.currentTimeMillis()
     val bufferManager = rssShuffleWriter.getBufferManager
     val restBlocks = bufferManager.clear()
-    if (restBlocks != null && !restBlocks.isEmpty) {
+    if (success && restBlocks != null && !restBlocks.isEmpty) {
       rssShuffleWriterPushBlocksMethod.invoke(rssShuffleWriter, restBlocks)
     }
     val writeDurationMs = bufferManager.getWriteTime + (System.currentTimeMillis() - start)
