@@ -53,6 +53,7 @@ abstract class NativeLocalLimitBase(limit: Long, override val child: SparkPlan)
       sparkContext,
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
+      rddPartitioner = inputRDD.partitioner,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       rddShuffleReadFull = false,
       (partition, taskContext) => {

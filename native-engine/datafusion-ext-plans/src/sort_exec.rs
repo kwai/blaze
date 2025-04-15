@@ -83,6 +83,7 @@ pub struct SortExec {
     exprs: Vec<PhysicalSortExpr>,
     fetch: Option<usize>,
     metrics: ExecutionPlanMetricsSet,
+    record_output: bool,
     props: OnceCell<PlanProperties>,
 }
 
@@ -98,6 +99,7 @@ impl SortExec {
             exprs,
             fetch,
             metrics,
+            record_output: true,
             props: OnceCell::new(),
         }
     }
@@ -107,6 +109,7 @@ pub fn create_default_ascending_sort_exec(
     input: Arc<dyn ExecutionPlan>,
     key_exprs: &[PhysicalExprRef],
     execution_plan_metrics: Option<ExecutionPlanMetricsSet>,
+    record_output: bool,
 ) -> Arc<dyn ExecutionPlan> {
     let mut sort_exec = SortExec::new(
         input,
@@ -121,6 +124,7 @@ pub fn create_default_ascending_sort_exec(
     );
     if let Some(execution_plan_metrics) = execution_plan_metrics {
         sort_exec.metrics = execution_plan_metrics;
+        sort_exec.record_output = record_output;
     }
     Arc::new(sort_exec)
 }
@@ -203,6 +207,7 @@ struct ExternalSorter {
     mem_consumer_info: Option<Weak<MemConsumerInfo>>,
     prune_sort_keys_from_batch: Arc<PruneSortKeysFromBatch>,
     limit: usize,
+    record_output: bool,
     data: Arc<Mutex<BufferedData>>,
     spills: Mutex<Vec<LevelSpill>>,
     num_total_rows: AtomicUsize,
@@ -507,6 +512,7 @@ impl ExecuteWithColumnPruning for SortExec {
             mem_consumer_info: None,
             prune_sort_keys_from_batch,
             limit: self.fetch.unwrap_or(usize::MAX),
+            record_output: self.record_output,
             data: Default::default(),
             spills: Default::default(),
             num_total_rows: Default::default(),
@@ -607,9 +613,11 @@ impl ExternalSorter {
                     let batch = self
                         .prune_sort_keys_from_batch
                         .restore(pruned_batch, key_store)?;
-                    self.exec_ctx
-                        .baseline_metrics()
-                        .record_output(batch.num_rows());
+                    if self.record_output {
+                        self.exec_ctx
+                            .baseline_metrics()
+                            .record_output(batch.num_rows());
+                    }
                     sender.send(batch).await;
                 }
                 self.update_mem_used(0).await?;
@@ -630,9 +638,11 @@ impl ExternalSorter {
             let cursors_mem_used = merger.cursors_mem_used();
 
             self.update_mem_used(cursors_mem_used).await?;
-            self.exec_ctx
-                .baseline_metrics()
-                .record_output(batch.num_rows());
+            if self.record_output {
+                self.exec_ctx
+                    .baseline_metrics()
+                    .record_output(batch.num_rows());
+            }
             sender.send(batch).await;
         }
         self.update_mem_used(0).await?;

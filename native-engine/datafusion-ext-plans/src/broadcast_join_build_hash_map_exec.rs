@@ -205,6 +205,7 @@ pub fn execute_build_hash_map(
                 input_exec,
                 &keys,
                 Some(exec_ctx.execution_plan_metrics().clone()),
+                false, // do not record output metric
             );
             let mut sorted_stream =
                 sort_exec.execute(exec_ctx.partition_id(), exec_ctx.task_ctx())?;

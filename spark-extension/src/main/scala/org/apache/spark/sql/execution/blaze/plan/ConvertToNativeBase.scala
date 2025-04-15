@@ -67,6 +67,7 @@ abstract class ConvertToNativeBase(override val child: SparkPlan)
       sparkContext,
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
+      rddPartitioner = inputRDD.partitioner,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       Shims.get.getRDDShuffleReadFull(inputRDD),
       (partition, context) => {

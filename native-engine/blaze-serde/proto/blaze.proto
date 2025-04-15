@@ -505,12 +505,15 @@ message ProjectionExecNode {
 }
 
 message UnionExecNode {
-  PhysicalPlanNode input = 1;
+  repeated UnionInput input = 1;
   Schema schema = 2;
   uint32 num_partitions = 3;
-  uint32 in_partition = 4;
-  uint32 num_children = 5;
-  uint32 current_child_index = 6;
+  uint32 cur_partition = 4;
+}
+
+message UnionInput {
+  PhysicalPlanNode input = 1;
+  uint32 partition = 2;
 }
 
 message ShuffleWriterExecNode {

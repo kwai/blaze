@@ -47,6 +47,8 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
 
     this.mapId = mapId
     this.rpw = getRssPartitionWriter(dep.shuffleHandle, mapId, metrics, numPartitions)
+    var success = false
+
     try {
       val jniResourceId = s"RssPartitionWriter:${UUID.randomUUID().toString}"
       JniBridge.resourcesMap.put(jniResourceId, rpw)
@@ -64,9 +66,10 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
         nativeShuffleRDD.metrics,
         partition,
         Some(context))
-      assert(iterator.toArray.isEmpty)
+      success = iterator.toArray.isEmpty
+
     } finally {
-      rpw.close()
+      rpw.close(success)
     }
   }
 

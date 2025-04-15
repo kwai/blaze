@@ -56,6 +56,7 @@ abstract class NativeOrcScanBase(basedFileScan: FileSourceScanExec)
       sparkContext,
       nativeMetrics,
       partitions.asInstanceOf[Array[Partition]],
+      None,
       Nil,
       rddShuffleReadFull = true,
       (partition, _) => {

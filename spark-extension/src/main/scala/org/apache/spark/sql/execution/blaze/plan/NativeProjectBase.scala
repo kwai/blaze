@@ -76,6 +76,7 @@ abstract class NativeProjectBase(projectList: Seq[NamedExpression], override val
       sparkContext,
       nativeMetrics,
       rddPartitions = inputRDD.partitions,
+      rddPartitioner = inputRDD.partitioner,
       rddDependencies = new OneToOneDependency(inputRDD) :: Nil,
       inputRDD.isShuffleReadFull,
       (partition, taskContext) => {

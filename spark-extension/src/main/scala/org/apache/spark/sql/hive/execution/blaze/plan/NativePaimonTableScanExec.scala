@@ -77,6 +77,7 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
       sparkContext,
       nativeMetrics,
       partitions.asInstanceOf[Array[Partition]],
+      None,
       Nil,
       rddShuffleReadFull = true,
       (partition, _) => {

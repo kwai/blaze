@@ -144,6 +144,7 @@ abstract class NativeBroadcastJoinBase(
       sparkContext,
       nativeMetrics,
       probedRDD.partitions,
+      rddPartitioner = probedRDD.partitioner,
       rddDependencies = new OneToOneDependency(probedRDD) :: Nil,
       probedShuffleReadFull,
       (partition, context) => {

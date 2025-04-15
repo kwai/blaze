@@ -38,6 +38,7 @@ class BlazeCelebornShuffleWriter[K, V](
 
   private val numMappers = handle.numMappers
   private val encodedAttemptId = BlazeCelebornShuffleManager.getEncodedAttemptNumber(taskContext)
+  private var celebornPartitionWriter: CelebornPartitionWriter = _
 
   override def getRssPartitionWriter(
       _handle: ShuffleHandle,
@@ -47,17 +48,20 @@ class BlazeCelebornShuffleWriter[K, V](
 
     val shuffleId = SparkUtils.celebornShuffleId(shuffleClient, handle, taskContext, true)
     shuffleIdTracker.track(handle.shuffleId, shuffleId)
-    new CelebornPartitionWriter(
+    celebornPartitionWriter = new CelebornPartitionWriter(
       shuffleClient,
       shuffleId,
       encodedAttemptId,
       numMappers,
       numPartitions,
       metrics)
+    celebornPartitionWriter
   }
 
   @sparkver("3.2 / 3.3 / 3.4 / 3.5")
-  override def getPartitionLengths(): Array[Long] = celebornShuffleWriter.getPartitionLengths()
+  override def getPartitionLengths(): Array[Long] = {
+    celebornPartitionWriter.getPartitionLengthMap
+  }
 
   override def rssStop(success: Boolean): Unit = {
     celebornShuffleWriter.write(Iterator.empty) // force flush

@@ -266,6 +266,49 @@ impl ExecutionContext {
         input
     }
 
+    pub fn stream_on_completion(
+        self: &Arc<Self>,
+        input: SendableRecordBatchStream,
+        on_completion: Box<dyn FnOnce() -> Result<()> + Send + 'static>,
+    ) -> SendableRecordBatchStream {
+        struct CompletionStream {
+            input: SendableRecordBatchStream,
+            on_completion: Option<Box<dyn FnOnce() -> Result<()> + Send + 'static>>,
+        }
+
+        impl RecordBatchStream for CompletionStream {
+            fn schema(&self) -> SchemaRef {
+                self.input.schema()
+            }
+        }
+
+        impl Stream for CompletionStream {
+            type Item = Result<RecordBatch>;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match ready!(self.as_mut().input.poll_next_unpin(cx)) {
+                    Some(r) => Poll::Ready(Some(r)),
+                    None => {
+                        if let Some(on_completion) = self.as_mut().on_completion.take() {
+                            if let Err(e) = on_completion() {
+                                return Poll::Ready(Some(Err(e)));
+                            }
+                        }
+                        Poll::Ready(None)
+                    }
+                }
+            }
+        }
+
+        Box::pin(CompletionStream {
+            input,
+            on_completion: Some(on_completion),
+        })
+    }
+
     pub fn output_with_sender<Fut: Future<Output = Result<()>> + Send>(
         self: &Arc<Self>,
         desc: &'static str,

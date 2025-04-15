@@ -162,6 +162,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       sparkContext,
       nativeMetrics,
       partitions,
+      None,
       Nil,
       rddShuffleReadFull = true,
       (_, _) => {

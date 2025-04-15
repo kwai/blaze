@@ -252,11 +252,13 @@ macro_rules! jni_get_byte_array_len {
 macro_rules! jni_new_prim_array {
     ($ty:ident, $value:expr) => {{
         $crate::jni_bridge::THREAD_JNIENV.with(|env| {
+            let value = $value;
+            let value_len = value.len();
             $crate::jni_map_error_with_env!(
                 env,
-                paste::paste! {env.[<new_ $ty _array>]($value.len() as i32)}
+                paste::paste! {env.[<new_ $ty _array>](value_len as i32)}
                     .and_then(|array| {
-                        let value = unsafe { std::mem::transmute($value) };
+                        let value = unsafe { std::mem::transmute(value) };
                         paste::paste! {env.[<set_ $ty _array_region>](array, 0, value)}
                             .map(|_| array)
                     })
@@ -1164,8 +1166,6 @@ pub struct BlazeRssPartitionWriterBase<'a> {
     pub method_write_ret: ReturnType,
     pub method_flush: JMethodID,
     pub method_flush_ret: ReturnType,
-    pub method_close: JMethodID,
-    pub method_close_ret: ReturnType,
 }
 
 impl<'a> BlazeRssPartitionWriterBase<'_> {
@@ -1180,8 +1180,6 @@ impl<'a> BlazeRssPartitionWriterBase<'_> {
             method_write_ret: ReturnType::Primitive(Primitive::Void),
             method_flush: env.get_method_id(class, "flush", "()V")?,
             method_flush_ret: ReturnType::Primitive(Primitive::Void),
-            method_close: env.get_method_id(class, "close", "()V")?,
-            method_close_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
@@ -1215,6 +1213,8 @@ pub struct SparkUDAFWrapperContext<'a> {
     pub method_initialize_ret: ReturnType,
     pub method_resize: JMethodID,
     pub method_resize_ret: ReturnType,
+    pub method_numRecords: JMethodID,
+    pub method_numRecords_ret: ReturnType,
     pub method_update: JMethodID,
     pub method_update_ret: ReturnType,
     pub method_merge: JMethodID,
@@ -1250,6 +1250,12 @@ impl<'a> SparkUDAFWrapperContext<'a> {
                 "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;I)V",
             )?,
             method_resize_ret: ReturnType::Primitive(Primitive::Void),
+            method_numRecords: env.get_method_id(
+                class,
+                "numRecords",
+                "(Lorg/apache/spark/sql/blaze/BufferRowsColumn;)I",
+            )?,
+            method_numRecords_ret: ReturnType::Primitive(Primitive::Int),
             method_update: env.get_method_id(
                 class,
                 "update",

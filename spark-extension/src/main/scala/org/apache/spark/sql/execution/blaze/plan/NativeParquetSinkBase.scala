@@ -92,6 +92,7 @@ abstract class NativeParquetSinkBase(
       sparkSession.sparkContext,
       nativeMetrics,
       inputRDD.partitions,
+      inputRDD.partitioner,
       nativeDependencies,
       inputRDD.isShuffleReadFull,
       (partition, context) => {

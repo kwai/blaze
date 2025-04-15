@@ -85,7 +85,7 @@ use datafusion_ext_plans::{
     shuffle_writer_exec::ShuffleWriterExec,
     sort_exec::SortExec,
     sort_merge_join_exec::SortMergeJoinExec,
-    union_exec::UnionExec,
+    union_exec::{UnionExec, UnionInput},
     window::{WindowExpr, WindowFunction, WindowRankType},
     window_exec::WindowExec,
 };
@@ -367,19 +367,23 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 )?))
             }
             PhysicalPlanType::Union(union) => {
-                let input: Arc<dyn ExecutionPlan> = convert_box_required!(union.input)?;
                 let schema: SchemaRef = Arc::new(convert_required!(union.schema)?);
                 let num_partitions = union.num_partitions as usize;
-                let in_partition = union.in_partition as usize;
-                let num_children = union.num_children as usize;
-                let current_child_index = union.current_child_index as usize;
+                let cur_partition = union.cur_partition as usize;
+                let inputs = union
+                    .input
+                    .iter()
+                    .map(|input| {
+                        let input_exec = convert_required!(input.input)?;
+                        Ok(UnionInput(input_exec, input.partition as usize))
+                    })
+                    .collect::<Result<Vec<_>, Self::Error>>()?;
+
                 Ok(Arc::new(UnionExec::new(
-                    num_partitions,
-                    in_partition,
-                    input,
-                    num_children,
-                    current_child_index,
+                    inputs,
                     schema,
+                    num_partitions,
+                    cur_partition,
                 )))
             }
             PhysicalPlanType::EmptyPartitions(empty_partitions) => {

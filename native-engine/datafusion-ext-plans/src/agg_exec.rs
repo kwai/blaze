@@ -15,7 +15,10 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 use arrow::{
@@ -30,6 +33,7 @@ use datafusion::{
     physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
@@ -165,20 +169,23 @@ fn execute_agg(
     exec_ctx: Arc<ExecutionContext>,
     agg_ctx: Arc<AggContext>,
 ) -> Result<SendableRecordBatchStream> {
+    if agg_ctx.groupings.is_empty() {
+        let input = exec_ctx.execute_with_input_stats(&input)?;
+        return execute_agg_no_grouping(input, exec_ctx, agg_ctx);
+    }
+
     Ok(match agg_ctx.exec_mode {
-        _ if agg_ctx.groupings.is_empty() => execute_agg_no_grouping(input, exec_ctx, agg_ctx)?,
         AggExecMode::HashAgg => {
+            let num_udafs_trigger_sort_agg = UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG
+                .value()
+                .unwrap_or(1) as usize;
             let num_udafs = agg_ctx
                 .aggs
                 .iter()
                 .filter(|agg| downcast_any!(agg.agg, SparkUDAFWrapper).is_ok())
                 .count();
-            if num_udafs
-                >= UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG
-                    .value()
-                    .unwrap_or(1) as usize
-            {
-                let input_sorted = create_default_ascending_sort_exec(
+            if num_udafs >= num_udafs_trigger_sort_agg {
+                let input_sort_exec = create_default_ascending_sort_exec(
                     input,
                     &agg_ctx
                         .groupings
@@ -186,18 +193,24 @@ fn execute_agg(
                         .map(|g| g.expr.clone())
                         .collect::<Vec<_>>(),
                     Some(exec_ctx.execution_plan_metrics().clone()),
+                    false, // do not record output metric
                 );
-                execute_agg_sorted(input_sorted, exec_ctx, agg_ctx)?
+                let input_sorted = exec_ctx.clone().execute(&input_sort_exec)?;
+                execute_agg_sorted(input_sorted, exec_ctx.clone(), agg_ctx)?
             } else {
+                let input = exec_ctx.execute_with_input_stats(&input)?;
                 execute_agg_with_grouping_hash(input, exec_ctx, agg_ctx)?
             }
         }
-        AggExecMode::SortAgg => execute_agg_sorted(input, exec_ctx, agg_ctx)?,
+        AggExecMode::SortAgg => {
+            let input = exec_ctx.execute_with_input_stats(&input)?;
+            execute_agg_sorted(input, exec_ctx, agg_ctx)?
+        }
     })
 }
 
 fn execute_agg_with_grouping_hash(
-    input: Arc<dyn ExecutionPlan>,
+    input_stream: SendableRecordBatchStream,
     exec_ctx: Arc<ExecutionContext>,
     agg_ctx: Arc<AggContext>,
 ) -> Result<SendableRecordBatchStream> {
@@ -206,8 +219,7 @@ fn execute_agg_with_grouping_hash(
     MemManager::register_consumer(tables.clone(), true);
 
     // start processing input batches
-    let input = exec_ctx.execute_with_input_stats(&input)?;
-    let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
+    let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input_stream);
 
     Ok(exec_ctx
         .clone()
@@ -267,15 +279,14 @@ fn execute_agg_with_grouping_hash(
 }
 
 fn execute_agg_no_grouping(
-    input: Arc<dyn ExecutionPlan>,
+    input_stream: SendableRecordBatchStream,
     exec_ctx: Arc<ExecutionContext>,
     agg_ctx: Arc<AggContext>,
 ) -> Result<SendableRecordBatchStream> {
     let mut acc_table = agg_ctx.create_acc_table(1);
 
     // start processing input batches
-    let input = exec_ctx.execute_with_input_stats(&input)?;
-    let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
+    let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input_stream);
 
     // output
     // in no-grouping mode, we always output only one record, so it is not
@@ -313,14 +324,13 @@ fn execute_agg_no_grouping(
 }
 
 fn execute_agg_sorted(
-    input: Arc<dyn ExecutionPlan>,
+    input: SendableRecordBatchStream,
     exec_ctx: Arc<ExecutionContext>,
     agg_ctx: Arc<AggContext>,
 ) -> Result<SendableRecordBatchStream> {
     let batch_size = batch_size();
 
     // start processing input batches
-    let input = exec_ctx.execute_with_input_stats(&input)?;
     let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
 
     Ok(exec_ctx

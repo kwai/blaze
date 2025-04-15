@@ -106,12 +106,7 @@ impl ShuffleRepartitioner for RssSortShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
-        self.set_spillable(false);
-        let has_data = !self.data.lock().await.is_empty();
-        if has_data {
-            self.set_spillable(true);
-            self.force_spill().await?;
-        }
+        self.force_spill().await?;
         Ok(())
     }
 }

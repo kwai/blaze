@@ -130,6 +130,7 @@ abstract class NativeTakeOrderedBase(
       sparkContext,
       metrics = MetricNode(metrics, shuffledRDD.metrics :: Nil),
       shuffledRDD.partitions,
+      shuffledRDD.partitioner,
       new OneToOneDependency(shuffledRDD) :: Nil,
       rddShuffleReadFull = false,
       (_, taskContext) => {
@@ -181,6 +182,7 @@ abstract class NativePartialTakeOrderedBase(
       sparkContext,
       metrics = MetricNode(metrics, inputRDD.metrics :: Nil),
       inputRDD.partitions,
+      inputRDD.partitioner,
       new OneToOneDependency(inputRDD) :: Nil,
       rddShuffleReadFull = false,
       (partition, taskContext) => {
