@@ -44,7 +44,7 @@ public class ValidateSparkPlanInjector {
                     .make()
                     .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION);
         } catch (TypePool.Resolution.NoSuchTypeException e) {
-            logger.warn("No such type of ValidateSparkPlan", e);
+            logger.debug("No such type of ValidateSparkPlan", e);
         }
     }
 }
