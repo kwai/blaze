@@ -121,6 +121,10 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.table.scan", defaultValue = true)
   val enableDataWriting: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.data.writing", defaultValue = false)
+  val enableScanParquet: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.parquet", defaultValue = true)
+  val enableScanOrc: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.orc", defaultValue = true)
 
   import org.apache.spark.sql.catalyst.plans._
   import org.apache.spark.sql.catalyst.optimizer._
@@ -328,10 +332,10 @@ object BlazeConverters extends Logging {
     logDebug(s"  tableIdentifier: ${tableIdentifier}")
     relation.fileFormat match {
       case p if p.getClass.getName.endsWith("ParquetFileFormat") =>
-        assert(SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.parquet", true))
+        assert(enableScanParquet)
         addRenameColumnsExec(Shims.get.createNativeParquetScanExec(exec))
       case p if p.getClass.getName.endsWith("OrcFileFormat") =>
-        assert(SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.orc", true))
+        assert(enableScanOrc)
         addRenameColumnsExec(Shims.get.createNativeOrcScanExec(exec))
       case _ => throw new NotImplementedError("Cannot convert non parquet/orc scan exec")
     }
