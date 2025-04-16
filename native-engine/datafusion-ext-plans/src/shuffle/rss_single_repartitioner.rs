@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::{arrow::record_batch::RecordBatch, common::Result};
+use datafusion::{arrow::record_batch::RecordBatch, common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::df_execution_err;
 use jni::objects::GlobalRef;
 use parking_lot::Mutex;
@@ -27,15 +27,17 @@ use crate::{
 
 pub struct RssSingleShuffleRepartitioner {
     rss_partition_writer: Arc<Mutex<IpcCompressionWriter<RssWriter>>>,
+    output_io_time: Time,
 }
 
 impl RssSingleShuffleRepartitioner {
-    pub fn new(rss_partition_writer: GlobalRef) -> Self {
+    pub fn new(rss_partition_writer: GlobalRef, output_io_time: Time) -> Self {
         Self {
             rss_partition_writer: Arc::new(Mutex::new(IpcCompressionWriter::new(RssWriter::new(
                 rss_partition_writer,
                 0,
             )))),
+            output_io_time,
         }
     }
 }
@@ -44,7 +46,9 @@ impl RssSingleShuffleRepartitioner {
 impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         let rss_partition_writer = self.rss_partition_writer.clone();
+        let output_io_time = self.output_io_time.clone();
         tokio::task::spawn_blocking(move || {
+            let _output_io_timer = output_io_time.timer();
             rss_partition_writer
                 .lock()
                 .write_batch(input.num_rows(), input.columns())
@@ -55,6 +59,7 @@ impl ShuffleRepartitioner for RssSingleShuffleRepartitioner {
     }
 
     async fn shuffle_write(&self) -> Result<()> {
+        let _output_io_timer = self.output_io_time.timer();
         self.rss_partition_writer.lock().finish_current_buf()?;
         Ok(())
     }

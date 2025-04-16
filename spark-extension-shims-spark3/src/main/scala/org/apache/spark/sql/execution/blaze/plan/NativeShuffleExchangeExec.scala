@@ -59,8 +59,7 @@ case class NativeShuffleExchangeExec(
           "mem_spill_iotime",
           "disk_spill_size",
           "disk_spill_iotime",
-          "sort_time",
-          "output_io_time",
+          "shuffle_write_total_time",
           "shuffle_read_total_time"))
         .toSeq: _*)).toMap
 

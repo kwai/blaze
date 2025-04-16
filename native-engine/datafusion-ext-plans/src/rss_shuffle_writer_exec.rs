@@ -22,7 +22,7 @@ use datafusion::{
     arrow::datatypes::SchemaRef,
     error::{DataFusionError, Result},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
     physical_plan,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
@@ -39,7 +39,7 @@ use crate::{
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
         rss_sort_repartitioner::RssSortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
-    sort_exec::SortExec,
+    sort_exec::create_default_ascending_sort_exec,
 };
 
 /// The rss shuffle writer operator maps each input partition to M output
@@ -114,6 +114,8 @@ impl ExecutionPlan for RssShuffleWriterExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let output_io_time = exec_ctx.register_timer_metric("output_io_time");
+
         let resource_id = jni_new_string!(&self.rss_partition_writer_resource_id)?;
         let rss_partition_writer_local = jni_call_static!(
             JniBridge.getResource(resource_id.as_obj()) -> JObject
@@ -122,40 +124,42 @@ impl ExecutionPlan for RssShuffleWriterExec {
         let mut input = self.input.clone();
 
         let repartitioner: Arc<dyn ShuffleRepartitioner> = match &self.partitioning {
-            p if p.partition_count() == 1 => {
-                Arc::new(RssSingleShuffleRepartitioner::new(rss_partition_writer))
-            }
+            p if p.partition_count() == 1 => Arc::new(RssSingleShuffleRepartitioner::new(
+                rss_partition_writer,
+                output_io_time,
+            )),
             Partitioning::HashPartitioning(..) | Partitioning::RangePartitioning(..) => {
-                let sort_time = exec_ctx.register_timer_metric("sort_time");
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.partitioning.clone(),
-                    sort_time,
+                    output_io_time,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
             }
             Partitioning::RoundRobinPartitioning(..) => {
-                let sort_time = exec_ctx.register_timer_metric("sort_time");
-                let sort_expr: Vec<PhysicalSortExpr> = self
-                    .input
-                    .schema()
-                    .fields()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, field)| PhysicalSortExpr {
-                        expr: Arc::new(Column::new(&field.name(), index)),
-                        options: Default::default(),
-                    })
-                    .collect();
-                input = Arc::new(SortExec::new(self.input.clone(), sort_expr, None));
+                input = create_default_ascending_sort_exec(
+                    input,
+                    self.input
+                        .schema()
+                        .fields()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| {
+                            Arc::new(Column::new(&field.name(), index)) as PhysicalExprRef
+                        })
+                        .collect::<Vec<_>>()
+                        .as_ref(),
+                    None,
+                    false, // do not record output metric
+                );
 
                 let partitioner = Arc::new(RssSortShuffleRepartitioner::new(
                     partition,
                     rss_partition_writer,
                     self.partitioning.clone(),
-                    sort_time,
+                    output_io_time,
                 ));
                 MemManager::register_consumer(partitioner.clone(), true);
                 partitioner
