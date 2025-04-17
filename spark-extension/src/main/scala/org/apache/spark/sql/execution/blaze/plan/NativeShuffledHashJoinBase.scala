@@ -92,10 +92,10 @@ abstract class NativeShuffledHashJoinBase(
     val nativeJoinType = this.nativeJoinType
     val nativeBuildSide = this.nativeBuildSide
 
-    val partitions = if (joinType != RightOuter) {
-      leftRDD.partitions
+    val (partitions, partitioner) = if (joinType != RightOuter) {
+      (leftRDD.partitions, leftRDD.partitioner)
     } else {
-      rightRDD.partitions
+      (rightRDD.partitions, rightRDD.partitioner)
     }
     val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
 
@@ -103,6 +103,7 @@ abstract class NativeShuffledHashJoinBase(
       sparkContext,
       nativeMetrics,
       partitions,
+      partitioner,
       dependencies,
       leftRDD.isShuffleReadFull && rightRDD.isShuffleReadFull,
       (partition, taskContext) => {

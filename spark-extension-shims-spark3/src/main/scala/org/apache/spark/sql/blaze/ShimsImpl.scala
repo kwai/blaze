@@ -111,9 +111,8 @@ import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
-import org.blaze.{protobuf => pb}
 import org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
-import org.blaze.sparkver
+import org.blaze.{protobuf => pb, sparkver}
 
 class ShimsImpl extends Shims with Logging {
 
@@ -580,6 +579,7 @@ class ShimsImpl extends Shims with Logging {
           shuffledRDD.sparkContext,
           metrics,
           shuffledRDD.partitions,
+          shuffledRDD.partitioner,
           new OneToOneDependency(shuffledRDD) :: Nil,
           true,
           (partition, taskContext) => {
@@ -682,6 +682,7 @@ class ShimsImpl extends Shims with Logging {
           shuffledRDD.sparkContext,
           metrics,
           shuffledRDD.partitions,
+          shuffledRDD.partitioner,
           new OneToOneDependency(shuffledRDD) :: Nil,
           true,
           (partition, taskContext) => {
@@ -774,6 +775,7 @@ class ShimsImpl extends Shims with Logging {
           shuffledRDD.sparkContext,
           metrics,
           shuffledRDD.partitions,
+          shuffledRDD.partitioner,
           new OneToOneDependency(shuffledRDD) :: Nil,
           true,
           (partition, taskContext) => {

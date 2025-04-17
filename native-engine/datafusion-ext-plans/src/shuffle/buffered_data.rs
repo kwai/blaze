@@ -122,16 +122,17 @@ impl BufferedData {
     // write buffered data to spill/target file, returns uncompressed size and
     // offsets to each partition
     pub fn write<W: Write>(mut self, mut w: W) -> Result<Vec<u64>> {
-        if !self.staging_batches.is_empty() {
-            self.flush_staging()?;
+        if self.num_rows == 0 {
+            return Ok(vec![0; self.partitioning.partition_count() + 1]);
         }
 
         let mem_used = ByteSize(self.mem_used() as u64);
         log::info!("draining all buffered data, total_mem={mem_used}");
 
-        if self.num_rows == 0 {
-            return Ok(vec![0; self.partitioning.partition_count() + 1]);
+        if !self.staging_batches.is_empty() {
+            self.flush_staging()?;
         }
+
         let num_partitions = self.partitioning.partition_count();
         let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w));
         let mut offsets = vec![];
@@ -157,16 +158,17 @@ impl BufferedData {
 
     // write buffered data to rss, returns uncompressed size
     pub fn write_rss(mut self, rss_partition_writer: GlobalRef) -> Result<()> {
-        if !self.staging_batches.is_empty() {
-            self.flush_staging()?;
+        if self.num_rows == 0 {
+            return Ok(());
         }
 
         let mem_used = ByteSize(self.mem_used() as u64);
         log::info!("draining all buffered data to rss, total_mem={mem_used}");
 
-        if self.num_rows == 0 {
-            return Ok(());
+        if !self.staging_batches.is_empty() {
+            self.flush_staging()?;
         }
+
         let mut iter = self.into_sorted_batches()?;
         let mut writer = IpcCompressionWriter::new(RssWriter::new(rss_partition_writer.clone(), 0));
 

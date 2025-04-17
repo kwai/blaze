@@ -107,10 +107,10 @@ abstract class NativeSortMergeJoinBase(
     val nativeJoinOn = this.nativeJoinOn
     val nativeJoinType = this.nativeJoinType
 
-    val partitions = if (joinType != RightOuter) {
-      leftRDD.partitions
+    val (partitions, partitioner) = if (joinType != RightOuter) {
+      (leftRDD.partitions, leftRDD.partitioner)
     } else {
-      rightRDD.partitions
+      (rightRDD.partitions, rightRDD.partitioner)
     }
     val dependencies = Seq(new OneToOneDependency(leftRDD), new OneToOneDependency(rightRDD))
     val isShuffleReadFull = joinType match {
@@ -130,6 +130,7 @@ abstract class NativeSortMergeJoinBase(
       sparkContext,
       nativeMetrics,
       partitions,
+      partitioner,
       dependencies,
       isShuffleReadFull,
       (partition, taskContext) => {

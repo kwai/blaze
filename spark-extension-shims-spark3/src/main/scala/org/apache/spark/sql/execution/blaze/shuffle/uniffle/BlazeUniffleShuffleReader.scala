@@ -87,14 +87,14 @@ class BlazeUniffleShuffleReader[K, C](
   private val readMetrics: ShuffleReadMetrics =
     FieldUtils.readField(reader, "readMetrics", true).asInstanceOf[ShuffleReadMetrics]
 
-  override protected def readBlocks(): Iterator[(BlockId, InputStream)] = {
+  override protected def readBlocks(): Iterator[InputStream] = {
     val inputStream =
       new UniffleInputStream(
         new MultiPartitionIterator[K, C](),
         shuffleId,
         startPartition,
         endPartition)
-    Iterator.single((null, inputStream))
+    Iterator.single(inputStream)
   }
 
   private class MultiPartitionIterator[K, C] extends AbstractIterator[Product2[K, C]] {

@@ -56,6 +56,7 @@ abstract class NativeGlobalLimitBase(limit: Long, override val child: SparkPlan)
       sparkContext,
       nativeMetrics,
       inputRDD.partitions,
+      inputRDD.partitioner,
       new OneToOneDependency(inputRDD) :: Nil,
       rddShuffleReadFull = false,
       (partition, taskContext) => {

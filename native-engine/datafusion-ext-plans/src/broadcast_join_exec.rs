@@ -417,6 +417,7 @@ async fn execute_join_with_smj_fallback(
                 create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
                 &join_params.right_keys,
                 Some(exec_ctx.execution_plan_metrics().clone()),
+                false, // do not record output metric
             ),
         ),
         JoinSide::Right => (
@@ -424,6 +425,7 @@ async fn execute_join_with_smj_fallback(
                 create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
                 &join_params.left_keys,
                 Some(exec_ctx.execution_plan_metrics().clone()),
+                false, // do not record output metric
             ),
             built_sorted,
         ),
