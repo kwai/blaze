@@ -17,17 +17,19 @@ package org.apache.spark.sql.blaze
 
 import scala.annotation.tailrec
 import scala.collection.mutable
+
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertToNonNativeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.joinSmallerSideTag
-import org.apache.spark.sql.blaze.NativeConverters.{StubExpr, scalarTypeSupported}
+import org.apache.spark.sql.blaze.NativeConverters.{scalarTypeSupported, StubExpr}
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -44,6 +46,7 @@ import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.GlobalLimitExec
@@ -75,10 +78,16 @@ import org.apache.spark.sql.execution.blaze.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
+import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
+import org.apache.spark.OneToOneDependency
+import org.apache.spark.Partition
+import org.blaze.protobuf.EmptyPartitionsExecNode
+import org.blaze.protobuf.PhysicalPlanNode
+import org.blaze.protobuf.SortExecNode
 import org.blaze.sparkver
 
 object BlazeConverters extends Logging {
@@ -856,6 +865,9 @@ object BlazeConverters extends Logging {
   }
 
   def convertLocalTableScanExec(exec: LocalTableScanExec): SparkPlan = {
+    if (exec.rows.isEmpty) {
+      return createEmptyExec(exec.output, exec.outputPartitioning, exec.outputOrdering)
+    }
     convertToNative(exec)
   }
 
@@ -893,6 +905,47 @@ object BlazeConverters extends Logging {
         assert(exec.find(_.isInstanceOf[DataWritingCommandExec]).isEmpty)
         Shims.get.createConvertToNativeExec(exec)
     }
+  }
+
+  def createEmptyExec(
+      output: Seq[Attribute],
+      outputPartitioning: Partitioning,
+      outputOrdering: Seq[SortOrder]): SparkPlan = {
+
+    case class NativeEmptyExec(
+        override val output: Seq[Attribute],
+        override val outputPartitioning: Partitioning,
+        override val outputOrdering: Seq[SortOrder])
+        extends LeafExecNode
+        with NativeSupports {
+
+      override protected def doExecuteNative(): NativeRDD = {
+        val nativeSchema = Util.getNativeSchema(output)
+        val partitions = Range(0, outputPartitioning.numPartitions)
+          .map(i =>
+            new Partition {
+              override def index: Int = i
+            })
+          .toArray
+
+        new NativeRDD(
+          sparkContext,
+          MetricNode(Map(), Nil),
+          rddPartitions = partitions,
+          rddPartitioner = None,
+          rddDependencies = Nil,
+          false,
+          (_partition, _taskContext) => {
+            val nativeEmptyExec = EmptyPartitionsExecNode
+              .newBuilder()
+              .setNumPartitions(outputPartitioning.numPartitions)
+              .setSchema(nativeSchema)
+            PhysicalPlanNode.newBuilder().setEmptyPartitions(nativeEmptyExec).build()
+          },
+          friendlyName = "NativeRDD.Empty")
+      }
+    }
+    NativeEmptyExec(output, outputPartitioning, outputOrdering)
   }
 
   @tailrec

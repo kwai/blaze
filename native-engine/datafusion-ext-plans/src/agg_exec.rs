@@ -15,10 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use arrow::{
@@ -33,7 +30,6 @@ use datafusion::{
     physical_expr::EquivalenceProperties,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
     },
