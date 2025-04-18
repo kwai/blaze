@@ -324,6 +324,7 @@ impl BufferedData {
         // sort into indices
         let num_rows = batch.num_rows().min(sorter.limit);
         let mut sorted_row_indices: Vec<u32> = (0..batch.num_rows() as u32).collect();
+        assert_eq!(key_rows.num_rows(), sorted_row_indices.len());
         sorted_row_indices
             .sort_unstable_by_key(|&row_idx| unsafe { key_rows.row_unchecked(row_idx as usize) });
         sorted_row_indices.truncate(num_rows);
