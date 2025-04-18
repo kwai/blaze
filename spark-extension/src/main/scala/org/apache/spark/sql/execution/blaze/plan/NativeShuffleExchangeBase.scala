@@ -195,11 +195,12 @@ abstract class NativeShuffleExchangeBase(
       metrics,
       nativeInputRDD.metrics :: Nil,
       Some({
+        case ("elapsed_compute", v) => metrics("shuffle_write_total_time") += v
         case ("data_size", v) => metrics("dataSize") += v
         case ("output_rows", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incRecordsWritten(v)
-        case ("elapsed_compute", v) =>
+        case ("output_io_time", v) =>
           val shuffleWriteMetrics = TaskContext.get.taskMetrics().shuffleWriteMetrics
           new SQLShuffleWriteMetricsReporter(shuffleWriteMetrics, metrics).incWriteTime(v)
         case _ =>

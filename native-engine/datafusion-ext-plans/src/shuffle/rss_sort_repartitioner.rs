@@ -37,11 +37,15 @@ impl RssSortShuffleRepartitioner {
         partition_id: usize,
         rss_partition_writer: GlobalRef,
         partitioning: Partitioning,
-        sort_time: Time,
+        output_io_time: Time,
     ) -> Self {
         Self {
             mem_consumer_info: None,
-            data: Mutex::new(BufferedData::new(partitioning, partition_id, sort_time)),
+            data: Mutex::new(BufferedData::new(
+                partitioning,
+                partition_id,
+                output_io_time,
+            )),
             rss: rss_partition_writer,
         }
     }

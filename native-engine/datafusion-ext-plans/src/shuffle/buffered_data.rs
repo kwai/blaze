@@ -54,11 +54,11 @@ pub struct BufferedData {
     sorted_offsets: Vec<Vec<u32>>,
     num_rows: usize,
     sorted_mem_used: usize,
-    sort_time: Time,
+    output_io_time: Time,
 }
 
 impl BufferedData {
-    pub fn new(partitioning: Partitioning, partition_id: usize, sort_time: Time) -> Self {
+    pub fn new(partitioning: Partitioning, partition_id: usize, output_io_time: Time) -> Self {
         Self {
             partition_id,
             partitioning,
@@ -69,7 +69,7 @@ impl BufferedData {
             sorted_offsets: vec![],
             num_rows: 0,
             sorted_mem_used: 0,
-            sort_time,
+            output_io_time,
         }
     }
 
@@ -79,7 +79,7 @@ impl BufferedData {
             Self::new(
                 self.partitioning.clone(),
                 self.partition_id,
-                self.sort_time.clone(),
+                self.output_io_time.clone(),
             ),
         )
     }
@@ -102,14 +102,12 @@ impl BufferedData {
     fn flush_staging(&mut self) -> Result<()> {
         let sorted_num_rows = self.num_rows - self.staging_num_rows;
         let staging_batches = std::mem::take(&mut self.staging_batches);
-        let (offsets, sorted_batch) = self.sort_time.with_timer(|| {
-            sort_batches_by_partition_id(
-                staging_batches,
-                &self.partitioning,
-                sorted_num_rows,
-                self.partition_id,
-            )
-        })?;
+        let (offsets, sorted_batch) = sort_batches_by_partition_id(
+            staging_batches,
+            &self.partitioning,
+            sorted_num_rows,
+            self.partition_id,
+        )?;
         self.staging_num_rows = 0;
         self.staging_mem_used = 0;
 
@@ -133,6 +131,7 @@ impl BufferedData {
             self.flush_staging()?;
         }
 
+        let output_io_time = self.output_io_time.clone();
         let num_partitions = self.partitioning.partition_count();
         let mut writer = IpcCompressionWriter::new(CountWrite::from(&mut w));
         let mut offsets = vec![];
@@ -145,9 +144,10 @@ impl BufferedData {
 
             offsets.resize(partition_id + 1, writer.inner().count());
             for batch in batch_iter {
-                writer.write_batch(batch.num_rows(), batch.columns())?;
+                output_io_time
+                    .with_timer(|| writer.write_batch(batch.num_rows(), batch.columns()))?;
             }
-            writer.finish_current_buf()?;
+            output_io_time.with_timer(|| writer.finish_current_buf())?;
         }
         offsets.resize(num_partitions + 1, writer.inner().count());
 
@@ -169,6 +169,7 @@ impl BufferedData {
             self.flush_staging()?;
         }
 
+        let output_io_time = self.output_io_time.clone();
         let mut iter = self.into_sorted_batches()?;
         let mut writer = IpcCompressionWriter::new(RssWriter::new(rss_partition_writer.clone(), 0));
 
@@ -180,11 +181,15 @@ impl BufferedData {
             // write all batches with this part id
             writer.set_output(RssWriter::new(rss_partition_writer.clone(), partition_id));
             for batch in batch_iter {
-                writer.write_batch(batch.num_rows(), batch.columns())?;
+                output_io_time
+                    .with_timer(|| writer.write_batch(batch.num_rows(), batch.columns()))?;
             }
-            writer.finish_current_buf()?;
+            output_io_time.with_timer(|| writer.finish_current_buf())?;
         }
-        jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ())?;
+
+        output_io_time.with_timer(
+            || jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ()),
+        )?;
         log::info!("all buffered data drained to rss");
         Ok(())
     }

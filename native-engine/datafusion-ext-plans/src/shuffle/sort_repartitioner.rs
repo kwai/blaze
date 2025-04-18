@@ -61,14 +61,17 @@ impl SortShuffleRepartitioner {
         output_io_time: Time,
     ) -> Self {
         let partition_id = exec_ctx.partition_id();
-        let sort_time = exec_ctx.register_timer_metric("sort_time");
         let num_output_partitions = partitioning.partition_count();
         Self {
             exec_ctx,
             mem_consumer_info: None,
             output_data_file,
             output_index_file,
-            data: Mutex::new(BufferedData::new(partitioning, partition_id, sort_time)),
+            data: Mutex::new(BufferedData::new(
+                partitioning,
+                partition_id,
+                output_io_time.clone(),
+            )),
             spills: Mutex::default(),
             num_output_partitions,
             output_io_time,
@@ -164,23 +167,23 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         if spills.is_empty() {
             let output_io_time = self.output_io_time.clone();
             tokio::task::spawn_blocking(move || {
-                let mut output_data = output_io_time.wrap_writer(
-                    OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(&data_file)?,
-                );
-                let mut output_index = output_io_time.wrap_writer(
-                    OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(&index_file)?,
-                );
+                let output_io_time_cloned = output_io_time.clone();
+                let _output_io_timer = output_io_time_cloned.timer();
+
+                let mut output_data = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&data_file)?;
+                let mut output_index = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&index_file)?;
 
                 // write data file
-                let offsets = data.write(&mut output_data)?;
+                // exclude io timer because it is already included buffered_data.write()
+                let offsets = output_io_time.exclude_timer(|| data.write(&mut output_data))?;
 
                 // write index file
                 let mut offsets_data = vec![];
@@ -223,20 +226,17 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let num_output_partitions = self.num_output_partitions;
         let output_io_time = self.output_io_time.clone();
         tokio::task::spawn_blocking(move || {
-            let mut output_data = output_io_time.wrap_writer(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&data_file)?,
-            );
-            let mut output_index = output_io_time.wrap_writer(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&index_file)?,
-            );
+            let _output_io_timer = output_io_time.timer();
+            let mut output_data = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&data_file)?;
+            let mut output_index = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&index_file)?;
 
             let mut merge_iter = OffsettedMergeIterator::new(
                 num_output_partitions,

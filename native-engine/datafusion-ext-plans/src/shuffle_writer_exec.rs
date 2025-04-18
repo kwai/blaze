@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalSortExpr},
+    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
     physical_plan,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
@@ -39,7 +39,7 @@ use crate::{
         single_repartitioner::SingleShuffleRepartitioner,
         sort_repartitioner::SortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
     },
-    sort_exec::SortExec,
+    sort_exec::create_default_ascending_sort_exec,
 };
 
 /// The shuffle writer operator maps each input partition to M output partitions
@@ -134,19 +134,21 @@ impl ExecutionPlan for ShuffleWriterExec {
                 partitioner
             }
             Partitioning::RoundRobinPartitioning(..) => {
-                let sort_expr: Vec<PhysicalSortExpr> = self
-                    .input
-                    .schema()
-                    .fields()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, field)| PhysicalSortExpr {
-                        expr: Arc::new(Column::new(&field.name(), index)),
-                        options: Default::default(),
-                    })
-                    .collect();
-                input = Arc::new(SortExec::new(input, sort_expr, None));
-
+                input = create_default_ascending_sort_exec(
+                    input,
+                    self.input
+                        .schema()
+                        .fields()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| {
+                            Arc::new(Column::new(&field.name(), index)) as PhysicalExprRef
+                        })
+                        .collect::<Vec<_>>()
+                        .as_ref(),
+                    None,
+                    false, // do not record output metric
+                );
                 let partitioner = Arc::new(SortShuffleRepartitioner::new(
                     exec_ctx.clone(),
                     self.output_data_file.clone(),
