@@ -25,8 +25,9 @@ case class NativeWindowExec(
     windowExpression: Seq[NamedExpression],
     partitionSpec: Seq[Expression],
     orderSpec: Seq[SortOrder],
+    groupLimit: Option[Int],
     override val child: SparkPlan)
-    extends NativeWindowBase(windowExpression, partitionSpec, orderSpec, child) {
+    extends NativeWindowBase(windowExpression, partitionSpec, orderSpec, groupLimit, child) {
 
   @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =

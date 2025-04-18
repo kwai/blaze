@@ -534,6 +534,8 @@ message WindowExecNode {
   repeated WindowExprNode window_expr = 2;
   repeated PhysicalExprNode partition_spec = 3;
   repeated PhysicalExprNode order_spec = 4;
+  WindowGroupLimit group_limit = 5;
+  bool output_window_cols = 6;
 }
 
 message WindowExprNode {
@@ -548,6 +550,10 @@ message WindowExprNode {
 enum WindowFunctionType {
   Window = 0;
   Agg = 1;
+}
+
+message WindowGroupLimit {
+  uint32 k = 1;
 }
 
 message GenerateExecNode {

@@ -160,6 +160,8 @@ abstract class Shims {
       windowExpression: Seq[NamedExpression],
       partitionSpec: Seq[Expression],
       orderSpec: Seq[SortOrder],
+      groupLimit: Option[Int],
+      outputWindowCols: Boolean,
       child: SparkPlan): NativeWindowBase
 
   def createNativeParquetSinkExec(

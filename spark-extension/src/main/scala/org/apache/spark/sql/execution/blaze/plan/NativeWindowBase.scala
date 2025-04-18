@@ -47,14 +47,21 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
+import org.blaze.protobuf.WindowGroupLimit
 
 abstract class NativeWindowBase(
     windowExpression: Seq[NamedExpression],
     partitionSpec: Seq[Expression],
     orderSpec: Seq[SortOrder],
+    groupLimit: Option[Int],
     override val child: SparkPlan)
     extends UnaryExecNode
     with NativeSupports {
+
+  override val nodeName: String = groupLimit match {
+    case Some(_) => "NativeWindowGroupLimit"
+    case None => "NativeWindow"
+  }
 
   override lazy val metrics: Map[String, SQLMetric] = SortedMap[String, SQLMetric]() ++ Map(
     NativeHelper
@@ -62,7 +69,10 @@ abstract class NativeWindowBase(
       .filterKeys(Set("stage_id", "output_rows", "elapsed_compute"))
       .toSeq: _*)
 
-  override def output: Seq[Attribute] = child.output ++ windowExpression.map(_.toAttribute)
+  override def output: Seq[Attribute] = groupLimit match {
+    case Some(_) => child.output
+    case None => child.output ++ windowExpression.map(_.toAttribute)
+  }
   override def outputPartitioning: Partitioning = child.outputPartitioning
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
@@ -199,7 +209,16 @@ abstract class NativeWindowBase(
           .addAllWindowExpr(nativeWindowExprs.asJava)
           .addAllPartitionSpec(nativePartitionSpecExprs.asJava)
           .addAllOrderSpec(nativeOrderSpecExprs.asJava)
-          .build()
+
+        // WindowGrupLimitExec does not output window cols
+        groupLimit match {
+          case Some(limit) =>
+            nativeWindowExec.setGroupLimit(WindowGroupLimit.newBuilder().setK(limit))
+            nativeWindowExec.setOutputWindowCols(false)
+          case None =>
+            nativeWindowExec.setOutputWindowCols(true)
+        }
+
         pb.PhysicalPlanNode.newBuilder().setWindow(nativeWindowExec).build()
       },
       friendlyName = "NativeRDD.Window")
