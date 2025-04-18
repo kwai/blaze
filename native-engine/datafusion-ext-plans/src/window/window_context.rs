@@ -31,6 +31,8 @@ pub struct WindowContext {
     pub window_exprs: Vec<WindowExpr>,
     pub partition_spec: Vec<Arc<dyn PhysicalExpr>>,
     pub order_spec: Vec<PhysicalSortExpr>,
+    pub group_limit: Option<usize>,
+    pub output_window_cols: bool,
 
     pub input_schema: SchemaRef,
     pub output_schema: SchemaRef,
@@ -47,14 +49,20 @@ impl WindowContext {
         window_exprs: Vec<WindowExpr>,
         partition_spec: Vec<Arc<dyn PhysicalExpr>>,
         order_spec: Vec<PhysicalSortExpr>,
+        group_limit: Option<usize>,
+        output_window_cols: bool,
     ) -> Result<Self> {
         let output_schema = Arc::new(Schema::new(
             vec![
                 input_schema.fields().to_vec(),
-                window_exprs
-                    .iter()
-                    .map(|expr: &WindowExpr| expr.field.clone())
-                    .collect::<Vec<FieldRef>>(),
+                if output_window_cols {
+                    window_exprs
+                        .iter()
+                        .map(|expr: &WindowExpr| expr.field.clone())
+                        .collect::<Vec<FieldRef>>()
+                } else {
+                    vec![]
+                },
             ]
             .concat(),
         ));
@@ -107,6 +115,8 @@ impl WindowContext {
             window_exprs,
             partition_spec,
             order_spec,
+            group_limit,
+            output_window_cols,
 
             input_schema,
             output_schema,

@@ -295,8 +295,10 @@ class ShimsImpl extends Shims with Logging {
       windowExpression: Seq[NamedExpression],
       partitionSpec: Seq[Expression],
       orderSpec: Seq[SortOrder],
+      groupLimit: Option[Int],
+      outputWindowCols: Boolean,
       child: SparkPlan): NativeWindowBase =
-    NativeWindowExec(windowExpression, partitionSpec, orderSpec, child)
+    NativeWindowExec(windowExpression, partitionSpec, orderSpec, groupLimit, child)
 
   override def createNativeParquetSinkExec(
       sparkSession: SparkSession,

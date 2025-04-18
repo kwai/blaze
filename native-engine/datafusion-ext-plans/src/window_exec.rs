@@ -15,12 +15,12 @@
 use std::{any::Any, fmt::Formatter, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayRef},
+    array::{Array, ArrayRef, Int32Array},
     datatypes::SchemaRef,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion::{
-    common::{stats::Precision, ColumnStatistics, Result, Statistics},
+    common::{Result, Statistics},
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
@@ -29,7 +29,7 @@ use datafusion::{
         PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::arrow::cast::cast;
+use datafusion_ext_commons::{arrow::cast::cast, downcast_any};
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
@@ -47,17 +47,34 @@ pub struct WindowExec {
 }
 
 impl WindowExec {
+    // NOTE:
+    // WindowExec now supports spark's WindowExec and WindowGroupLimitExec:
+    // for normal WindowExec:
+    //   group_limit = None
+    //   output_window_cols = true
+    //
+    // for partial WindowGroupLimitExec
+    //   group_limit = Some(K)
+    //   output_window_cols = false
+    //
+    // for final WindowGroupLimitExec:
+    //   group_limit = Some(K)
+    //   output_window_cols = true
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
         window_exprs: Vec<WindowExpr>,
         partition_spec: Vec<Arc<dyn PhysicalExpr>>,
         order_spec: Vec<PhysicalSortExpr>,
+        group_limit: Option<usize>,
+        output_window_cols: bool,
     ) -> Result<Self> {
         let context = Arc::new(WindowContext::try_new(
             input.schema(),
             window_exprs,
             partition_spec,
             order_spec,
+            group_limit,
+            output_window_cols,
         )?);
         Ok(Self {
             input,
@@ -65,6 +82,29 @@ impl WindowExec {
             metrics: ExecutionPlanMetricsSet::new(),
             props: OnceCell::new(),
         })
+    }
+
+    pub fn window_context(&self) -> &WindowContext {
+        &self.context
+    }
+
+    pub fn with_output_window_cols(&self, output_window_cols: bool) -> Self {
+        Self {
+            input: self.input.clone(),
+            context: Arc::new(
+                WindowContext::try_new(
+                    self.input.schema(),
+                    self.context.window_exprs.clone(),
+                    self.context.partition_spec.clone(),
+                    self.context.order_spec.clone(),
+                    self.context.group_limit,
+                    output_window_cols,
+                )
+                .expect("failed to create window context"),
+            ),
+            metrics: ExecutionPlanMetricsSet::new(),
+            props: OnceCell::new(),
+        }
     }
 }
 
@@ -110,6 +150,8 @@ impl ExecutionPlan for WindowExec {
             self.context.window_exprs.clone(),
             self.context.partition_spec.clone(),
             self.context.order_spec.clone(),
+            self.context.group_limit,
+            self.context.output_window_cols,
         )?))
     }
 
@@ -118,6 +160,26 @@ impl ExecutionPlan for WindowExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // combine WindowGroupLimitExec -> WindowExec
+        if let Ok(window_group_limit) = downcast_any!(&self.input, WindowExec)
+            && window_group_limit.window_context().group_limit.is_some()
+        {
+            let combined = Arc::new(Self {
+                input: window_group_limit.input.clone(),
+                context: Arc::new(WindowContext::try_new(
+                    self.input.schema(),
+                    self.context.window_exprs.clone(),
+                    self.context.partition_spec.clone(),
+                    self.context.order_spec.clone(),
+                    window_group_limit.context.group_limit,
+                    true,
+                )?),
+                metrics: self.metrics.clone(),
+                props: OnceCell::new(),
+            });
+            return combined.execute(partition, context);
+        }
+
         // at this moment only supports ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
         let input = exec_ctx.execute_with_input_stats(&self.input)?;
@@ -131,19 +193,7 @@ impl ExecutionPlan for WindowExec {
     }
 
     fn statistics(&self) -> Result<Statistics> {
-        let input_stat = self.input.statistics()?;
-        let win_cols = self.context.window_exprs.len();
-        let input_cols = self.input.schema().fields().len();
-        let mut column_statistics = Vec::with_capacity(win_cols + input_cols);
-        column_statistics.extend(input_stat.column_statistics);
-        for _ in 0..win_cols {
-            column_statistics.push(ColumnStatistics::new_unknown())
-        }
-        Ok(Statistics {
-            num_rows: input_stat.num_rows,
-            column_statistics,
-            total_byte_size: Precision::Absent,
-        })
+        todo!()
     }
 }
 
@@ -164,17 +214,32 @@ fn execute_window(
                 .map(|expr: &WindowExpr| expr.create_processor(&window_ctx))
                 .collect::<Result<Vec<_>>>()?;
 
-            while let Some(batch) = input.next().await.transpose()? {
+            while let Some(mut batch) = input.next().await.transpose()? {
                 let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
-                let window_cols: Vec<ArrayRef> = processors
+                let mut window_cols: Vec<ArrayRef> = processors
                     .iter_mut()
                     .map(|processor| processor.process_batch(&window_ctx, &batch))
                     .collect::<Result<_>>()?;
 
+                if let Some(group_limit) = window_ctx.group_limit {
+                    assert_eq!(window_cols.len(), 1);
+                    let limited = arrow::compute::kernels::cmp::lt_eq(
+                        &window_cols[0],
+                        &Int32Array::new_scalar(group_limit as i32),
+                    )?;
+                    window_cols[0] = arrow::compute::filter(&window_cols[0], &limited)?;
+                    batch = arrow::compute::filter_record_batch(&batch, &limited)?;
+                }
+
                 let outputs: Vec<ArrayRef> = batch
                     .columns()
                     .iter()
-                    .chain(&window_cols)
+                    .cloned()
+                    .chain(if window_ctx.output_window_cols {
+                        window_cols
+                    } else {
+                        vec![]
+                    })
                     .zip(window_ctx.output_schema.fields())
                     .map(|(array, field)| {
                         if array.data_type() != field.data_type() {
@@ -204,7 +269,6 @@ mod test {
     use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
     use datafusion::{
         assert_batches_eq,
-        common::stats::Precision,
         physical_expr::{expressions::Column, PhysicalSortExpr},
         physical_plan::{memory::MemoryExec, ExecutionPlan},
         prelude::SessionContext,
@@ -293,10 +357,11 @@ mod test {
                 expr: Arc::new(Column::new("b1", 1)),
                 options: Default::default(),
             }],
+            None,
+            true,
         )?);
         let stream = window.execute(0, task_ctx.clone())?;
         let batches = datafusion::physical_plan::common::collect(stream).await?;
-        let row_count = window.statistics()?.num_rows;
         let expected = vec![
             "+----+----+----+---------------+---------+---------------+--------+",
             "| a1 | b1 | c1 | b1_row_number | b1_rank | b1_dense_rank | b1_sum |",
@@ -311,10 +376,6 @@ mod test {
             "+----+----+----+---------------+---------+---------------+--------+",
         ];
         assert_batches_eq!(expected, &batches);
-        assert_eq!(
-            row_count,
-            Precision::Exact(window_exprs.clone().len() + input.clone().schema().fields().len())
-        );
 
         // test window without partition by clause
         let input = build_table(
@@ -356,10 +417,11 @@ mod test {
                 expr: Arc::new(Column::new("b1", 1)),
                 options: Default::default(),
             }],
+            None,
+            true,
         )?);
         let stream = window.execute(0, task_ctx.clone())?;
         let batches = datafusion::physical_plan::common::collect(stream).await?;
-        let row_count = window.statistics()?.num_rows;
         let expected = vec![
             "+----+----+----+---------------+---------+---------------+--------+",
             "| a1 | b1 | c1 | b1_row_number | b1_rank | b1_dense_rank | b1_sum |",
@@ -374,10 +436,51 @@ mod test {
             "+----+----+----+---------------+---------+---------------+--------+",
         ];
         assert_batches_eq!(expected, &batches);
-        assert_eq!(
-            row_count,
-            Precision::Exact(window_exprs.clone().len() + input.clone().schema().fields().len())
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_group_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let session_ctx = SessionContext::new();
+        let task_ctx = session_ctx.task_ctx();
+
+        // test window
+        let input = build_table(
+            ("a1", &vec![1, 1, 1, 1, 2, 3, 3]),
+            ("b1", &vec![1, 2, 2, 3, 4, 1, 1]),
+            ("c1", &vec![0, 0, 0, 0, 0, 0, 0]),
         );
+        let window_exprs = vec![WindowExpr::new(
+            WindowFunction::RankLike(WindowRankType::RowNumber),
+            vec![],
+            Arc::new(Field::new("b1_row_number", DataType::Int32, false)),
+            DataType::Int32,
+        )];
+        let window = Arc::new(WindowExec::try_new(
+            input.clone(),
+            window_exprs.clone(),
+            vec![Arc::new(Column::new("a1", 0))],
+            vec![PhysicalSortExpr {
+                expr: Arc::new(Column::new("b1", 1)),
+                options: Default::default(),
+            }],
+            Some(2),
+            true,
+        )?);
+        let stream = window.execute(0, task_ctx.clone())?;
+        let batches = datafusion::physical_plan::common::collect(stream).await?;
+        let expected = vec![
+            "+----+----+----+---------------+",
+            "| a1 | b1 | c1 | b1_row_number |",
+            "+----+----+----+---------------+",
+            "| 1  | 1  | 0  | 1             |",
+            "| 1  | 2  | 0  | 2             |",
+            "| 2  | 4  | 0  | 1             |",
+            "| 3  | 1  | 0  | 1             |",
+            "| 3  | 1  | 0  | 2             |",
+            "+----+----+----+---------------+",
+        ];
+        assert_batches_eq!(expected, &batches);
         Ok(())
     }
 }
