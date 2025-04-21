@@ -22,8 +22,10 @@ import scala.collection.JavaConverters.asJavaIterableConverter
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.RangeDependency
+import org.apache.spark.rdd.PartitionerAwareUnionRDD
 import org.apache.spark.rdd.PartitionerAwareUnionRDDPartition
 import org.apache.spark.rdd.UnionPartition
+import org.apache.spark.rdd.UnionRDD
 import org.apache.spark.sql.blaze.MetricNode
 import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
@@ -52,8 +54,7 @@ abstract class NativeUnionBase(
 
   override def doExecuteNative(): NativeRDD = {
     val rdds = children.map(c => NativeHelper.executeNative(c))
-    val nativeMetrics = MetricNode(metrics, rdds.map(_.metrics))
-
+    val nativeMetrics = MetricNode(metrics, rdds.filter(_.partitions.nonEmpty).map(_.metrics))
     val unionRDD = sparkContext.union(rdds)
     val unionedPartitions = unionRDD.partitions
     val unionedPartitioner = unionRDD.partitioner
@@ -70,7 +71,9 @@ abstract class NativeUnionBase(
         val unionInputs = ArrayBuffer[(PhysicalPlanNode, Int)]()
         partition match {
           case p: UnionPartition[_] =>
-            val input = rdds(p.parentRddIndex).nativePlan(p.parentPartition, taskContext)
+            val rdds = unionRDD.asInstanceOf[UnionRDD[_]].rdds
+            val nativeRDD = rdds(p.parentRddIndex).asInstanceOf[NativeRDD]
+            val input = nativeRDD.nativePlan(p.parentPartition, taskContext)
             for (childIndex <- rdds.indices) {
               if (childIndex == p.parentRddIndex) {
                 unionInputs.append((input, p.parentPartition.index))
@@ -79,8 +82,10 @@ abstract class NativeUnionBase(
               }
             }
           case p: PartitionerAwareUnionRDDPartition =>
+            val rdds = unionRDD.asInstanceOf[PartitionerAwareUnionRDD[_]].rdds
             for ((rdd, partition) <- rdds.zip(p.parents)) {
-              unionInputs.append((rdd.nativePlan(partition, taskContext), partition.index))
+              val nativeRDD = rdd.asInstanceOf[NativeRDD]
+              unionInputs.append((nativeRDD.nativePlan(partition, taskContext), partition.index))
             }
         }
 
