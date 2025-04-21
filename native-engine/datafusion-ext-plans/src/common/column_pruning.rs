@@ -49,6 +49,9 @@ impl ExecuteWithColumnPruning for dyn ExecutionPlan {
         context: Arc<TaskContext>,
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
+        if projection.iter().enumerate().all(|(i, &proj)| proj == i) {
+            return self.execute(partition, context);
+        }
         let projection = projection.to_vec();
         let schema = Arc::new(self.schema().project(&projection)?);
         let stream =

@@ -503,6 +503,12 @@ impl ExecuteWithColumnPruning for SortExec {
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+
+        // if no sort key expr is specified, just forward the input
+        if self.exprs.is_empty() {
+            return exec_ctx.execute_projected(&self.input, projection);
+        }
+
         let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
             self.input.schema(),
             projection,
