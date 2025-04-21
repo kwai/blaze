@@ -650,11 +650,16 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
+                let group_limit = window.group_limit.as_ref().map(|gl| gl.k as usize);
+                let output_window_cols = window.output_window_cols;
+
                 Ok(Arc::new(WindowExec::try_new(
                     input,
                     window_exprs,
                     partition_specs,
                     order_specs,
+                    group_limit,
+                    output_window_cols,
                 )?))
             }
             PhysicalPlanType::Generate(generate) => {

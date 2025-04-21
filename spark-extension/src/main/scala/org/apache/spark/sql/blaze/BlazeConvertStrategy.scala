@@ -42,6 +42,7 @@ import org.apache.spark.sql.execution.blaze.plan.BuildSide
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 
 object BlazeConvertStrategy extends Logging {
@@ -155,6 +156,9 @@ object BlazeConvertStrategy extends Logging {
       case e: ExpandExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: WindowExec if isNative(e.child) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+      case e: UnaryExecNode
+          if e.getClass.getSimpleName == "WindowGroupLimitExec" && isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: GenerateExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)

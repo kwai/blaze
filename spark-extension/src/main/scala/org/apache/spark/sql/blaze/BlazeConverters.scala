@@ -18,6 +18,7 @@ package org.apache.spark.sql.blaze
 import scala.annotation.tailrec
 import scala.collection.mutable
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
@@ -88,6 +89,9 @@ import org.apache.spark.Partition
 import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.blaze.protobuf.SortExecNode
+import org.apache.spark.sql.catalyst.expressions.RankLike
+import org.apache.spark.sql.catalyst.expressions.WindowExpression
+import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
 import org.blaze.sparkver
 
 object BlazeConverters extends Logging {
@@ -124,6 +128,8 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.expand", defaultValue = true)
   val enableWindow: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.window", defaultValue = true)
+  val enableWindowGroupLimit: Boolean =
+    SparkEnv.get.conf.getBoolean("spark.blaze.enable.window.group.limit", defaultValue = true)
   val enableGenerate: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.generate", defaultValue = true)
   val enableLocalTableScan: Boolean =
@@ -232,6 +238,9 @@ object BlazeConverters extends Logging {
         tryConvert(e, convertExpandExec)
       case e: WindowExec if enableWindow => // window
         tryConvert(e, convertWindowExec)
+      case e: UnaryExecNode
+          if e.getClass.getSimpleName == "WindowGroupLimitExec" && enableWindowGroupLimit => // window group limit
+        tryConvert(e, convertWindowGroupLimitExec)
       case e: GenerateExec if enableGenerate => // generate
         tryConvert(e, convertGenerateExec)
       case e: LocalTableScanExec if enableLocalTableScan => // local table scan
@@ -847,7 +856,35 @@ object BlazeConverters extends Logging {
       exec.windowExpression,
       exec.partitionSpec,
       exec.orderSpec,
+      None,
+      outputWindowCols = true,
       addRenameColumnsExec(convertToNative(exec.child)))
+  }
+
+  def convertWindowGroupLimitExec(exec: SparkPlan): SparkPlan = {
+    // WindowGroupLimit is only supported in Spark3.5+, so use reflection to access its fields
+    val (rankLikeFunction, partitionSpec, orderSpec, limit) = (
+      MethodUtils.invokeMethod(exec, "rankLikeFunction").asInstanceOf[RankLike],
+      MethodUtils.invokeMethod(exec, "partitionSpec").asInstanceOf[Seq[Expression]],
+      MethodUtils.invokeMethod(exec, "orderSpec").asInstanceOf[Seq[SortOrder]],
+      MethodUtils.invokeMethod(exec, "limit").asInstanceOf[Int])
+
+    logDebug(s"Converting WindowGroupLimitExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+    logDebug(s"  rank like function: $rankLikeFunction")
+    logDebug(s"  partition spec: $partitionSpec")
+    logDebug(s"  order spec: $orderSpec")
+    logDebug(s"  limit: $limit")
+
+    val windowSpec = WindowSpecDefinition(partitionSpec, orderSpec, rankLikeFunction.frame)
+    val windowExpression = WindowExpression(rankLikeFunction, windowSpec)
+
+    Shims.get.createNativeWindowExec(
+      Alias(windowExpression, "__window_expression__")() :: Nil,
+      partitionSpec,
+      orderSpec,
+      Some(limit),
+      outputWindowCols = false,
+      addRenameColumnsExec(convertToNative(exec.children.head)))
   }
 
   def convertGenerateExec(exec: GenerateExec): SparkPlan = {
