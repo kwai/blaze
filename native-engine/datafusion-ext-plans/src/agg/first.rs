@@ -24,7 +24,7 @@ use datafusion::{
     common::{Result, ScalarValue},
     physical_expr::PhysicalExpr,
 };
-use datafusion_ext_commons::downcast_any;
+use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_from_array};
 
 use crate::{
     agg::{
@@ -136,7 +136,7 @@ impl Agg for AggFirst {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
                         if accs.flags.prim_valid(acc_idx) {
                             accs.flags.set_prim_valid(acc_idx, true);
-                            accs.values.scalar_values_mut()[acc_idx] = ScalarValue::try_from_array(partial_arg, partial_arg_idx)?;
+                            accs.values.scalar_values_mut()[acc_idx] = compacted_scalar_value_from_array(partial_arg, partial_arg_idx)?;
                         }
                     }
                 }

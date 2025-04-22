@@ -34,7 +34,7 @@ use datafusion::{
     physical_expr::{PhysicalExpr, PhysicalSortExpr},
     physical_plan::SendableRecordBatchStream,
 };
-use datafusion_ext_commons::{arrow::array_size::ArraySize, spark_hash::create_murmur3_hashes};
+use datafusion_ext_commons::{arrow::array_size::BatchSize, spark_hash::create_murmur3_hashes};
 use futures::StreamExt;
 use parking_lot::Mutex as SyncMutex;
 
@@ -72,7 +72,7 @@ impl dyn ShuffleRepartitioner {
                 while let Some(batch) = coalesced.next().await.transpose()? {
                     let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
                     let batch_num_rows = batch.num_rows();
-                    let batch_mem_size = batch.get_array_mem_size();
+                    let batch_mem_size = batch.get_batch_mem_size();
                     if batches_num_rows.load(SeqCst) == 0 {
                         log::info!(
                             "start shuffle writing, first batch num_rows={}, mem_size={}",

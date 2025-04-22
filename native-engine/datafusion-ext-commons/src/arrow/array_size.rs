@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use arrow::{
-    array::{Array, ArrayData},
+    array::{Array, ArrayData, StructArray},
+    buffer::Buffer,
     record_batch::RecordBatch,
 };
 
@@ -25,18 +26,21 @@ pub trait ArraySize {
     fn get_array_mem_size(&self) -> usize;
 }
 
-impl ArraySize for dyn Array {
+impl<T: ?Sized + Array> ArraySize for T {
     fn get_array_mem_size(&self) -> usize {
         get_array_data_mem_size(&self.to_data())
     }
 }
 
-impl ArraySize for RecordBatch {
-    fn get_array_mem_size(&self) -> usize {
-        self.columns()
-            .iter()
-            .map(|array| array.get_array_mem_size())
-            .sum::<usize>()
+pub trait BatchSize {
+    fn get_batch_mem_size(&self) -> usize;
+}
+
+impl BatchSize for RecordBatch {
+    fn get_batch_mem_size(&self) -> usize {
+        let as_struct = StructArray::from(self.clone());
+        let as_dyn_array: &dyn Array = &as_struct;
+        as_dyn_array.get_array_mem_size()
     }
 }
 
@@ -44,8 +48,10 @@ fn get_array_data_mem_size(array_data: &ArrayData) -> usize {
     let mut mem_size = 0;
 
     for buffer in array_data.buffers() {
-        mem_size += buffer.len();
+        mem_size += size_of::<Buffer>() + buffer.len().max(buffer.capacity());
     }
+
+    mem_size += size_of::<Option<Buffer>>();
     mem_size += array_data
         .nulls()
         .map(|nb| nb.buffer().len())
@@ -53,7 +59,7 @@ fn get_array_data_mem_size(array_data: &ArrayData) -> usize {
 
     // summing child data size
     for child in array_data.child_data() {
-        mem_size += get_array_data_mem_size(child);
+        mem_size += size_of::<ArrayData>() + get_array_data_mem_size(child);
     }
     mem_size
 }

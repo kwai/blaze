@@ -31,6 +31,7 @@ use datafusion::{
 use datafusion_ext_commons::{
     assume,
     io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
+    scalar_value::scalar_value_heap_mem_size,
     unchecked,
 };
 use smallvec::SmallVec;
@@ -391,7 +392,7 @@ impl AccGenericColumn {
             AccGenericColumn::Scalar { items, .. } => {
                 idx_for! {
                     (idx in idx) => {
-                        heap_mem_used += items[idx].size() - size_of::<ScalarValue>();
+                        heap_mem_used += scalar_value_heap_mem_size(&items[idx]);
                     }
                 }
             }
@@ -465,7 +466,7 @@ impl AccColumn for AccGenericColumn {
                 heap_mem_used,
             } => {
                 for idx in len..items.len() {
-                    *heap_mem_used -= items[idx].size() - size_of::<ScalarValue>();
+                    *heap_mem_used -= scalar_value_heap_mem_size(&items[idx]);
                 }
                 items.resize_with(len, || {
                     ScalarValue::try_from(&*dt).expect("unsupported data type: {dt:?}")
@@ -495,17 +496,19 @@ impl AccColumn for AccGenericColumn {
 
     fn mem_used(&self) -> usize {
         match self {
-            AccGenericColumn::Prim { raw, valids, .. } => raw.capacity() + valids.capacity() / 8,
+            AccGenericColumn::Prim { raw, valids, .. } => {
+                raw.capacity() * 2 + valids.capacity() * 2 / 8
+            }
             AccGenericColumn::Bytes {
                 items,
                 heap_mem_used,
                 ..
-            } => heap_mem_used + items.capacity() * size_of::<Option<AccBytes>>(),
+            } => heap_mem_used + items.capacity() * 2 * size_of::<Option<AccBytes>>(),
             AccGenericColumn::Scalar {
                 items,
                 heap_mem_used,
                 ..
-            } => heap_mem_used + items.capacity() * size_of::<ScalarValue>(),
+            } => heap_mem_used + items.capacity() * 2 * size_of::<ScalarValue>(),
         }
     }
 
@@ -608,7 +611,7 @@ impl AccColumn for AccGenericColumn {
             } => {
                 for (idx, cursor) in cursors.iter_mut().enumerate() {
                     items[idx] = read_scalar(cursor, dt, true)?;
-                    *heap_mem_used += items[idx].size() - size_of::<ScalarValue>();
+                    *heap_mem_used += scalar_value_heap_mem_size(&items[idx]);
                 }
             }
         }
@@ -706,7 +709,7 @@ impl AccColumn for AccGenericColumn {
             } => {
                 for i in 0..num_rows {
                     items[i] = read_scalar(r, dt, true)?;
-                    *heap_mem_used += items[i].size() - size_of::<ScalarValue>();
+                    *heap_mem_used += scalar_value_heap_mem_size(&items[i]);
                 }
             }
         }

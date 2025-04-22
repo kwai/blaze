@@ -33,7 +33,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    arrow::{array_size::ArraySize, coalesce::coalesce_batches_unchecked},
+    arrow::{array_size::BatchSize, coalesce::coalesce_batches_unchecked},
     batch_size, df_execution_err, suggested_batch_mem_size,
 };
 use futures::{Stream, StreamExt};
@@ -176,7 +176,7 @@ impl ExecutionContext {
                             let num_rows = batch.num_rows();
                             if num_rows > 0 {
                                 self.staging_rows += batch.num_rows();
-                                self.staging_batches_mem_size += batch.get_array_mem_size();
+                                self.staging_batches_mem_size += batch.get_batch_mem_size();
                                 self.staging_batches.push(batch);
                                 if self.should_flush() {
                                     let coalesced = self.coalesce()?;
@@ -381,7 +381,7 @@ impl InputBatchStatistics {
     }
 
     pub fn record_input_batch(&self, input_batch: &RecordBatch) {
-        let mem_size = input_batch.get_array_mem_size();
+        let mem_size = input_batch.get_batch_mem_size();
         let num_rows = input_batch.num_rows();
         self.input_batch_count.add(1);
         self.input_batch_mem_size.add(mem_size);

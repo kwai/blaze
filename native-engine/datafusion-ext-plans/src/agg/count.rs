@@ -184,7 +184,7 @@ impl AccColumn for AccCountColumn {
     }
 
     fn mem_used(&self) -> usize {
-        self.values.capacity() * size_of::<i64>()
+        self.values.capacity() * 2 * size_of::<i64>()
     }
 
     fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {

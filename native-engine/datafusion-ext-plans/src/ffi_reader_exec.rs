@@ -35,7 +35,7 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
-use datafusion_ext_commons::arrow::array_size::ArraySize;
+use datafusion_ext_commons::arrow::array_size::BatchSize;
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
@@ -183,7 +183,7 @@ fn read_ffi(
                         struct_array.columns().to_vec(),
                         &RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
                     )?;
-                    size_counter.add(batch.get_array_mem_size());
+                    size_counter.add(batch.get_batch_mem_size());
                     exec_ctx_cloned
                         .baseline_metrics()
                         .record_output(batch.num_rows());

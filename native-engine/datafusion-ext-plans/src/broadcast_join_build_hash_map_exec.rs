@@ -38,7 +38,7 @@ use datafusion::{
         PlanProperties,
     },
 };
-use datafusion_ext_commons::arrow::coalesce::coalesce_batches_unchecked;
+use datafusion_ext_commons::arrow::{array_size::BatchSize, coalesce::coalesce_batches_unchecked};
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
@@ -168,7 +168,7 @@ pub fn execute_build_hash_map(
                 staging_batches.push(batch.clone());
                 if smj_fallback_enabled {
                     staging_num_rows += batch.num_rows();
-                    stating_mem_size += batch.get_array_memory_size();
+                    stating_mem_size += batch.get_batch_mem_size();
 
                     // fallback if staging data is too large
                     if staging_num_rows > smj_fallback_rows_threshold
