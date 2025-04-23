@@ -23,7 +23,6 @@ import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
 import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertibleTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
@@ -47,7 +46,6 @@ import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
 import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.GlobalLimitExec
@@ -84,11 +82,9 @@ import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
-import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
 import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
-import org.blaze.protobuf.SortExecNode
 import org.apache.spark.sql.catalyst.expressions.RankLike
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
 import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition

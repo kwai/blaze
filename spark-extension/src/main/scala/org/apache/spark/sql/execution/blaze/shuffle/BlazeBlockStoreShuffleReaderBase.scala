@@ -25,7 +25,6 @@ import org.apache.spark.{InterruptibleIterator, ShuffleDependency, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.LimitedInputStream
 import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleReader}
-import org.apache.spark.storage.BlockId
 
 abstract class BlazeBlockStoreShuffleReaderBase[K, C](
     handle: BaseShuffleHandle[K, _, C],

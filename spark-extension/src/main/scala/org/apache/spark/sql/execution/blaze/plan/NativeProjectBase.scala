@@ -26,7 +26,6 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.catalyst.analysis.ResolvedStar
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
