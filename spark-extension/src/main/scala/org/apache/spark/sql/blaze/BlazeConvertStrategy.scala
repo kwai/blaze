@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.blaze
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.execution.ProjectExec
@@ -89,14 +90,23 @@ object BlazeConvertStrategy extends Logging {
     }
 
     // fill childOrderingRequired tag
-    exec.foreach { exec =>
-      exec.children
-        .zip(exec.requiredChildOrdering)
-        .foreach { case (child, requiredOrdering) =>
-          if (requiredOrdering.nonEmpty) {
-            child.setTagValue(childOrderingRequiredTag, true)
-          }
+    exec.foreach {
+      case DataWritingCommandExec(cmd, child) =>
+        try {
+          val requiredOrdering =
+            MethodUtils.invokeMethod(cmd, true, "requiredOrdering").asInstanceOf[Seq[_]]
+          child.setTagValue(childOrderingRequiredTag, requiredOrdering.nonEmpty)
+        } catch {
+          case _: NoSuchMethodException => // ignore
         }
+      case exec =>
+        exec.children
+          .zip(exec.requiredChildOrdering)
+          .foreach { case (child, requiredOrdering) =>
+            if (requiredOrdering.nonEmpty) {
+              child.setTagValue(childOrderingRequiredTag, true)
+            }
+          }
     }
     exec.foreach {
       case exec: SortExec =>
@@ -104,7 +114,7 @@ object BlazeConvertStrategy extends Logging {
       case exec =>
         if (exec.getTagValue(childOrderingRequiredTag).contains(true)) {
           exec.children.foreach { child =>
-            child.setTagValue(childOrderingRequiredTag, child.outputOrdering.nonEmpty)
+            child.setTagValue(childOrderingRequiredTag, true)
           }
         }
     }
