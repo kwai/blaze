@@ -23,7 +23,6 @@ import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.shuffle.reader.{RssShuffleDataIterator, RssShuffleReader}
 import org.apache.spark.shuffle.uniffle.RssShuffleHandleWrapper
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleReaderBase
-import org.apache.spark.storage.BlockId
 import org.apache.spark.util.TaskCompletionListener
 import org.apache.spark.{ShuffleDependency, TaskContext}
 import org.apache.uniffle.client.api.ShuffleReadClient

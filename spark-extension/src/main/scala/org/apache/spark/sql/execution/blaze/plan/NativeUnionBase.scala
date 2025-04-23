@@ -19,9 +19,6 @@ import scala.collection.immutable.SortedMap
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters.asJavaIterableConverter
 
-import org.apache.spark.Dependency
-import org.apache.spark.Partition
-import org.apache.spark.RangeDependency
 import org.apache.spark.rdd.PartitionerAwareUnionRDD
 import org.apache.spark.rdd.PartitionerAwareUnionRDDPartition
 import org.apache.spark.rdd.UnionPartition
@@ -31,7 +28,6 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.blaze.protobuf.EmptyPartitionsExecNode

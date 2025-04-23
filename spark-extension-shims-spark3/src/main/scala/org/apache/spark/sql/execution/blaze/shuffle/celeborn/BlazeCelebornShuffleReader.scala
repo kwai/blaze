@@ -33,7 +33,6 @@ import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
 import org.apache.spark.shuffle.celeborn.CelebornShuffleReader
 import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleReaderBase
-import org.apache.spark.storage.BlockId
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.serializer.DeserializationStream
 import org.apache.spark.serializer.SerializationStream
