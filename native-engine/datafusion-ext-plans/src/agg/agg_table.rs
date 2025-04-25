@@ -625,7 +625,7 @@ impl MergingData {
         mem_used += self.key_rows_mem_size; // key rows memory usage
         mem_used += self.acc_table.mem_size(); // acc table memory usage
         mem_used += // sorting indices memory usage
-            self.entries.capacity() * size_of::<(u32, u32, u32, u32)>();
+            self.entries.capacity() * 2 * size_of::<(u32, u32, u32, u32)>();
         mem_used += self.num_records() * size_of::<u64>(); // overheads
         mem_used
     }

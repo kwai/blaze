@@ -39,7 +39,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    arrow::{array_size::ArraySize, cast::cast},
+    arrow::{array_size::BatchSize, cast::cast},
     df_execution_err,
     hadoop_fs::{FsDataOutputWrapper, FsProvider},
 };
@@ -269,7 +269,7 @@ fn execute_parquet_sink(
                     }
 
                     // compute sub batch size
-                    let batch_mem_size = batch.get_array_mem_size();
+                    let batch_mem_size = batch.get_batch_mem_size();
                     let num_sub_batches = (batch_mem_size / 1048576).max(1);
                     let num_sub_batch_rows = (batch.num_rows() / num_sub_batches).max(16);
 

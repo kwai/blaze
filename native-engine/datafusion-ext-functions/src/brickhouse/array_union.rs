@@ -23,7 +23,9 @@ use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
 };
-use datafusion_ext_commons::{df_execution_err, downcast_any};
+use datafusion_ext_commons::{
+    df_execution_err, downcast_any, scalar_value::compacted_scalar_value_from_array,
+};
 use itertools::Itertools;
 
 /// Return a list of unique entries, for a given set of lists.
@@ -120,7 +122,7 @@ fn update_set(set: &mut HashSet<ScalarValue>, array: &ListArray, row_idx: usize)
     if array.is_valid(row_idx) {
         let values = array.value(row_idx);
         for i in 0..values.len() {
-            let scalar = ScalarValue::try_from_array(&values, i)?;
+            let scalar = compacted_scalar_value_from_array(&values, i)?;
             set.insert(scalar);
         }
     }

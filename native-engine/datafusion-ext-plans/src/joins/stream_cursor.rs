@@ -27,7 +27,7 @@ use datafusion::{
     physical_plan::metrics::Time,
 };
 use datafusion_ext_commons::{
-    arrow::{array_size::ArraySize, selection::take_batch},
+    arrow::{array_size::BatchSize, selection::take_batch},
     unlikely,
 };
 use futures::{Future, StreamExt};
@@ -157,7 +157,7 @@ impl StreamCursor {
                         &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
                     )?;
 
-                    self.mem_size += projected_batch.get_array_mem_size();
+                    self.mem_size += projected_batch.get_batch_mem_size();
                     self.mem_size += key_has_nulls
                         .as_ref()
                         .map(|nb| nb.buffer().len())
@@ -171,7 +171,7 @@ impl StreamCursor {
                     // fill out-dated batches with null batches
                     while unlikely!(self.num_null_batches < self.min_reserved_idx.0) {
                         let i = self.num_null_batches;
-                        self.mem_size -= self.projected_batches[i].get_array_mem_size();
+                        self.mem_size -= self.projected_batches[i].get_batch_mem_size();
                         self.mem_size -= self.key_has_nulls[i]
                             .as_ref()
                             .map(|nb| nb.buffer().len())

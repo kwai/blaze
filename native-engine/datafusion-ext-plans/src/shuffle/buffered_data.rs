@@ -22,7 +22,7 @@ use datafusion::{common::Result, physical_plan::metrics::Time};
 use datafusion_ext_commons::{
     algorithm::rdx_sort::radix_sort_by_key,
     arrow::{
-        array_size::ArraySize,
+        array_size::BatchSize,
         selection::{create_batch_interleaver, BatchInterleaver},
     },
     compute_suggested_batch_size_for_output, df_execution_err,
@@ -88,7 +88,7 @@ impl BufferedData {
         // first add to staging, mem used is doubled for later sorting
         self.num_rows += batch.num_rows();
         self.staging_num_rows += batch.num_rows();
-        self.staging_mem_used += batch.get_array_mem_size() * 2;
+        self.staging_mem_used += batch.get_batch_mem_size() * 2;
         self.staging_batches.push(batch);
 
         let suggested_batch_size =
@@ -111,7 +111,7 @@ impl BufferedData {
         self.staging_num_rows = 0;
         self.staging_mem_used = 0;
 
-        self.sorted_mem_used += sorted_batch.get_array_mem_size() + offsets.len() * 4;
+        self.sorted_mem_used += sorted_batch.get_batch_mem_size() + offsets.len() * 4;
         self.sorted_batches.push(sorted_batch);
         self.sorted_offsets.push(offsets);
         Ok(())

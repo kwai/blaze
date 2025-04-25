@@ -49,7 +49,7 @@ use datafusion::{
 use datafusion_ext_commons::{
     algorithm::loser_tree::{ComparableForLoserTree, LoserTree},
     arrow::{
-        array_size::ArraySize,
+        array_size::BatchSize,
         selection::{create_batch_interleaver, take_batch, BatchInterleaver},
     },
     compute_suggested_batch_size_for_kway_merge,
@@ -348,7 +348,7 @@ impl BufferedData {
             create_zero_column_batch(num_rows)
         };
 
-        self.sorted_batches_mem_used += sorted_batch.get_array_mem_size();
+        self.sorted_batches_mem_used += sorted_batch.get_batch_mem_size();
         self.sorted_key_stores_mem_used += sorted_key_store.len();
 
         self.sorted_key_stores.push(sorted_key_store.into());
@@ -577,10 +577,10 @@ impl ExternalSorter {
         }
         self.num_total_rows.fetch_add(batch.num_rows(), SeqCst);
         self.mem_total_size
-            .fetch_add(batch.get_array_mem_size(), SeqCst);
+            .fetch_add(batch.get_batch_mem_size(), SeqCst);
 
         // update memory usage before adding to data
-        let mem_used = self.data.lock().await.mem_used() + batch.get_array_mem_size() * 2;
+        let mem_used = self.data.lock().await.mem_used() + batch.get_batch_mem_size() * 2;
         self.update_mem_used(mem_used).await?;
 
         // add batch to data
@@ -752,7 +752,7 @@ impl<'a> SpillCursor<'a> {
                 cols,
                 &RecordBatchOptions::new().with_row_count(Some(num_rows)),
             )?;
-            self.cur_mem_used += batch.get_array_mem_size();
+            self.cur_mem_used += batch.get_batch_mem_size();
             self.cur_batch_num_rows = batch.num_rows();
             self.cur_loaded_num_rows = 0;
             self.cur_batches.push(batch);
@@ -779,7 +779,7 @@ impl<'a> SpillCursor<'a> {
     fn clear_finished_batches(&mut self) {
         if self.cur_batch_idx > 0 {
             for batch in self.cur_batches.drain(..self.cur_batch_idx) {
-                self.cur_mem_used -= batch.get_array_mem_size();
+                self.cur_mem_used -= batch.get_batch_mem_size();
             }
             self.cur_batch_idx = 0;
         }

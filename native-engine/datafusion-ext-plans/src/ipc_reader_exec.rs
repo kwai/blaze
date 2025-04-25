@@ -45,7 +45,10 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{
-    arrow::{array_size::ArraySize, coalesce::coalesce_arrays_unchecked},
+    arrow::{
+        array_size::{ArraySize, BatchSize},
+        coalesce::coalesce_arrays_unchecked,
+    },
     batch_size, df_execution_err, suggested_batch_mem_size,
 };
 use jni::objects::{GlobalRef, JObject};
@@ -228,7 +231,7 @@ fn read_ipc(
                         )?;
                         staging_num_rows.store(0, SeqCst);
                         staging_mem_size.store(0, SeqCst);
-                        size_counter.add(batch.get_array_mem_size());
+                        size_counter.add(batch.get_batch_mem_size());
                         exec_ctx.baseline_metrics().record_output(batch.num_rows());
                         sender.send(batch).await;
                     }
@@ -246,7 +249,7 @@ fn read_ipc(
                     coalesced_cols,
                     &RecordBatchOptions::new().with_row_count(Some(cur_staging_num_rows)),
                 )?;
-                size_counter.add(batch.get_array_mem_size());
+                size_counter.add(batch.get_batch_mem_size());
                 exec_ctx.baseline_metrics().record_output(batch.num_rows());
                 sender.send(batch).await;
             }

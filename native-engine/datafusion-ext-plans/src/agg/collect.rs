@@ -29,6 +29,7 @@ use datafusion::{
 use datafusion_ext_commons::{
     df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
+    scalar_value::compacted_scalar_value_from_array,
 };
 use hashbrown::raw::RawTable;
 use smallvec::SmallVec;
@@ -126,7 +127,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
 
         idx_for_zipped! {
             ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                let scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
+                let scalar = compacted_scalar_value_from_array(&partial_args[0], partial_arg_idx)?;
                 if !scalar.is_null() {
                     accs.append_item(acc_idx, &scalar);
                 }

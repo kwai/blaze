@@ -22,7 +22,7 @@ use std::{
 
 use arrow::{array::*, datatypes::*};
 use datafusion::{common::Result, physical_expr::PhysicalExpr, scalar::ScalarValue};
-use datafusion_ext_commons::downcast_any;
+use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_from_array};
 use paste::paste;
 
 use crate::{
@@ -173,8 +173,11 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
             _ => {
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        let partial_arg_scalar = ScalarValue::try_from_array(&partial_args[0], partial_arg_idx)?;
-                        if !partial_arg_scalar.is_null() {
+                        if partial_args[0].is_valid(partial_arg_idx) {
+                            let partial_arg_scalar = compacted_scalar_value_from_array(
+                                &partial_args[0],
+                                partial_arg_idx,
+                            )?;
                             let acc_scalar = &mut accs.scalar_values_mut()[acc_idx];
                             if !acc_scalar.is_null() {
                                 if partial_arg_scalar.partial_cmp(acc_scalar) == Some(P::ORD) {

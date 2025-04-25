@@ -57,8 +57,8 @@ impl Table {
 
     fn mem_size(&self) -> usize {
         size_of_val(self)
-            + self.map.capacity() * size_of::<MapValueGroup>()
-            + self.keys.capacity() * size_of::<OwnedKey>()
+            + self.map.capacity() * 2 * size_of::<MapValueGroup>()
+            + self.keys.capacity() * 2 * size_of::<OwnedKey>()
             + self.key_heap_mem_size
     }
 

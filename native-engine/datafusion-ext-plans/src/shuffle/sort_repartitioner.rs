@@ -25,7 +25,7 @@ use datafusion::{
     common::{DataFusionError, Result},
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::{arrow::array_size::ArraySize, df_execution_err};
+use datafusion_ext_commons::{arrow::array_size::BatchSize, df_execution_err};
 use futures::lock::Mutex;
 
 use crate::{
@@ -122,7 +122,7 @@ impl Drop for SortShuffleRepartitioner {
 impl ShuffleRepartitioner for SortShuffleRepartitioner {
     async fn insert_batch(&self, input: RecordBatch) -> Result<()> {
         // update memory usage before adding to buffered data
-        let mem_used = self.data.lock().await.mem_used() + input.get_array_mem_size() * 2;
+        let mem_used = self.data.lock().await.mem_used() + input.get_batch_mem_size() * 2;
         self.update_mem_used(mem_used).await?;
 
         // add batch to buffered data
