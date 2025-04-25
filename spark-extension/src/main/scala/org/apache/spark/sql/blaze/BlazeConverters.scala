@@ -83,9 +83,9 @@ import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
 import org.apache.spark.Partition
+import org.apache.spark.sql.catalyst.expressions.AggregateWindowFunction
 import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
-import org.apache.spark.sql.catalyst.expressions.RankLike
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
 import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
 import org.blaze.sparkver
@@ -860,7 +860,7 @@ object BlazeConverters extends Logging {
   def convertWindowGroupLimitExec(exec: SparkPlan): SparkPlan = {
     // WindowGroupLimit is only supported in Spark3.5+, so use reflection to access its fields
     val (rankLikeFunction, partitionSpec, orderSpec, limit) = (
-      MethodUtils.invokeMethod(exec, "rankLikeFunction").asInstanceOf[RankLike],
+      MethodUtils.invokeMethod(exec, "rankLikeFunction").asInstanceOf[AggregateWindowFunction],
       MethodUtils.invokeMethod(exec, "partitionSpec").asInstanceOf[Seq[Expression]],
       MethodUtils.invokeMethod(exec, "orderSpec").asInstanceOf[Seq[SortOrder]],
       MethodUtils.invokeMethod(exec, "limit").asInstanceOf[Int])
