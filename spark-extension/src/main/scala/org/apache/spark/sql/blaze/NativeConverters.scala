@@ -290,6 +290,7 @@ object NativeConverters extends Logging {
             prepareExecSubquery(subquery)
           case _ =>
         }
+        val exprString = sparkExpr.toString()
 
         // bind all convertible children
         val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
@@ -325,7 +326,8 @@ object NativeConverters extends Logging {
               .setSerialized(ByteString.copyFrom(serialized))
               .setReturnType(convertDataType(bound.dataType))
               .setReturnNullable(bound.nullable)
-              .addAllParams(convertedChildren.keys.asJava))
+              .addAllParams(convertedChildren.keys.asJava)
+              .setExprString(exprString))
           .build()
     }
   }

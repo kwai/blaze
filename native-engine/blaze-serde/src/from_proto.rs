@@ -970,6 +970,7 @@ fn try_parse_physical_expr(
                     .iter()
                     .map(|x| try_parse_physical_expr(x, input_schema))
                     .collect::<Result<Vec<_>, _>>()?,
+                e.expr_string.clone(),
             )?),
             ExprType::SparkScalarSubqueryWrapperExpr(e) => {
                 Arc::new(SparkScalarSubqueryWrapperExpr::try_new(

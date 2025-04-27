@@ -99,6 +99,7 @@ impl PhysicalExpr for SparkScalarSubqueryWrapperExpr {
                 self.return_type.clone(),
                 self.return_nullable,
                 vec![],
+                format!("Subquery"),
             )?;
             let stub_batch = RecordBatch::try_new_with_options(
                 Arc::new(Schema::empty()),
