@@ -27,6 +27,7 @@ mod spark_hash;
 mod spark_make_array;
 mod spark_make_decimal;
 mod spark_null_if;
+mod spark_sha2;
 mod spark_strings;
 mod spark_unscaled_value;
 
@@ -40,6 +41,10 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "CheckOverflow" => Arc::new(spark_check_overflow::spark_check_overflow),
         "Murmur3Hash" => Arc::new(spark_hash::spark_murmur3_hash),
         "XxHash64" => Arc::new(spark_hash::spark_xxhash64),
+        "Sha224" => Arc::new(spark_sha2::spark_sha224),
+        "Sha256" => Arc::new(spark_sha2::spark_sha256),
+        "Sha384" => Arc::new(spark_sha2::spark_sha384),
+        "Sha512" => Arc::new(spark_sha2::spark_sha512),
         "GetJsonObject" => Arc::new(spark_get_json_object::spark_get_json_object),
         "GetParsedJsonObject" => Arc::new(spark_get_json_object::spark_get_parsed_json_object),
         "ParseJson" => Arc::new(spark_get_json_object::spark_parse_json),

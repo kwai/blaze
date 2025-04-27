@@ -813,15 +813,15 @@ object NativeConverters extends Logging {
       case Md5(_1) =>
         buildScalarFunction(pb.ScalarFunction.MD5, Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(224, _)) =>
-        buildScalarFunction(pb.ScalarFunction.SHA224, Seq(unpackBinaryTypeCast(_1)), StringType)
+        buildExtScalarFunction("Sha224", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(0, _)) =>
-        buildScalarFunction(pb.ScalarFunction.SHA256, Seq(unpackBinaryTypeCast(_1)), StringType)
+        buildExtScalarFunction("Sha256", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(256, _)) =>
-        buildScalarFunction(pb.ScalarFunction.SHA256, Seq(unpackBinaryTypeCast(_1)), StringType)
+        buildExtScalarFunction("Sha256", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(384, _)) =>
-        buildScalarFunction(pb.ScalarFunction.SHA384, Seq(unpackBinaryTypeCast(_1)), StringType)
+        buildExtScalarFunction("Sha384", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(512, _)) =>
-        buildScalarFunction(pb.ScalarFunction.SHA512, Seq(unpackBinaryTypeCast(_1)), StringType)
+        buildExtScalarFunction("Sha512", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Murmur3Hash(children, 42) =>
         buildExtScalarFunction("Murmur3Hash", children, IntegerType)
       case XxHash64(children, 42L) =>
