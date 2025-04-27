@@ -70,12 +70,14 @@ impl PhysicalExpr for GetIndexedFieldExpr {
 
     fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
         let data_type = self.arg.data_type(input_schema)?;
-        get_indexed_field(&data_type, &self.key).map(|f| f.data_type().clone())
+        let field = get_indexed_field(input_schema, &self.arg, &data_type, &self.key)?;
+        Ok(field.data_type().clone())
     }
 
     fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         let data_type = self.arg.data_type(input_schema)?;
-        get_indexed_field(&data_type, &self.key).map(|f| f.is_nullable())
+        let field = get_indexed_field(input_schema, &self.arg, &data_type, &self.key)?;
+        Ok(field.is_nullable())
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
@@ -174,16 +176,24 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
     }
 }
 
-fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Field> {
+fn get_indexed_field(
+    input_schema: &Schema,
+    arg: &Arc<dyn PhysicalExpr>,
+    data_type: &DataType,
+    key: &ScalarValue,
+) -> Result<Field> {
     match (data_type, key) {
         (DataType::List(lt), ScalarValue::Int64(Some(i))) => {
             Ok(Field::new(i.to_string(), lt.data_type().clone(), true))
         }
         (DataType::Struct(fields), ScalarValue::Int32(Some(k))) => {
-            let field = fields.get(*k as usize);
+            let field: Option<&Arc<Field>> = fields.get(*k as usize);
             match field {
                 None => df_execution_err!("Field {k} not found in struct"),
-                Some(f) => Ok(f.as_ref().clone()),
+                Some(f) => Ok(f
+                    .as_ref()
+                    .clone()
+                    .with_nullable(arg.nullable(input_schema)?)),
             }
         }
         (DataType::Struct(_), _) => {
