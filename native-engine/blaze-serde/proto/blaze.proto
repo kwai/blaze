@@ -244,10 +244,10 @@ enum ScalarFunction {
   Right=43;
   Rpad=44;
   Rtrim=45;
-  SHA224=46;
-  SHA256=47;
-  SHA384=48;
-  SHA512=49;
+  // SHA224=46;
+  // SHA256=47;
+  // SHA384=48;
+  // SHA512=49;
   SplitPart=50;
   StartsWith=51;
   Strpos=52;
