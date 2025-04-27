@@ -46,6 +46,7 @@ pub struct SparkUDFWrapperExpr {
     pub import_schema: SchemaRef,
     pub params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
+    expr_string: String,
 }
 
 impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
@@ -68,6 +69,7 @@ impl SparkUDFWrapperExpr {
         return_type: DataType,
         return_nullable: bool,
         params: Vec<Arc<dyn PhysicalExpr>>,
+        expr_string: String,
     ) -> Result<Self> {
         Ok(Self {
             serialized,
@@ -77,6 +79,7 @@ impl SparkUDFWrapperExpr {
             import_schema: Arc::new(Schema::new(vec![Field::new("", return_type, true)])),
             params_schema: OnceCell::new(),
             jcontext: OnceCell::new(),
+            expr_string,
         })
     }
 
@@ -94,13 +97,13 @@ impl SparkUDFWrapperExpr {
 
 impl Display for SparkUDFWrapperExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SparkUDFWrapper")
+        Debug::fmt(self, f)
     }
 }
 
 impl Debug for SparkUDFWrapperExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SparkUDFWrapper")
+        write!(f, "UDFWrapper({})", self.expr_string)
     }
 }
 
@@ -180,6 +183,7 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
             self.return_type.clone(),
             self.return_nullable.clone(),
             children,
+            self.expr_string.clone(),
         )?))
     }
 

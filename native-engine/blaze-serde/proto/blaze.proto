@@ -308,6 +308,7 @@ message PhysicalSparkUDFWrapperExprNode {
   ArrowType return_type = 2;
   bool return_nullable = 3;
   repeated PhysicalExprNode params = 4;
+  string expr_string = 5;
 }
 
 message PhysicalSparkScalarSubqueryWrapperExprNode {
