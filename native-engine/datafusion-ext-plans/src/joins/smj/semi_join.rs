@@ -17,9 +17,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion_ext_commons::{
-    arrow::selection::create_batch_interleaver, suggested_batch_mem_size,
-};
+use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
 
 use crate::{
     common::execution_context::WrappedRecordBatchSender,
@@ -75,25 +73,8 @@ impl<const P: JoinerParams> SemiJoiner<P> {
         }
     }
 
-    fn should_flush(&self, curs: &StreamCursors) -> bool {
-        if self.indices.len() >= self.join_params.batch_size {
-            return true;
-        }
-
-        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 5
-            || curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
-        {
-            if let Some(first_idx) = self.indices.first() {
-                let cur_idx = match P.join_side {
-                    L => curs.0.cur_idx,
-                    R => curs.1.cur_idx,
-                };
-                if first_idx.0 < cur_idx.0 {
-                    return true;
-                }
-            }
-        }
-        false
+    fn should_flush(&self) -> bool {
+        self.indices.len() >= self.join_params.batch_size
     }
 
     async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
@@ -128,77 +109,92 @@ impl<const P: JoinerParams> SemiJoiner<P> {
 impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
     async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
         while !curs.0.finished && !curs.1.finished {
-            let mut lidx = curs.0.cur_idx;
-            let mut ridx = curs.1.cur_idx;
+            if self.should_flush()
+                || curs.0.num_buffered_batches() > 1
+                || curs.1.num_buffered_batches() > 1
+            {
+                self.as_mut().flush(curs).await?;
+                curs.0.clean_out_dated_batches();
+                curs.1.clean_out_dated_batches();
+            }
 
             match compare_cursor!(curs) {
                 Ordering::Less => {
                     if P.join_side == L && !P.semi {
-                        self.indices.push(lidx);
+                        self.indices.push(curs.0.cur_idx);
                     }
                     cur_forward!(curs.0);
-                    if self.should_flush(curs) {
-                        self.as_mut().flush(curs).await?;
-                    }
-                    curs.0.set_min_reserved_idx(match P.join_side {
-                        L => *self.indices.first().unwrap_or(&lidx),
-                        R => lidx,
-                    });
                 }
                 Ordering::Greater => {
                     if P.join_side == R && !P.semi {
-                        self.indices.push(ridx);
+                        self.indices.push(curs.1.cur_idx);
                     }
                     cur_forward!(curs.1);
-                    if self.should_flush(curs) {
-                        self.as_mut().flush(curs).await?;
-                    }
-                    curs.1.set_min_reserved_idx(match P.join_side {
-                        L => ridx,
-                        R => *self.indices.first().unwrap_or(&ridx),
-                    });
                 }
                 Ordering::Equal => {
-                    // output/skip left equal rows
-                    loop {
-                        if P.join_side == L && P.semi {
-                            self.indices.push(lidx);
-                            if self.should_flush(curs) {
-                                self.as_mut().flush(curs).await?;
+                    let l_key_idx = curs.0.cur_idx;
+                    let r_key_idx = curs.1.cur_idx;
+
+                    if P.join_side == L && P.semi {
+                        self.indices.push(l_key_idx);
+                    }
+                    cur_forward!(curs.0);
+
+                    if P.join_side == R && P.semi {
+                        self.indices.push(r_key_idx);
+                    }
+                    cur_forward!(curs.1);
+
+                    // iterate both stream, find smaller one, use it for probing
+                    let mut l_equal = true;
+                    let mut r_equal = true;
+                    while l_equal && r_equal {
+                        if l_equal {
+                            l_equal = !curs.0.finished && curs.0.cur_key() == curs.0.key(l_key_idx);
+                            if l_equal {
+                                if P.join_side == L && P.semi {
+                                    self.indices.push(curs.0.cur_idx);
+                                }
+                                cur_forward!(curs.0);
                             }
                         }
-                        cur_forward!(curs.0);
-                        curs.0.set_min_reserved_idx(match P.join_side {
-                            L => *self.indices.first().unwrap_or(&lidx),
-                            R => lidx,
-                        });
-
-                        if !curs.0.finished && curs.0.key(curs.0.cur_idx) == curs.0.key(lidx) {
-                            lidx = curs.0.cur_idx;
-                            continue;
+                        if r_equal {
+                            r_equal = !curs.1.finished && curs.1.cur_key() == curs.1.key(r_key_idx);
+                            if r_equal {
+                                if P.join_side == R && P.semi {
+                                    self.indices.push(curs.1.cur_idx);
+                                }
+                                cur_forward!(curs.1);
+                            }
                         }
-                        break;
                     }
 
-                    // output/skip right equal rows
-                    loop {
-                        if P.join_side == R && P.semi {
-                            self.indices.push(ridx);
-                            if self.should_flush(curs) {
+                    if l_equal {
+                        // stream left side
+                        while !curs.0.finished && curs.0.cur_key() == curs.1.key(r_key_idx) {
+                            if P.join_side == L && P.semi {
+                                self.indices.push(curs.0.cur_idx);
+                            }
+                            cur_forward!(curs.0);
+                            if self.should_flush() || curs.0.num_buffered_batches() > 1 {
                                 self.as_mut().flush(curs).await?;
+                                curs.0.clean_out_dated_batches();
                             }
                         }
-                        cur_forward!(curs.1);
-                        curs.1.set_min_reserved_idx(match P.join_side {
-                            L => ridx,
-                            R => *self.indices.first().unwrap_or(&ridx),
-                        });
+                    }
 
-                        if !curs.1.finished && curs.1.key(curs.1.cur_idx) == curs.1.key(ridx) {
-                            ridx = curs.1.cur_idx;
-                            continue;
+                    if r_equal {
+                        // stream right side
+                        while !curs.1.finished && curs.1.cur_key() == curs.0.key(l_key_idx) {
+                            if P.join_side == R && P.semi {
+                                self.indices.push(curs.1.cur_idx);
+                            }
+                            cur_forward!(curs.1);
+                            if self.should_flush() || curs.1.num_buffered_batches() > 1 {
+                                self.as_mut().flush(curs).await?;
+                                curs.1.clean_out_dated_batches();
+                            }
                         }
-                        break;
                     }
                 }
             }
@@ -210,25 +206,19 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
                 let lidx = curs.0.cur_idx;
                 self.indices.push(lidx);
                 cur_forward!(curs.0);
-                if self.should_flush(curs) {
+                if self.should_flush() {
                     self.as_mut().flush(curs).await?;
+                    curs.0.clean_out_dated_batches();
                 }
-                curs.0.set_min_reserved_idx(match P.join_side {
-                    L => *self.indices.first().unwrap_or(&lidx),
-                    R => lidx,
-                });
             }
             while P.join_side == R && !P.semi && !curs.1.finished {
                 let ridx = curs.1.cur_idx;
                 self.indices.push(ridx);
                 cur_forward!(curs.1);
-                if self.should_flush(curs) {
+                if self.should_flush() {
                     self.as_mut().flush(curs).await?;
+                    curs.1.clean_out_dated_batches();
                 }
-                curs.1.set_min_reserved_idx(match P.join_side {
-                    L => ridx,
-                    R => *self.indices.first().unwrap_or(&ridx),
-                });
             }
         }
         if !self.indices.is_empty() {

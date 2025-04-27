@@ -17,23 +17,21 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
-use datafusion_ext_commons::{
-    arrow::selection::create_batch_interleaver, suggested_batch_mem_size,
-};
-use smallvec::{smallvec, SmallVec};
+use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
+use itertools::Itertools;
 
 use crate::{
     common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
-    joins::{smj::IdxVec, Idx, JoinParams, StreamCursors},
+    joins::{Idx, JoinParams, StreamCursors},
     sort_merge_join_exec::Joiner,
 };
 
 pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
     join_params: JoinParams,
     output_sender: Arc<WrappedRecordBatchSender>,
-    lindices: IdxVec,
-    rindices: IdxVec,
+    lindices: Vec<Idx>,
+    rindices: Vec<Idx>,
     output_rows: usize,
 }
 
@@ -47,37 +45,19 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         Self {
             join_params,
             output_sender,
-            lindices: IdxVec::default(),
-            rindices: IdxVec::default(),
+            lindices: vec![],
+            rindices: vec![],
             output_rows: 0,
         }
     }
 
-    fn should_flush(&self, curs: &StreamCursors) -> bool {
-        if self.lindices.len() >= self.join_params.batch_size {
-            return true;
-        }
-
-        if curs.0.num_buffered_batches() + curs.1.num_buffered_batches() >= 5
-            || curs.0.mem_size() + curs.1.mem_size() > suggested_batch_mem_size()
-        {
-            if let Some(first_lidx) = self.lindices.smallest() {
-                if first_lidx.0 < curs.0.cur_idx.0 {
-                    return true;
-                }
-            }
-            if let Some(first_ridx) = self.rindices.smallest() {
-                if first_ridx.0 < curs.1.cur_idx.0 {
-                    return true;
-                }
-            }
-        }
-        false
+    fn should_flush(&self) -> bool {
+        self.lindices.len() >= self.join_params.batch_size
     }
 
     async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
-        let lindices = self.lindices.take_vec();
-        let rindices = self.rindices.take_vec();
+        let lindices = std::mem::take(&mut self.lindices);
+        let rindices = std::mem::take(&mut self.rindices);
         let num_rows = lindices.len();
         assert_eq!(lindices.len(), rindices.len());
 
@@ -103,96 +83,116 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
 #[async_trait]
 impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_OUTER> {
     async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+        let mut equal_lindices = vec![];
+        let mut equal_rindices = vec![];
+
         while !curs.0.finished && !curs.1.finished {
-            let mut lidx = curs.0.cur_idx;
-            let mut ridx = curs.1.cur_idx;
+            if self.should_flush()
+                || curs.0.num_buffered_batches() > 1
+                || curs.1.num_buffered_batches() > 1
+            {
+                self.as_mut().flush(curs).await?;
+                curs.0.clean_out_dated_batches();
+                curs.1.clean_out_dated_batches();
+            }
+
             match compare_cursor!(curs) {
                 Ordering::Less => {
                     if L_OUTER {
-                        self.lindices.push(lidx);
+                        self.lindices.push(curs.0.cur_idx);
                         self.rindices.push(Idx::default());
                     }
                     cur_forward!(curs.0);
-                    if self.should_flush(curs) {
-                        self.as_mut().flush(curs).await?;
-                    }
-                    curs.0
-                        .set_min_reserved_idx(self.lindices.smallest.unwrap_or(lidx));
                 }
                 Ordering::Greater => {
                     if R_OUTER {
                         self.lindices.push(Idx::default());
-                        self.rindices.push(ridx);
+                        self.rindices.push(curs.1.cur_idx);
                     }
                     cur_forward!(curs.1);
-                    if self.should_flush(curs) {
-                        self.as_mut().flush(curs).await?;
-                    }
-                    curs.1
-                        .set_min_reserved_idx(self.rindices.smallest().unwrap_or(ridx));
                 }
                 Ordering::Equal => {
+                    equal_lindices.clear();
+                    equal_rindices.clear();
+                    equal_lindices.push(curs.0.cur_idx);
+                    equal_rindices.push(curs.1.cur_idx);
+                    let l_key_idx = curs.0.cur_idx;
+                    let r_key_idx = curs.1.cur_idx;
                     cur_forward!(curs.0);
                     cur_forward!(curs.1);
-                    self.lindices.push(lidx);
-                    self.rindices.push(ridx);
 
-                    let mut equal_lindices: SmallVec<Idx, 16> = smallvec![lidx];
-                    let mut equal_rindices: SmallVec<Idx, 16> = smallvec![ridx];
-                    let mut last_lidx = lidx;
-                    let mut last_ridx = ridx;
-                    lidx = curs.0.cur_idx;
-                    ridx = curs.1.cur_idx;
-                    let mut l_equal = !curs.0.finished && curs.0.key(lidx) == curs.0.key(last_lidx);
-                    let mut r_equal = !curs.1.finished && curs.1.key(ridx) == curs.1.key(last_ridx);
-
-                    while l_equal || r_equal {
+                    // iterate both stream, find smaller one, use it for probing
+                    let mut has_multi_equal = false;
+                    let mut l_equal = true;
+                    let mut r_equal = true;
+                    while l_equal && r_equal {
                         if l_equal {
-                            for &ridx in &equal_rindices {
-                                self.lindices.push(lidx);
-                                self.rindices.push(ridx);
+                            l_equal = !curs.0.finished && curs.0.cur_key() == curs.0.key(l_key_idx);
+                            if l_equal {
+                                has_multi_equal = true;
+                                equal_lindices.push(curs.0.cur_idx);
+                                cur_forward!(curs.0);
                             }
-                            if r_equal {
-                                equal_lindices.push(lidx);
-                            }
-                            cur_forward!(curs.0);
-                            last_lidx = lidx;
-                            lidx = curs.0.cur_idx;
                         }
-
                         if r_equal {
+                            r_equal = !curs.1.finished && curs.1.cur_key() == curs.1.key(r_key_idx);
+                            if r_equal {
+                                has_multi_equal = true;
+                                equal_rindices.push(curs.1.cur_idx);
+                                cur_forward!(curs.1);
+                            }
+                        }
+                    }
+
+                    // fast path for one-to-one join
+                    if !has_multi_equal {
+                        self.lindices.push(l_key_idx);
+                        self.rindices.push(r_key_idx);
+                        continue;
+                    }
+
+                    for (&lidx, &ridx) in equal_lindices.iter().cartesian_product(&equal_rindices) {
+                        self.lindices.push(lidx);
+                        self.rindices.push(ridx);
+                    }
+
+                    if r_equal {
+                        // stream right side
+                        while !curs.1.finished && curs.1.cur_key() == curs.0.key(l_key_idx) {
                             for &lidx in &equal_lindices {
                                 self.lindices.push(lidx);
-                                self.rindices.push(ridx);
-                            }
-                            if l_equal {
-                                equal_rindices.push(ridx);
+                                self.rindices.push(curs.1.cur_idx);
                             }
                             cur_forward!(curs.1);
-                            last_ridx = ridx;
-                            ridx = curs.1.cur_idx;
+                            if self.should_flush() || curs.1.num_buffered_batches() > 1 {
+                                self.as_mut().flush(curs).await?;
+                                curs.1.clean_out_dated_batches();
+                            }
                         }
-
-                        if self.should_flush(curs) {
-                            self.as_mut().flush(curs).await?;
-                        }
-                        l_equal = l_equal
-                            && !curs.0.finished
-                            && curs.0.key(lidx) == curs.0.key(last_lidx);
-                        r_equal = r_equal
-                            && !curs.1.finished
-                            && curs.1.key(ridx) == curs.1.key(last_ridx);
                     }
 
-                    if self.should_flush(curs) {
-                        self.as_mut().flush(curs).await?;
+                    if l_equal {
+                        // stream left side
+                        while !curs.0.finished && curs.0.cur_key() == curs.1.key(r_key_idx) {
+                            for &ridx in &equal_rindices {
+                                self.lindices.push(curs.0.cur_idx);
+                                self.rindices.push(ridx);
+                            }
+                            cur_forward!(curs.0);
+                            if self.should_flush() || curs.0.num_buffered_batches() > 1 {
+                                self.as_mut().flush(curs).await?;
+                                curs.0.clean_out_dated_batches();
+                            }
+                        }
                     }
-                    curs.0
-                        .set_min_reserved_idx(self.lindices.smallest().unwrap_or(curs.0.cur_idx));
-                    curs.1
-                        .set_min_reserved_idx(self.rindices.smallest().unwrap_or(curs.1.cur_idx));
                 }
             }
+        }
+
+        if !self.lindices.is_empty() {
+            self.as_mut().flush(curs).await?;
+            curs.0.clean_out_dated_batches();
+            curs.1.clean_out_dated_batches();
         }
 
         // at least one side is finished, consume the other side if it is an outer side
@@ -201,22 +201,20 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
             self.lindices.push(lidx);
             self.rindices.push(Idx::default());
             cur_forward!(curs.0);
-            if self.should_flush(curs) {
+            if self.should_flush() {
                 self.as_mut().flush(curs).await?;
+                curs.0.clean_out_dated_batches();
             }
-            curs.0
-                .set_min_reserved_idx(self.lindices.smallest().unwrap_or(lidx));
         }
         while R_OUTER && !curs.1.finished {
             let ridx = curs.1.cur_idx;
             self.lindices.push(Idx::default());
             self.rindices.push(ridx);
             cur_forward!(curs.1);
-            if self.should_flush(curs) {
+            if self.should_flush() {
                 self.as_mut().flush(curs).await?;
+                curs.1.clean_out_dated_batches();
             }
-            curs.1
-                .set_min_reserved_idx(self.rindices.smallest().unwrap_or(ridx));
         }
         if !self.lindices.is_empty() {
             self.flush(curs).await?;
