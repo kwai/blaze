@@ -20,16 +20,17 @@ use arrow::{
     datatypes::{DataType, SchemaRef},
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
+use stream_cursor::StreamCursor;
 
-use crate::joins::{join_utils::JoinType, stream_cursor::StreamCursor};
+use crate::joins::join_utils::JoinType;
 
-pub mod join_hash_map;
 pub mod join_utils;
-pub mod stream_cursor;
 
 // join implementations
 pub mod bhj;
+pub mod join_hash_map;
 pub mod smj;
+pub mod stream_cursor;
 mod test;
 
 #[derive(Debug, Clone)]

@@ -26,10 +26,7 @@ use datafusion::{
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
-use datafusion_ext_commons::{
-    arrow::{array_size::BatchSize, selection::take_batch},
-    unlikely,
-};
+use datafusion_ext_commons::arrow::selection::take_batch;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 
@@ -50,11 +47,8 @@ pub struct StreamCursor {
     pub projected_batch_schema: SchemaRef,
     pub projected_batches: Vec<RecordBatch>,
     pub cur_idx: Idx,
-    min_reserved_idx: Idx,
     keys: Vec<Arc<Rows>>,
     key_has_nulls: Vec<Option<NullBuffer>>,
-    num_null_batches: usize,
-    mem_size: usize,
     pub finished: bool,
 }
 
@@ -109,11 +103,8 @@ impl StreamCursor {
             projected_batch_schema: projected_null_batch.schema(),
             projected_batches: vec![projected_null_batch],
             cur_idx: (0, 0),
-            min_reserved_idx: (0, 0),
             keys: vec![empty_keys],
             key_has_nulls: vec![Some(null_nb)],
-            num_null_batches: 1,
-            mem_size: 0,
             finished: false,
         })
     }
@@ -156,33 +147,9 @@ impl StreamCursor {
                             .collect(),
                         &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
                     )?;
-
-                    self.mem_size += projected_batch.get_batch_mem_size();
-                    self.mem_size += key_has_nulls
-                        .as_ref()
-                        .map(|nb| nb.buffer().len())
-                        .unwrap_or_default();
-                    self.mem_size += keys.size();
-
                     self.projected_batches.push(projected_batch);
                     self.key_has_nulls.push(key_has_nulls);
                     self.keys.push(keys);
-
-                    // fill out-dated batches with null batches
-                    while unlikely!(self.num_null_batches < self.min_reserved_idx.0) {
-                        let i = self.num_null_batches;
-                        self.mem_size -= self.projected_batches[i].get_batch_mem_size();
-                        self.mem_size -= self.key_has_nulls[i]
-                            .as_ref()
-                            .map(|nb| nb.buffer().len())
-                            .unwrap_or_default();
-                        self.mem_size -= self.keys[i].size();
-
-                        self.projected_batches[i] = self.projected_batches[0].clone();
-                        self.keys[i] = self.keys[0].clone();
-                        self.key_has_nulls[i] = self.key_has_nulls[0].clone();
-                        self.num_null_batches += 1;
-                    }
                     return Ok(());
                 }
                 self.finished = true;
@@ -208,18 +175,24 @@ impl StreamCursor {
     }
 
     #[inline]
+    pub fn cur_key<'a>(&'a self) -> Row<'a> {
+        self.key(self.cur_idx)
+    }
+
+    #[inline]
     pub fn num_buffered_batches(&self) -> usize {
-        self.projected_batches.len() - self.num_null_batches
+        self.projected_batches.len() - 1
     }
 
-    #[inline]
-    pub fn mem_size(&self) -> usize {
-        self.mem_size
-    }
-
-    #[inline]
-    pub fn set_min_reserved_idx(&mut self, idx: Idx) {
-        self.min_reserved_idx = idx;
+    pub fn clean_out_dated_batches(&mut self) {
+        if self.cur_idx.0 > 1 {
+            self.projected_batches
+                .splice(1..self.cur_idx.0, std::iter::empty());
+            self.keys.splice(1..self.cur_idx.0, std::iter::empty());
+            self.key_has_nulls
+                .splice(1..self.cur_idx.0, std::iter::empty());
+            self.cur_idx.0 = 1;
+        }
     }
 }
 
