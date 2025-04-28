@@ -12,8 +12,5 @@
   </component>
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/arrow-datafusion" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/arrow-rs" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/datafusion-orc" vcs="Git" />
   </component>
 </project>
