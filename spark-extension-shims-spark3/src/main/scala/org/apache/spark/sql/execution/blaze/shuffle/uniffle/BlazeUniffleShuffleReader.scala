@@ -71,6 +71,8 @@ class BlazeUniffleShuffleReader[K, C](
     FieldUtils.readField(reader, "appId", true).asInstanceOf[String]
   private val shuffleId: Int =
     FieldUtils.readField(reader, "shuffleId", true).asInstanceOf[Int]
+  private val taskId: String =
+    FieldUtils.readField(reader, "taskId", true).asInstanceOf[String]
   private val basePath: String =
     FieldUtils.readField(reader, "basePath", true).asInstanceOf[String]
   private val partitionNum: Int =
@@ -87,6 +89,13 @@ class BlazeUniffleShuffleReader[K, C](
     FieldUtils.readField(reader, "readMetrics", true).asInstanceOf[ShuffleReadMetrics]
 
   override protected def readBlocks(): Iterator[InputStream] = {
+    logInfo(s"Shuffle read started: " +
+      s"appId=$appId" +
+      s", shuffleId=$shuffleId" +
+      s", taskId=$taskId" +
+      s", partitions: [$startPartition, $endPartition)" +
+      s", maps: [$startMapIndex, $endMapIndex)")
+
     val inputStream =
       new UniffleInputStream(
         new MultiPartitionIterator[K, C](),
@@ -107,6 +116,7 @@ class BlazeUniffleShuffleReader[K, C](
       val emptyPartitionIds = new util.ArrayList[Int]
       for (partition <- startPartition until endPartition) {
         if (partitionToExpectBlocks.get(partition).isEmpty) {
+          logInfo(s"$partition is empty partition")
           emptyPartitionIds.add(partition)
         } else {
           val shuffleServerInfoList: util.List[ShuffleServerInfo] =
