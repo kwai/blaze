@@ -64,6 +64,8 @@ class BlazeUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
     val reader =
       uniffleShuffleManager.getReader(
         rssHandleWrapper.rssShuffleHandleInfo,
+        startMapIndex,
+        endMapIndex,
         startPartition,
         endPartition,
         context,
