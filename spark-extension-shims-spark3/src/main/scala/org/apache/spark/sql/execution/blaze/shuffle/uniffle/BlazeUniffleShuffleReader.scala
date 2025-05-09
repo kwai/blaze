@@ -116,7 +116,7 @@ class BlazeUniffleShuffleReader[K, C](
       val emptyPartitionIds = new util.ArrayList[Int]
       for (partition <- startPartition until endPartition) {
         if (partitionToExpectBlocks.get(partition).isEmpty) {
-          logInfo(s"$partition is empty partition")
+          logInfo(s"$partition is a empty partition")
           emptyPartitionIds.add(partition)
         } else {
           val shuffleServerInfoList: util.List[ShuffleServerInfo] =
