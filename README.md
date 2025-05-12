@@ -151,6 +151,24 @@ spark.celeborn.storage.availableTypes HDFS
 spark.celeborn.storage.hdfs.dir hdfs:///home/celeborn
 spark.sql.adaptive.localShuffleReader.enabled false
 ```
+## Integrate with Apache Uniffle
+Blaze supports integration with Apache Uniffle, a high-performance remote shuffle service for Apache Spark. 
+
+To enable Uniffle as the shuffle manager in Blaze, configure your Spark application with the following settings in 
+`spark-defaults.conf` or via Spark submit options:
+
+```properties
+
+spark.shuffle.manager org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
+spark.serializer org.apache.spark.serializer.KryoSerializer
+spark.rss.coordinator.quorum <coordinatorIp1>:19999,<coordinatorIp2>:19999
+spark.rss.enabled true
+```
+Notes:
+
+* Uniffle Client Dependency: Ensure the Uniffle client library (e.g., `rss-client-spark3-shaded-0.9.2.jar` for Uniffle 0.9.2 or later) is included in your Spark application's classpath.
+* Coordinator Endpoints: Replace `<coordinator-host>:19999` with the actual Uniffle coordinator address in your cluster.
+* For detailed setup and advanced configuration, refer to the [Apache Uniffle Documentation](https://uniffle.apache.org/docs/client-guide).
 
 ## Performance
 
