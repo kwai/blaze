@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 
-use arrow::{array::ArrayRef, record_batch::RecordBatch};
+use arrow::{
+    array::{Array, ArrayRef},
+    record_batch::RecordBatch,
+};
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion_ext_commons::downcast_any;
 use datafusion_ext_functions::spark_get_json_object::{
     spark_get_parsed_json_simple_field, spark_parse_json,
 };
 
-use crate::generate::{GeneratedRows, Generator};
+use crate::generate::{GenerateState, GeneratedRows, Generator};
 
 #[derive(Debug)]
 pub struct JsonTuple {
@@ -46,19 +50,52 @@ impl Generator for JsonTuple {
         )))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
+    fn eval_start(&self, batch: &RecordBatch) -> Result<Box<dyn GenerateState>> {
         let num_rows = batch.num_rows();
         let json_values = spark_parse_json(&[self.child.evaluate(batch)?])?;
         let parsed_json_array = json_values.into_array(num_rows)?;
+        Ok(Box::new(JsonTupleGenerateState {
+            parsed_json_array,
+            cur_row_id: 0,
+        }))
+    }
+
+    fn eval_loop(&self, state: &mut Box<dyn GenerateState>) -> Result<Option<GeneratedRows>> {
+        let state = downcast_any!(state, mut JsonTupleGenerateState)?;
+        if state.cur_row_id >= state.parsed_json_array.len() {
+            return Ok(None);
+        }
+
         let evaluated: Vec<ArrayRef> = self
             .json_paths
             .iter()
-            .map(|json_path| spark_get_parsed_json_simple_field(&parsed_json_array, json_path))
+            .map(|json_path| {
+                spark_get_parsed_json_simple_field(&state.parsed_json_array, json_path)
+            })
             .collect::<Result<_>>()?;
 
-        Ok(GeneratedRows {
-            orig_row_ids: (0..num_rows as i32).collect(),
+        let generated = GeneratedRows {
+            row_ids: (state.cur_row_id..state.parsed_json_array.len())
+                .map(|i| i as i32)
+                .collect(),
             cols: evaluated,
-        })
+        };
+        state.cur_row_id = state.parsed_json_array.len();
+        Ok(Some(generated))
+    }
+}
+
+struct JsonTupleGenerateState {
+    parsed_json_array: ArrayRef,
+    cur_row_id: usize,
+}
+
+impl GenerateState for JsonTupleGenerateState {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn cur_row_id(&self) -> usize {
+        self.cur_row_id
     }
 }

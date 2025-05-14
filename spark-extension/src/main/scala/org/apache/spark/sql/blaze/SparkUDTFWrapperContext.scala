@@ -28,7 +28,9 @@ import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.expressions.Generator
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.blaze.arrowio.util.ArrowWriter
 import org.apache.spark.sql.execution.blaze.columnar.ColumnarHelper
@@ -51,6 +53,10 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
     case _ =>
   }
 
+  private val tc = TaskContext.get()
+  private val batchSize = BlazeConf.BATCH_SIZE.intConf()
+  private val maxBatchMemorySize = BlazeConf.SUGGESTED_BATCH_MEM_SIZE.intConf()
+
   private val dictionaryProvider: DictionaryProvider = new MapDictionaryProvider()
   private val javaOutputSchema = StructType(
     Seq(
@@ -59,48 +65,98 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
   private val outputSchema = ArrowUtils.toArrowSchema(javaOutputSchema)
   private val paramsSchema = ArrowUtils.toArrowSchema(javaParamsSchema)
 
-  def eval(importFFIArrayPtr: Long, exportFFIArrayPtr: Long): Unit = {
-    Using.resources(
-      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
-      VectorSchemaRoot.create(paramsSchema, ROOT_ALLOCATOR),
-      ArrowArray.wrap(importFFIArrayPtr),
-      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, paramsRoot, importArray, exportArray) =>
-      // import into params root
-      Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, importArray, paramsRoot, dictionaryProvider)
+  var currentParamsRoot: VectorSchemaRoot = _
+  var currentRowIdx: Int = 0
+  var terminateIter: Iterator[InternalRow] = _
 
-      // evaluate expression and write to output root
-      val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
-      val outputWriter = ArrowWriter.create(outputRoot)
-      for ((paramsRow, rowId) <- ColumnarHelper.rootRowsIter(paramsRoot).zipWithIndex) {
-        for (outputRow <- expr.eval(paramsRow)) {
-          reusedOutputRow.setInt(0, rowId)
-          reusedOutputRow.update(1, outputRow)
-          outputWriter.write(reusedOutputRow)
-        }
-      }
-      outputWriter.finish()
-
-      // export to output using root allocator
-      Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
+  def closeParamsRoot(): Unit = {
+    if (currentParamsRoot != null) {
+      currentParamsRoot.close()
+      currentParamsRoot = null
+      currentRowIdx = 0
     }
   }
 
-  def terminate(rowId: Int, exportFFIArrayPtr: Long): Unit = {
-    Using.resources(
-      VectorSchemaRoot.create(outputSchema, ROOT_ALLOCATOR),
-      ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
-      // evaluate expression and write to output root
-      val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
-      val outputWriter = ArrowWriter.create(outputRoot)
-      for (outputRow <- expr.terminate()) {
-        reusedOutputRow.setInt(0, rowId)
-        reusedOutputRow.update(1, outputRow)
-        outputWriter.write(reusedOutputRow)
-      }
-      outputWriter.finish()
+  if (tc != null) {
+    tc.addTaskCompletionListener[Unit]((_: TaskContext) => closeParamsRoot())
+    tc.addTaskFailureListener((_, _) => closeParamsRoot())
+  }
 
-      // export to output using root allocator
-      Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
+  def evalStart(importFFIArrayPtr: Long): Unit = {
+    closeParamsRoot()
+    currentParamsRoot = VectorSchemaRoot.create(paramsSchema, ROOT_ALLOCATOR)
+
+    Data.importIntoVectorSchemaRoot(
+      ROOT_ALLOCATOR,
+      ArrowArray.wrap(importFFIArrayPtr),
+      currentParamsRoot,
+      dictionaryProvider)
+    currentRowIdx = 0
+  }
+
+  // evaluate one batch, returning currentRowIdx
+  def evalLoop(exportFFIArrayPtr: Long): Int = {
+    Using.resource(CHILD_ALLOCATOR("ArrowFFIExporterForUDTF")) { allocator =>
+      Using.resources(
+        VectorSchemaRoot.create(outputSchema, allocator),
+        ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
+        // evaluate expression and write to output root
+        val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
+        val outputWriter = ArrowWriter.create(outputRoot)
+        val paramsRow = ColumnarHelper.rootRowReuseable(currentParamsRoot)
+
+        while (currentRowIdx < currentParamsRoot.getRowCount
+          && allocator.getAllocatedMemory < maxBatchMemorySize
+          && outputWriter.currentCount < batchSize) {
+
+          paramsRow.rowId = currentRowIdx
+          for (outputRow <- expr.eval(paramsRow)) {
+            reusedOutputRow.setInt(0, currentRowIdx)
+            reusedOutputRow.update(1, outputRow)
+            outputWriter.write(reusedOutputRow)
+          }
+          currentRowIdx += 1
+        }
+        outputWriter.finish()
+
+        // export to output using root allocator
+        Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
+        currentRowIdx
+      }
+    }
+  }
+
+  def terminateLoop(exportFFIArrayPtr: Long): Unit = {
+    if (terminateIter == null) {
+      terminateIter = expr.terminate().toIterator
+    }
+
+    Using.resource(CHILD_ALLOCATOR("ArrowFFIExporterForUDTF")) { allocator =>
+      Using.resources(
+        VectorSchemaRoot.create(outputSchema, allocator),
+        ArrowArray.wrap(exportFFIArrayPtr)) { (outputRoot, exportArray) =>
+        // evaluate expression and write to output root
+        val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
+        val outputWriter = ArrowWriter.create(outputRoot)
+
+        while (allocator.getAllocatedMemory < maxBatchMemorySize
+          && outputWriter.currentCount < batchSize
+          && terminateIter.hasNext) {
+
+          val outputRow = terminateIter.next()
+          reusedOutputRow.setInt(0, currentRowIdx)
+          reusedOutputRow.update(1, outputRow)
+          outputWriter.write(reusedOutputRow)
+        }
+        outputWriter.finish()
+
+        // export to output using root allocator
+        Data.exportVectorSchemaRoot(ROOT_ALLOCATOR, outputRoot, dictionaryProvider, exportArray)
+
+        if (outputWriter.currentCount == 0) {
+          closeParamsRoot()
+        }
+      }
     }
   }
 }

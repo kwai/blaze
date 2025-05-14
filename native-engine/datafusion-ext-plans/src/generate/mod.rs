@@ -16,7 +16,7 @@ mod explode;
 mod json_tuple;
 mod spark_udtf_wrapper;
 
-use std::{fmt::Debug, sync::Arc};
+use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::{
     array::{ArrayRef, Int32Array},
@@ -41,16 +41,23 @@ pub trait Generator: Debug + Send + Sync {
 
     fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>>;
 
-    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows>;
+    fn eval_start(&self, batch: &RecordBatch) -> Result<Box<dyn GenerateState>>;
 
-    fn terminate(&self, _last_row_id: i32) -> Result<Option<GeneratedRows>> {
+    fn eval_loop(&self, state: &mut Box<dyn GenerateState>) -> Result<Option<GeneratedRows>>;
+
+    fn terminate_loop(&self) -> Result<Option<GeneratedRows>> {
         Ok(None)
     }
 }
 
+pub trait GenerateState: Send + Sync {
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn cur_row_id(&self) -> usize;
+}
+
 #[derive(Clone)]
 pub struct GeneratedRows {
-    pub orig_row_ids: Int32Array,
+    pub row_ids: Int32Array,
     pub cols: Vec<ArrayRef>,
 }
 

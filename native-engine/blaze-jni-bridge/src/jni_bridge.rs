@@ -1306,10 +1306,12 @@ impl<'a> SparkUDAFWrapperContext<'a> {
 pub struct SparkUDTFWrapperContext<'a> {
     pub class: JClass<'a>,
     pub ctor: JMethodID,
-    pub method_eval: JMethodID,
-    pub method_eval_ret: ReturnType,
-    pub method_terminate: JMethodID,
-    pub method_terminate_ret: ReturnType,
+    pub method_evalStart: JMethodID,
+    pub method_evalStart_ret: ReturnType,
+    pub method_evalLoop: JMethodID,
+    pub method_evalLoop_ret: ReturnType,
+    pub method_terminateLoop: JMethodID,
+    pub method_terminateLoop_ret: ReturnType,
 }
 impl<'a> SparkUDTFWrapperContext<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/SparkUDTFWrapperContext";
@@ -1319,10 +1321,12 @@ impl<'a> SparkUDTFWrapperContext<'a> {
         Ok(SparkUDTFWrapperContext {
             class,
             ctor: env.get_method_id(class, "<init>", "(Ljava/nio/ByteBuffer;)V")?,
-            method_eval: env.get_method_id(class, "eval", "(JJ)V")?,
-            method_eval_ret: ReturnType::Primitive(Primitive::Void),
-            method_terminate: env.get_method_id(class, "terminate", "(IJ)V")?,
-            method_terminate_ret: ReturnType::Primitive(Primitive::Void),
+            method_evalStart: env.get_method_id(class, "evalStart", "(J)V")?,
+            method_evalStart_ret: ReturnType::Primitive(Primitive::Void),
+            method_evalLoop: env.get_method_id(class, "evalLoop", "(J)I")?,
+            method_evalLoop_ret: ReturnType::Primitive(Primitive::Int),
+            method_terminateLoop: env.get_method_id(class, "terminateLoop", "(J)V")?,
+            method_terminateLoop_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
