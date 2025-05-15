@@ -17,6 +17,7 @@ package org.apache.spark.sql.blaze.memory
 
 import java.nio.ByteBuffer
 
+import scala.collection.concurrent
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -180,10 +181,10 @@ class OnHeapSpillManager(taskContext: TaskContext)
 }
 
 object OnHeapSpillManager extends Logging {
-  val all: mutable.Map[Long, OnHeapSpillManager] = mutable.Map()
+  val all: mutable.Map[Long, OnHeapSpillManager] = concurrent.TrieMap[Long, OnHeapSpillManager]()
 
   def current: OnHeapSpillManager = {
-    val taskContext = TaskContext.get
-    all.getOrElseUpdate(taskContext.taskAttemptId(), new OnHeapSpillManager(taskContext))
+    val tc = TaskContext.get
+    all.getOrElseUpdate(tc.taskAttemptId(), new OnHeapSpillManager(tc))
   }
 }
