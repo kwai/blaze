@@ -28,16 +28,24 @@ case class OnHeapSpill(hsm: OnHeapSpillManager, id: Int) extends Logging {
   def diskIOTime: Long = spillBuf.diskIOTime
 
   def write(buf: ByteBuffer): Unit = {
+    var needSpill = false
     synchronized {
       spillBuf match {
         case _: MemBasedSpillBuf =>
           val acquiredMemory = hsm.acquireMemory(buf.capacity())
           if (acquiredMemory < buf.capacity()) { // cannot allocate memory, will spill buffer
             hsm.freeMemory(acquiredMemory)
-            spillInternal()
+            needSpill = true
           }
         case _ =>
       }
+    }
+
+    if (needSpill) {
+      spillInternal()
+    }
+
+    synchronized {
       spillBuf.write(buf)
     }
   }
