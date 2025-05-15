@@ -15,14 +15,18 @@
 use std::{
     any::Any,
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, Int32Array, Int32Builder},
+    array::{new_empty_array, Array, ArrayRef, Int32Array, Int32Builder},
     datatypes::{Field, Schema, SchemaRef},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
+use arrow_schema::DataType;
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
@@ -33,9 +37,8 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream,
     },
 };
-use datafusion_ext_commons::{arrow::cast::cast, batch_size};
+use datafusion_ext_commons::arrow::cast::cast;
 use futures::StreamExt;
-use num::integer::Roots;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
@@ -185,8 +188,11 @@ fn execute_generate(
     outer: bool,
     child_output_cols: Vec<Column>,
 ) -> Result<SendableRecordBatchStream> {
-    let batch_size = batch_size();
     let input_schema = input_stream.schema();
+    let child_output_dts: Vec<DataType> = child_output_cols
+        .iter()
+        .map(|col| Ok(col.data_type(&input_schema)?))
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(exec_ctx
         .clone()
@@ -194,6 +200,8 @@ fn execute_generate(
             sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
             let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
             let last_child_outputs: Arc<Mutex<Option<Vec<ArrayRef>>>> = Arc::default();
+            let last_child_outtpus_len = AtomicUsize::new(0);
+
             while let Some(batch) = exec_ctx
                 .baseline_metrics()
                 .elapsed_compute()
@@ -211,27 +219,20 @@ fn execute_generate(
                     })
                     .collect::<Result<Vec<_>>>()
                     .map_err(|err| err.context("generate: evaluating child output arrays error"))?;
-
-                // cache last child outputs for UDTF termination
                 last_child_outputs.lock().replace(child_outputs.clone());
+                last_child_outtpus_len.store(batch.num_rows(), SeqCst);
 
-                // split batch into smaller slice to avoid too much memory usage
-                let slice_step = batch_size.sqrt().max(1);
-                for slice_start in (0..batch.num_rows()).step_by(slice_step) {
-                    let slice_len = slice_step.min(batch.num_rows().saturating_sub(slice_start));
-                    let slice = batch.slice(slice_start, slice_len);
+                let mut generate_state = generator.eval_start(&batch)?;
+                let mut cur_row_id = 0;
 
-                    // evaluate generated output
-                    let generated_outputs = generator
-                        .eval(&slice)
-                        .map_err(|err| err.context("generate: evaluating generator error"))?;
-                    let capacity = generated_outputs.orig_row_ids.len();
+                while let Some(generated_outputs) = generator.eval_loop(&mut generate_state)? {
+                    let capacity = generated_outputs.row_ids.len();
                     let mut child_output_row_ids = Int32Builder::with_capacity(capacity);
                     let mut generated_ids = Int32Builder::with_capacity(capacity);
-                    let mut cur_row_id = 0;
 
                     // build ids for joining
-                    for (i, &row_id) in generated_outputs.orig_row_ids.values().iter().enumerate() {
+                    for i in 0..generated_outputs.row_ids.len() {
+                        let row_id = generated_outputs.row_ids.value(i);
                         while cur_row_id < row_id {
                             if outer {
                                 child_output_row_ids.append_value(cur_row_id);
@@ -243,94 +244,74 @@ fn execute_generate(
                         generated_ids.append_value(i as i32);
                         cur_row_id = row_id + 1;
                     }
-                    while cur_row_id < slice.num_rows() as i32 {
+                    while cur_row_id < generate_state.cur_row_id() as i32 {
                         if outer {
                             child_output_row_ids.append_value(cur_row_id);
                             generated_ids.append_null();
                         }
                         cur_row_id += 1;
                     }
-
-                    let child_output_row_ids = arrow::compute::kernels::numeric::add(
-                        &child_output_row_ids.finish(),
-                        &Int32Array::new_scalar(slice_start as i32),
-                    )?;
+                    let child_output_row_ids = child_output_row_ids.finish();
                     let generated_ids = generated_ids.finish();
 
-                    let mut start = 0;
-                    while start < child_output_row_ids.len() {
-                        let end = (start + batch_size).min(child_output_row_ids.len());
+                    let child_outputs = child_outputs
+                        .iter()
+                        .map(|col| Ok(arrow::compute::take(col, &child_output_row_ids, None)?))
+                        .collect::<Result<Vec<_>>>()?;
+                    let generated_outputs = generated_outputs
+                        .cols
+                        .iter()
+                        .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
+                        .collect::<Result<Vec<_>>>()?;
 
-                        let child_output_row_ids = child_output_row_ids.slice(start, end - start);
-                        let generated_ids = generated_ids.slice(start, end - start);
+                    let num_rows = generated_ids.len();
+                    let outputs: Vec<ArrayRef> = child_outputs
+                        .iter()
+                        .chain(&generated_outputs)
+                        .zip(exec_ctx.output_schema().fields())
+                        .map(|(array, field)| {
+                            if array.data_type() != field.data_type() {
+                                return cast(&array, field.data_type());
+                            }
+                            Ok(array.clone())
+                        })
+                        .collect::<Result<_>>()?;
+                    let output_batch = RecordBatch::try_new_with_options(
+                        exec_ctx.output_schema(),
+                        outputs,
+                        &RecordBatchOptions::new().with_row_count(Some(num_rows)),
+                    )?;
 
-                        let child_outputs = child_outputs
-                            .iter()
-                            .map(|col| Ok(arrow::compute::take(col, &child_output_row_ids, None)?))
-                            .collect::<Result<Vec<_>>>()?;
-                        let generated_outputs = generated_outputs
-                            .cols
-                            .iter()
-                            .map(|col| Ok(arrow::compute::take(col, &generated_ids, None)?))
-                            .collect::<Result<Vec<_>>>()?;
-
-                        let num_rows = generated_ids.len();
-                        let outputs: Vec<ArrayRef> = child_outputs
-                            .iter()
-                            .chain(&generated_outputs)
-                            .zip(exec_ctx.output_schema().fields())
-                            .map(|(array, field)| {
-                                if array.data_type() != field.data_type() {
-                                    return cast(&array, field.data_type());
-                                }
-                                Ok(array.clone())
-                            })
-                            .collect::<Result<_>>()?;
-                        let output_batch = RecordBatch::try_new_with_options(
-                            exec_ctx.output_schema(),
-                            outputs,
-                            &RecordBatchOptions::new().with_row_count(Some(num_rows)),
-                        )?;
-                        start = end;
-
-                        exec_ctx
-                            .baseline_metrics()
-                            .record_output(output_batch.num_rows());
-                        sender.send(output_batch).await;
-                    }
+                    exec_ctx
+                        .baseline_metrics()
+                        .record_output(output_batch.num_rows());
+                    sender.send(output_batch).await;
                 }
             }
 
-            // execute generator.terminate(), joining with last child output row
-            // keep it the same as hive does
-            let last_child_outputs = match last_child_outputs.lock().take() {
-                Some(arrays) => arrays,
-                None => child_output_cols
+            // execute generator.terminate()
+            while let Some(generated_outputs) = generator.terminate_loop()? {
+                let last_child_outputs = last_child_outputs.lock().take();
+                let last_child_outputs_len = last_child_outtpus_len.load(SeqCst);
+
+                let child_output_row_ids = generated_outputs
+                    .row_ids
                     .iter()
-                    .map(|col| Ok(new_null_array(&col.data_type(&input_schema)?, 1)))
-                    .collect::<Result<_>>()?,
-            };
-
-            let last_row_id = last_child_outputs
-                .iter()
-                .filter(|col| !col.is_empty())
-                .map(|col| col.len() - 1)
-                .max()
-                .unwrap_or(0);
-
-            if let Some(generated_outputs) = generator.terminate(last_row_id as i32)? {
+                    .flatten()
+                    .map(|row_id| ((row_id as usize) < last_child_outputs_len).then_some(row_id))
+                    .collect::<Int32Array>();
                 let child_outputs = last_child_outputs
+                    .unwrap_or(
+                        child_output_dts
+                            .iter()
+                            .map(|dt| new_empty_array(dt))
+                            .collect(),
+                    )
                     .iter()
-                    .map(|c| {
-                        Ok(arrow::compute::take(
-                            c,
-                            &generated_outputs.orig_row_ids,
-                            None,
-                        )?)
-                    })
+                    .map(|c| Ok(arrow::compute::take(c, &child_output_row_ids, None)?))
                     .collect::<Result<Vec<_>>>()?;
 
-                let num_rows = generated_outputs.orig_row_ids.len();
+                let num_rows = generated_outputs.row_ids.len();
                 let outputs: Vec<ArrayRef> = child_outputs
                     .iter()
                     .chain(&generated_outputs.cols)

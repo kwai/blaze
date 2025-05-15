@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    any::Any,
     fmt::{Debug, Formatter},
     sync::Arc,
 };
@@ -23,17 +24,17 @@ use arrow::{
         StructArray,
     },
     datatypes::{DataType, Field, Schema, SchemaRef},
-    ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
+    ffi::{from_ffi_and_data_type, FFI_ArrowArray},
 };
 use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
-use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
+use datafusion_ext_commons::{arrow::cast::cast, df_execution_err, downcast_any};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
 
-use crate::generate::{GeneratedRows, Generator};
+use crate::generate::{GenerateState, GeneratedRows, Generator};
 
 pub struct SparkUDTFWrapper {
     serialized: Vec<u8>,
@@ -99,7 +100,7 @@ impl Generator for SparkUDTFWrapper {
         )?))
     }
 
-    fn eval(&self, batch: &RecordBatch) -> Result<GeneratedRows> {
+    fn eval_start(&self, batch: &RecordBatch) -> Result<Box<dyn GenerateState>> {
         if !is_task_running() {
             df_execution_err!("SparkUDTFWrapper: is_task_running=false")?;
         }
@@ -137,65 +138,78 @@ impl Generator for SparkUDTFWrapper {
             &RecordBatchOptions::new().with_row_count(Some(num_rows)),
         )?;
 
-        // invoke UDF through JNI
-        let result_array = invoke_udtf(self.jcontext()?, params_batch, self.import_schema.clone())?;
-        let result_struct = result_array.as_struct();
-        let result_row_ids: &Int32Array = result_struct.column(0).as_primitive();
-        let result_elements: &[ArrayRef] = result_struct.column(1).as_struct().columns();
-        Ok(GeneratedRows {
-            orig_row_ids: result_row_ids.clone(),
-            cols: result_elements.to_vec(),
-        })
+        // invoke UDAFWrapper.evalStart()
+        let struct_array = StructArray::from(params_batch);
+        let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
+        jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+            .evalStart(&mut export_ffi_array as *mut FFI_ArrowArray as i64) -> ())?;
+        Ok(Box::new(UDTFGenerateState { cur_row_id: 0 }))
     }
 
-    fn terminate(&self, last_row_id: i32) -> Result<Option<GeneratedRows>> {
-        // terminate UDF through JNI
-        let result_array =
-            terminate_udtf(self.jcontext()?, last_row_id, self.import_schema.clone())?;
-        let result_struct = result_array.as_struct();
+    fn eval_loop(&self, state: &mut Box<dyn GenerateState>) -> Result<Option<GeneratedRows>> {
+        let state = downcast_any!(state, mut UDTFGenerateState)?;
+
+        // invoke UDAFWrapper.evalLoop()
+        let mut import_ffi_array = FFI_ArrowArray::empty();
+        state.cur_row_id = jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+            .evalLoop(&mut import_ffi_array as *mut FFI_ArrowArray as i64) -> i32)?
+            as usize;
+
+        // safety: use arrow-ffi
+        let result_array = unsafe {
+            from_ffi_and_data_type(
+                import_ffi_array,
+                DataType::Struct(self.import_schema.fields().clone()),
+            )?
+        };
+        if result_array.is_empty() {
+            return Ok(None);
+        }
+        let result_struct = make_array(result_array).as_struct().clone();
         let result_row_ids: &Int32Array = result_struct.column(0).as_primitive();
         let result_elements: &[ArrayRef] = result_struct.column(1).as_struct().columns();
         Ok(Some(GeneratedRows {
-            orig_row_ids: result_row_ids.clone(),
+            row_ids: result_row_ids.clone(),
+            cols: result_elements.to_vec(),
+        }))
+    }
+
+    fn terminate_loop(&self) -> Result<Option<GeneratedRows>> {
+        // invoke UDAFWrapper.evalLoop()
+        let mut import_ffi_array = FFI_ArrowArray::empty();
+        jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+            .terminateLoop(&mut import_ffi_array as *mut FFI_ArrowArray as i64) -> ())?;
+
+        // safety: use arrow-ffi
+        let result_array = unsafe {
+            from_ffi_and_data_type(
+                import_ffi_array,
+                DataType::Struct(self.import_schema.fields().clone()),
+            )?
+        };
+        if result_array.is_empty() {
+            return Ok(None);
+        }
+        let result_struct = make_array(result_array).as_struct().clone();
+        let result_row_ids: &Int32Array = result_struct.column(0).as_primitive();
+        let result_elements: &[ArrayRef] = result_struct.column(1).as_struct().columns();
+        Ok(Some(GeneratedRows {
+            row_ids: result_row_ids.clone(),
             cols: result_elements.to_vec(),
         }))
     }
 }
 
-fn invoke_udtf(
-    jcontext: GlobalRef,
-    params_batch: RecordBatch,
-    result_schema: SchemaRef,
-) -> Result<ArrayRef> {
-    // evalute via context
-    let struct_array = StructArray::from(params_batch);
-    let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
-    let mut import_ffi_array = FFI_ArrowArray::empty();
-    jni_call!(SparkUDTFWrapperContext(jcontext.as_obj()).eval(
-        &mut export_ffi_array as *mut FFI_ArrowArray as i64,
-        &mut import_ffi_array as *mut FFI_ArrowArray as i64,
-    ) -> ())?;
-
-    // import output from context
-    let import_ffi_schema = FFI_ArrowSchema::try_from(result_schema.as_ref())?;
-    let import_array = make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
-    Ok(import_array)
+struct UDTFGenerateState {
+    pub cur_row_id: usize,
 }
 
-fn terminate_udtf(
-    jcontext: GlobalRef,
-    last_row_id: i32,
-    result_schema: SchemaRef,
-) -> Result<ArrayRef> {
-    // evalute via context
-    let mut import_ffi_array = FFI_ArrowArray::empty();
-    jni_call!(SparkUDTFWrapperContext(jcontext.as_obj()).terminate(
-        last_row_id,
-        &mut import_ffi_array as *mut FFI_ArrowArray as i64,
-    ) -> ())?;
+impl GenerateState for UDTFGenerateState {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 
-    // import output from context
-    let import_ffi_schema = FFI_ArrowSchema::try_from(result_schema.as_ref())?;
-    let import_array = make_array(unsafe { from_ffi(import_ffi_array, &import_ffi_schema)? });
-    Ok(import_array)
+    fn cur_row_id(&self) -> usize {
+        self.cur_row_id
+    }
 }
