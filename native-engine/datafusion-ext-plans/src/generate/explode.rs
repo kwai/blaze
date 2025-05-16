@@ -64,10 +64,12 @@ impl Generator for ExplodeArray {
         let mut sub_lists = vec![];
 
         while row_idx < state.input_array.len() && row_ids.len() < batch_size {
-            let sub_list = state.input_array.value(row_idx);
-            row_ids.resize(row_ids.len() + sub_list.len(), row_idx as i32);
-            pos_ids.extend(0..sub_list.len() as i32);
-            sub_lists.push(sub_list);
+            if state.input_array.is_valid(row_idx) {
+                let sub_list = state.input_array.value(row_idx);
+                row_ids.resize(row_ids.len() + sub_list.len(), row_idx as i32);
+                pos_ids.extend(0..sub_list.len() as i32);
+                sub_lists.push(sub_list);
+            }
             row_idx += 1;
         }
         state.cur_row_id = row_idx;
@@ -147,13 +149,15 @@ impl Generator for ExplodeMap {
         let mut sub_val_lists = vec![];
 
         while row_idx < state.input_array.len() && row_ids.len() < batch_size {
-            let sub_struct = state.input_array.value(row_idx);
-            let sub_key_list = sub_struct.column(0);
-            let sub_val_list = sub_struct.column(1);
-            row_ids.resize(row_ids.len() + sub_key_list.len(), row_idx as i32);
-            pos_ids.extend(0..sub_key_list.len() as i32);
-            sub_key_lists.push(sub_key_list.clone());
-            sub_val_lists.push(sub_val_list.clone());
+            if state.input_array.is_valid(row_idx) {
+                let sub_struct = state.input_array.value(row_idx);
+                let sub_key_list = sub_struct.column(0);
+                let sub_val_list = sub_struct.column(1);
+                row_ids.resize(row_ids.len() + sub_key_list.len(), row_idx as i32);
+                pos_ids.extend(0..sub_key_list.len() as i32);
+                sub_key_lists.push(sub_key_list.clone());
+                sub_val_lists.push(sub_val_list.clone());
+            }
             row_idx += 1;
         }
         state.cur_row_id = row_idx;
