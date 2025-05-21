@@ -21,13 +21,15 @@ use std::{
 };
 
 use arrow::{array::*, datatypes::*};
-use datafusion::{common::Result, physical_expr::PhysicalExpr, scalar::ScalarValue};
+use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_from_array};
-use paste::paste;
 
 use crate::{
     agg::{
-        acc::{AccBytes, AccColumn, AccColumnRef, AccGenericColumn},
+        acc::{
+            acc_generic_column_to_array, create_acc_generic_column, AccBooleanColumn, AccBytes,
+            AccBytesColumn, AccColumn, AccColumnRef, AccPrimColumn, AccScalarValueColumn,
+        },
         agg::IdxSelection,
         Agg,
     },
@@ -84,7 +86,7 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
     }
 
     fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
-        Box::new(AccGenericColumn::new(&self.data_type, num_rows))
+        create_acc_generic_column(&self.data_type, num_rows)
     }
 
     fn partial_update(
@@ -94,83 +96,77 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        let partial_arg = &partial_args[0];
         accs.ensure_size(acc_idx);
 
-        let old_heap_mem_used = accs.items_heap_mem_used(acc_idx);
-
-        macro_rules! handle_prim {
-            ($ty:ident) => {{
-                type TArray = paste! {[<$ty Array>]};
-                let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
+        macro_rules! handle_primitive {
+            ($array:expr) => {{
+                let partial_arg = $array;
+                let accs = downcast_any!(accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                      ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                         if !partial_arg.is_valid(partial_arg_idx) {
-                             continue;
-                         }
-                         let partial_value = partial_arg.value(partial_arg_idx);
-
-                         if !accs.prim_valid(acc_idx) {
-                             accs.set_prim_valid(acc_idx, true);
-                             accs.set_prim_value(acc_idx, partial_value);
-                             continue;
-                         }
-                         if partial_value.partial_cmp(&accs.prim_value(acc_idx)) == Some(P::ORD) {
-                             accs.set_prim_value(acc_idx, partial_value);
+                         if partial_arg.is_valid(partial_arg_idx) {
+                             let partial_value = partial_arg.value(partial_arg_idx);
+                             accs.update_value(acc_idx, partial_value, |v| {
+                                 if v.partial_cmp(&partial_value) == Some(P::ORD) {
+                                     v
+                                 } else {
+                                     partial_value
+                                 }
+                             });
                          }
                      }
                 }
             }};
         }
 
+        macro_rules! handle_boolean {
+            ($array:expr) => {{
+                let partial_arg = $array;
+                let accs = downcast_any!(accs, mut AccBooleanColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if partial_arg.is_valid(partial_arg_idx) {
+                            let partial_value = partial_arg.value(partial_arg_idx);
+                            accs.update_value(acc_idx, partial_value, |v| {
+                                if v.partial_cmp(&partial_value) == Some(P::ORD) {
+                                    v
+                                } else {
+                                    partial_value
+                                }
+                            });
+                        }
+                    }
+                }
+            }};
+        }
         macro_rules! handle_bytes {
-            ($ty:ident) => {{
-                type TArray = paste::paste! {[<$ty Array>]};
-                let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
+            ($array:expr) => {{
+                let partial_arg = $array;
+                let accs = downcast_any!(accs, mut AccBytesColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
                         if !partial_arg.is_valid(partial_arg_idx) {
                             continue;
                         }
                         let partial_value: &[u8] = partial_arg.value(partial_arg_idx).as_ref();
-                        if accs.bytes_value(acc_idx).is_none() {
-                            accs.set_bytes_value(acc_idx, Some(AccBytes::from(partial_value)));
+                        if let Some(w) = accs.value(acc_idx) && w.as_ref().partial_cmp(partial_value.as_ref()) == Some(P::ORD) {
                             continue;
                         }
-                        let acc_value = accs.bytes_value(acc_idx).unwrap();
-                        if partial_value.partial_cmp(acc_value.as_ref()) == Some(P::ORD) {
-                            accs.set_bytes_value(acc_idx, Some(AccBytes::from(partial_value)));
-                        }
+                        accs.set_value(acc_idx, Some(AccBytes::from(partial_value)));
                     }
                 }
             }};
         }
 
-        match self.data_type {
+        downcast_primitive_array! {
+            partial_arg => handle_primitive!(partial_arg),
+            DataType::Boolean => handle_boolean!(downcast_any!(partial_arg, BooleanArray)?),
+            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, BinaryArray)?),
+            DataType::Utf8 => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
             DataType::Null => {}
-            DataType::Boolean => handle_prim!(Boolean),
-            DataType::Int8 => handle_prim!(Int8),
-            DataType::Int16 => handle_prim!(Int16),
-            DataType::Int32 => handle_prim!(Int32),
-            DataType::Int64 => handle_prim!(Int64),
-            DataType::UInt8 => handle_prim!(UInt8),
-            DataType::UInt16 => handle_prim!(UInt16),
-            DataType::UInt32 => handle_prim!(UInt32),
-            DataType::UInt64 => handle_prim!(UInt64),
-            DataType::Float32 => handle_prim!(Float32),
-            DataType::Float64 => handle_prim!(Float64),
-            DataType::Date32 => handle_prim!(Date32),
-            DataType::Date64 => handle_prim!(Date64),
-            DataType::Timestamp(time_unit, _) => match time_unit {
-                TimeUnit::Second => handle_prim!(TimestampSecond),
-                TimeUnit::Millisecond => handle_prim!(TimestampMillisecond),
-                TimeUnit::Microsecond => handle_prim!(TimestampMicrosecond),
-                TimeUnit::Nanosecond => handle_prim!(TimestampNanosecond),
-            },
-            DataType::Decimal128(..) => handle_prim!(Decimal128),
-            DataType::Utf8 => handle_bytes!(String),
-            DataType::Binary => handle_bytes!(Binary),
             _ => {
+                let accs = downcast_any!(accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
                         if partial_args[0].is_valid(partial_arg_idx) {
@@ -178,23 +174,16 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
                                 &partial_args[0],
                                 partial_arg_idx,
                             )?;
-                            let acc_scalar = &mut accs.scalar_values_mut()[acc_idx];
-                            if !acc_scalar.is_null() {
-                                if partial_arg_scalar.partial_cmp(acc_scalar) == Some(P::ORD) {
-                                    *acc_scalar = partial_arg_scalar;
-                                }
-                            } else {
-                                *acc_scalar = partial_arg_scalar;
+                            let acc_scalar = accs.value(acc_idx);
+                            if !acc_scalar.is_null() && acc_scalar.partial_cmp(&partial_arg_scalar) == Some(P::ORD) {
+                                continue;
                             }
-                            continue;
+                            accs.set_value(acc_idx, partial_arg_scalar);
                         }
                     }
                 }
             }
         }
-
-        let new_heap_mem_used = accs.items_heap_mem_used(acc_idx);
-        accs.add_heap_mem_used(new_heap_mem_used - old_heap_mem_used);
         Ok(())
     }
 
@@ -205,99 +194,98 @@ impl<P: AggMaxMinParams> Agg for AggMaxMin<P> {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
         accs.ensure_size(acc_idx);
 
-        let merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
-        let old_mem_used = accs.items_heap_mem_used(acc_idx);
-
-        macro_rules! handle_prim {
+        macro_rules! handle_primitive {
             ($ty:ty) => {{
+                type TNative = <$ty as ArrowPrimitiveType>::Native;
+                let accs = downcast_any!(accs, mut AccPrimColumn<TNative>)?;
+                let merging_accs = downcast_any!(merging_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if !merging_accs.prim_valid(merging_acc_idx) {
-                            continue;
-                        }
-                        if !accs.prim_valid(acc_idx) {
-                            accs.set_prim_valid(acc_idx, true);
-                            accs.set_prim_value(acc_idx, merging_accs.prim_value::<$ty>(merging_acc_idx));
-                            continue;
-                        }
-                        if merging_accs.prim_value::<$ty>(merging_acc_idx).partial_cmp(&accs.prim_value::<$ty>(acc_idx)) == Some(P::ORD) {
-                            accs.set_prim_value(acc_idx, merging_accs.prim_value::<$ty>(merging_acc_idx));
+                        if let Some(merging_value) = merging_accs.value(merging_acc_idx) {
+                            accs.update_value(acc_idx, merging_value, |v| {
+                                if v.partial_cmp(&merging_value) == Some(P::ORD) {
+                                    v
+                                } else {
+                                    merging_value
+                                }
+                            })
                         }
                     }
                 }
             }}
         }
 
-        match self.data_type {
-            DataType::Null => {}
-            DataType::Boolean => handle_prim!(bool),
-            DataType::Int8 => handle_prim!(i8),
-            DataType::Int16 => handle_prim!(i16),
-            DataType::Int32 => handle_prim!(i32),
-            DataType::Int64 => handle_prim!(i64),
-            DataType::UInt8 => handle_prim!(u8),
-            DataType::UInt16 => handle_prim!(u16),
-            DataType::UInt32 => handle_prim!(u32),
-            DataType::UInt64 => handle_prim!(u64),
-            DataType::Float32 => handle_prim!(f32),
-            DataType::Float64 => handle_prim!(f64),
-            DataType::Date32 => handle_prim!(u32),
-            DataType::Date64 => handle_prim!(u64),
-            DataType::Timestamp(..) => handle_prim!(u64),
-            DataType::Decimal128(..) => handle_prim!(u128),
-            DataType::Utf8 | DataType::Binary => {
+        macro_rules! handle_boolean {
+            () => {{
+                let accs = downcast_any!(accs, mut AccBooleanColumn)?;
+                let merging_accs = downcast_any!(merging_accs, mut AccBooleanColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        let merging_value = merging_accs.take_bytes_value(merging_acc_idx);
-                        if merging_value.is_none() {
-                            continue;
-                        }
-                        let merging_value = merging_value.unwrap();
-                        let acc_value = accs.bytes_value_mut(acc_idx);
-                        if acc_value.is_none() {
-                            accs.set_bytes_value(acc_idx, Some(merging_value));
-                            continue;
-                        }
-                        let acc_value = acc_value.unwrap();
-                        if merging_value.as_ref().partial_cmp(acc_value.as_ref()) == Some(P::ORD) {
-                            accs.set_bytes_value(acc_idx, Some(merging_value));
+                        let accs = downcast_any!(accs, mut AccBooleanColumn)?;
+                        let merging_accs = downcast_any!(merging_accs, mut AccBooleanColumn)?;
+                        if let Some(merging_value) = merging_accs.value(merging_acc_idx) {
+                            accs.update_value(acc_idx, merging_value, |v| {
+                                if v.partial_cmp(&merging_value) == Some(P::ORD) {
+                                    v
+                                } else {
+                                    merging_value
+                                }
+                            })
                         }
                     }
                 }
-            }
-            _ => {
+            }};
+        }
+
+        macro_rules! handle_bytes {
+            () => {{
+                let accs = downcast_any!(accs, mut AccBytesColumn)?;
+                let merging_accs = downcast_any!(merging_accs, mut AccBytesColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        let acc_value = &mut accs.scalar_values_mut()[acc_idx];
-                        let merging_acc_value = std::mem::replace(
-                            &mut merging_accs.scalar_values_mut()[merging_acc_idx],
-                            ScalarValue::Null,
-                        );
-                        if !merging_acc_value.is_null() {
-                            if !acc_value.is_null() {
-                                if merging_acc_value.partial_cmp(acc_value) == Some(P::ORD) {
-                                    *acc_value = merging_acc_value;
+                        let merging_value = merging_accs.take_value(merging_acc_idx);
+                        if let Some(merging_value) = merging_value {
+                            if let Some(w) = accs.value(acc_idx) {
+                                if w.partial_cmp(&merging_value) == Some(P::ORD) {
+                                    continue;
                                 }
-                            } else {
-                                *acc_value = merging_acc_value;
                             }
+                            accs.set_value(acc_idx, Some(merging_value));
                         }
+                    }
+                }
+            }};
+        }
+        downcast_primitive! {
+            (&self.data_type) => (handle_primitive),
+            DataType::Boolean => handle_boolean!(),
+            DataType::Utf8 | DataType::Binary => handle_bytes!(),
+            DataType::Null => {},
+            _ => {
+                let accs = downcast_any!(accs, mut AccScalarValueColumn)?;
+                let merging_accs = downcast_any!(merging_accs, mut AccScalarValueColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        let merging_value = merging_accs.take_value(merging_acc_idx);
+                        if merging_value.is_null() {
+                            continue;
+                        }
+                        let w = accs.value(acc_idx);
+                        if !w.is_null() && w.partial_cmp(&merging_value) == Some(P::ORD) {
+                            continue;
+                        }
+                        accs.set_value(acc_idx, merging_value);
                     }
                 }
             }
         }
-
-        let new_mem_used = accs.items_heap_mem_used(acc_idx);
-        accs.add_heap_mem_used(new_mem_used - old_mem_used);
         Ok(())
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
-        accs.to_array(acc_idx, &self.data_type)
+        acc_generic_column_to_array(accs, &self.data_type, acc_idx)
     }
 }
 

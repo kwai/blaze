@@ -21,6 +21,7 @@ use blaze_jni_bridge::conf::{
     IntConf, BATCH_SIZE, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
 };
 use once_cell::sync::OnceCell;
+use smallvec::SmallVec;
 use unchecked_index::UncheckedIndex;
 
 pub mod algorithm;
@@ -180,5 +181,25 @@ impl<T: Sized> UncheckedIndexIntoInner<T> for UncheckedIndex<T> {
     fn into_inner(self) -> T {
         let no_drop = std::mem::ManuallyDrop::new(self);
         unsafe { std::ptr::read(&**no_drop) }
+    }
+}
+
+pub trait UninitializedInit<T> {
+    fn uninitialized_init(len: usize) -> T;
+}
+
+impl<T: Copy> UninitializedInit<Vec<T>> for Vec<T> {
+    fn uninitialized_init(len: usize) -> Vec<T> {
+        let mut v = Vec::with_capacity(len);
+        unsafe { v.set_len(len) };
+        v
+    }
+}
+
+impl<T: Copy, const N: usize> UninitializedInit<SmallVec<T, N>> for SmallVec<T, N> {
+    fn uninitialized_init(len: usize) -> SmallVec<T, N> {
+        let mut v = SmallVec::with_capacity(len);
+        unsafe { v.set_len(len) };
+        v
     }
 }

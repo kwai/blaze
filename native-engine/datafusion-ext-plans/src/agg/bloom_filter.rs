@@ -114,7 +114,7 @@ impl Agg for AggBloomFilter {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn)?;
         accs.ensure_size(acc_idx);
 
         let bloom_filter = match acc_idx {
@@ -165,8 +165,8 @@ impl Agg for AggBloomFilter {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccBloomFilterColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn)?;
+        let merging_accs = downcast_any!(merging_accs, mut AccBloomFilterColumn)?;
 
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
@@ -191,7 +191,7 @@ impl Agg for AggBloomFilter {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccBloomFilterColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccBloomFilterColumn)?;
         let mut binary_builder = BinaryBuilder::with_capacity(acc_idx.len(), 0);
         let mut buf = vec![];
 

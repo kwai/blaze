@@ -23,6 +23,7 @@ use datafusion::common::Result;
 use datafusion_ext_commons::{
     df_execution_err,
     hadoop_fs::{Fs, FsDataInputWrapper, FsProvider},
+    UninitializedInit,
 };
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
@@ -62,7 +63,7 @@ impl InternalFileReader {
     }
 
     pub fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
-        let mut bytes = vec![0u8; range.len()];
+        let mut bytes = Vec::uninitialized_init(range.len());
         self.get_input()?
             .read_fully(range.start as u64, &mut bytes)?;
         Ok(Bytes::from(bytes))

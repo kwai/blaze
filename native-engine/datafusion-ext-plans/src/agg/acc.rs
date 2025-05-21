@@ -22,24 +22,21 @@ use arrow::{
     array::*,
     datatypes::{DataType, *},
 };
-use bitvec::vec::BitVec;
+use bitvec::{bitvec, vec::BitVec};
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use datafusion::{
-    common::{Result, ScalarValue},
-    error::DataFusionError,
-};
+use datafusion::common::{utils::proxy::VecAllocExt, Result, ScalarValue};
 use datafusion_ext_commons::{
-    assume,
-    io::{read_bytes_slice, read_len, read_scalar, write_len, write_scalar},
+    df_execution_err, downcast_any,
+    io::{read_len, read_scalar, write_len, write_scalar},
     scalar_value::scalar_value_heap_mem_size,
-    unchecked,
+    UninitializedInit,
 };
 use smallvec::SmallVec;
 
 use crate::{
     agg::agg::IdxSelection,
     common::SliceAsRawBytes,
-    idx_for,
+    idx_for, idx_with_iter,
     memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
 
@@ -78,7 +75,7 @@ pub struct AccTable {
 }
 
 impl AccTable {
-    pub fn new(cols: Vec<Box<dyn AccColumn>>, num_records: usize) -> Self {
+    pub fn new(cols: Vec<AccColumnRef>, num_records: usize) -> Self {
         assert!(cols.iter().all(|c| c.num_records() == num_records));
         Self { cols }
     }
@@ -104,322 +101,57 @@ impl AccTable {
     }
 }
 
-pub enum AccGenericColumn {
-    Prim {
-        raw: Vec<i128>, // for minimum alignment of Decimal128
-        valids: BitVec,
-        prim_size: usize,
-    },
-    Bytes {
-        items: Vec<Option<AccBytes>>,
-        heap_mem_used: usize,
-    },
-    Scalar {
-        items: Vec<ScalarValue>,
-        dt: DataType,
-        heap_mem_used: usize,
-    },
+pub struct AccBooleanColumn {
+    valids: BitVec,
+    values: BitVec,
 }
 
-impl AccGenericColumn {
-    pub fn new(dt: &DataType, num_rows: usize) -> Self {
-        let mut new = Self::new_empty(dt);
-        new.resize(num_rows);
-        new
-    }
-
-    pub fn new_empty(dt: &DataType) -> Self {
-        match dt {
-            _ if dt == &DataType::Null || dt == &DataType::Boolean || dt.is_primitive() => {
-                AccGenericColumn::Prim {
-                    raw: Default::default(),
-                    valids: Default::default(),
-                    prim_size: match dt {
-                        DataType::Null => 0,
-                        DataType::Boolean => 1,
-                        primitive => primitive.primitive_width().unwrap(),
-                    },
-                }
-            }
-            DataType::Utf8 | DataType::Binary => AccGenericColumn::Bytes {
-                items: Default::default(),
-                heap_mem_used: 0,
-            },
-            _ => AccGenericColumn::Scalar {
-                items: Default::default(),
-                dt: dt.clone(),
-                heap_mem_used: 0,
-            },
+impl AccBooleanColumn {
+    pub fn new(num_records: usize) -> Self {
+        Self {
+            valids: bitvec![0; num_records],
+            values: bitvec![0; num_records],
         }
     }
 
-    pub fn prim_valid(&self, idx: usize) -> bool {
-        assume!(matches!(self, AccGenericColumn::Prim { .. }));
-        match self {
-            AccGenericColumn::Prim { valids, .. } => unsafe {
-                // safety: performance critical, disable bounds checking
-                *valids.get_unchecked(idx)
-            },
-            _ => unreachable!("expect primitive values"),
+    pub fn value(&self, idx: usize) -> Option<bool> {
+        if self.valids[idx] {
+            Some(self.values[idx])
+        } else {
+            None
         }
     }
 
-    pub fn set_prim_valid(&mut self, idx: usize, valid: bool) {
-        assume!(matches!(self, AccGenericColumn::Prim { .. }));
-        match self {
-            AccGenericColumn::Prim { valids, .. } => unsafe {
-                // safety: performance critical, disable bounds checking
-                valids.set_unchecked(idx, valid)
-            },
-            _ => unreachable!("expect primitive values"),
+    pub fn set_value(&mut self, idx: usize, value: Option<bool>) {
+        if let Some(value) = value {
+            self.values.set(idx, value);
+            self.valids.set(idx, true);
+        } else {
+            self.valids.set(idx, false);
         }
     }
 
-    pub fn prim_value<T: Copy>(&self, idx: usize) -> T {
-        assume!(matches!(self, AccGenericColumn::Prim { .. }));
-        match self {
-            AccGenericColumn::Prim { raw, .. } => unsafe {
-                // safety: ptr is aligned
-                let ptr_base = raw.as_ptr() as *mut T;
-                *ptr_base.wrapping_add(idx)
-            },
-            _ => panic!("expect primitive values"),
+    pub fn update_value(&mut self, idx: usize, default_value: bool, update: impl Fn(bool) -> bool) {
+        if self.valids[idx] {
+            let value = self.values[idx];
+            self.values.set(idx, update(value));
+        } else {
+            self.values.set(idx, default_value);
+            self.valids.set(idx, true);
         }
     }
 
-    pub fn set_prim_value<T: Copy>(&mut self, idx: usize, v: T) {
-        assume!(matches!(self, AccGenericColumn::Prim { .. }));
-        match self {
-            AccGenericColumn::Prim { raw, .. } => unsafe {
-                // safety: ptr is aligned
-                let ptr_base = raw.as_mut_ptr() as *mut T;
-                *ptr_base.wrapping_add(idx) = v;
-            },
-            _ => panic!("expect primitive values"),
-        }
-    }
-
-    pub fn update_prim_value<T: Copy>(&mut self, idx: usize, f: impl FnOnce(&mut T)) {
-        assume!(matches!(self, AccGenericColumn::Prim { .. }));
-        match self {
-            AccGenericColumn::Prim { raw, .. } => unsafe {
-                // safety: ptr is aligned
-                let ptr_base = raw.as_mut_ptr() as *mut T;
-                f(&mut *ptr_base.wrapping_add(idx))
-            },
-            _ => panic!("expect primitive values"),
-        }
-    }
-
-    pub fn bytes_value(&self, idx: usize) -> Option<&AccBytes> {
-        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
-        match self {
-            AccGenericColumn::Bytes { items, .. } => unsafe {
-                // safety: performance critical, disable bounds checking
-                items.get_unchecked(idx).as_ref()
-            },
-            _ => panic!("expect bytes values"),
-        }
-    }
-
-    pub fn bytes_value_mut(&mut self, idx: usize) -> Option<&mut AccBytes> {
-        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
-        match self {
-            AccGenericColumn::Bytes { items, .. } => unsafe {
-                // safety: performance critical, disable bounds checking
-                items.get_unchecked_mut(idx).as_mut()
-            },
-            _ => panic!("expect bytes values"),
-        }
-    }
-
-    pub fn set_bytes_value(&mut self, idx: usize, v: Option<AccBytes>) {
-        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
-        match self {
-            AccGenericColumn::Bytes { items, .. } => unchecked!(items)[idx] = v,
-            _ => panic!("expect bytes values"),
-        }
-    }
-
-    pub fn take_bytes_value(&mut self, idx: usize) -> Option<AccBytes> {
-        assume!(matches!(self, AccGenericColumn::Bytes { .. }));
-        match self {
-            AccGenericColumn::Bytes { items, .. } => std::mem::take(&mut unchecked!(items)[idx]),
-            _ => panic!("expect bytes values"),
-        }
-    }
-
-    pub fn add_bytes_mem_used(&mut self, mem_used: usize) {
-        match self {
-            AccGenericColumn::Bytes { heap_mem_used, .. } => *heap_mem_used += mem_used,
-            _ => panic!("expect bytes values"),
-        }
-    }
-
-    pub fn scalar_values(&self) -> &[ScalarValue] {
-        match self {
-            AccGenericColumn::Scalar { items, .. } => items,
-            _ => panic!("expect scalar values"),
-        }
-    }
-
-    pub fn scalar_values_mut(&mut self) -> &mut [ScalarValue] {
-        match self {
-            AccGenericColumn::Scalar { items, .. } => items,
-            _ => panic!("expect scalar values"),
-        }
-    }
-
-    pub fn add_scalar_mem_used(&mut self, mem_used: usize) {
-        match self {
-            AccGenericColumn::Scalar { heap_mem_used, .. } => *heap_mem_used += mem_used,
-            _ => panic!("expect scalar values"),
-        }
-    }
-
-    pub fn to_array(&mut self, idx: IdxSelection, dt: &DataType) -> Result<ArrayRef> {
-        macro_rules! handle_prim {
-            ($ty:ident) => {{
-                type TBuilder = paste::paste! {[<$ty Builder>]};
-                let mut builder = TBuilder::with_capacity(idx.len());
-                idx_for! {
-                    (idx in idx) => {
-                        builder.append_option(self
-                            .prim_valid(idx)
-                            .then(|| self.prim_value(idx)));
-                    }
-                }
-                Ok::<ArrayRef, DataFusionError>(Arc::new(builder.finish()))
-            }};
-        }
-
-        match self {
-            AccGenericColumn::Prim { .. } => match dt {
-                DataType::Null => Ok(Arc::new(NullArray::new(idx.len()))),
-                DataType::Boolean => handle_prim!(Boolean),
-                DataType::Int8 => handle_prim!(Int8),
-                DataType::Int16 => handle_prim!(Int16),
-                DataType::Int32 => handle_prim!(Int32),
-                DataType::Int64 => handle_prim!(Int64),
-                DataType::UInt8 => handle_prim!(UInt8),
-                DataType::UInt16 => handle_prim!(UInt16),
-                DataType::UInt32 => handle_prim!(UInt32),
-                DataType::UInt64 => handle_prim!(UInt64),
-                DataType::Float32 => handle_prim!(Float32),
-                DataType::Float64 => handle_prim!(Float64),
-                DataType::Date32 => handle_prim!(Date32),
-                DataType::Date64 => handle_prim!(Date64),
-                DataType::Timestamp(time_unit, _) => match time_unit {
-                    TimeUnit::Second => handle_prim!(TimestampSecond),
-                    TimeUnit::Millisecond => handle_prim!(TimestampMillisecond),
-                    TimeUnit::Microsecond => handle_prim!(TimestampMicrosecond),
-                    TimeUnit::Nanosecond => handle_prim!(TimestampNanosecond),
-                },
-                DataType::Time32(time_unit) => match time_unit {
-                    TimeUnit::Second => handle_prim!(Time32Second),
-                    TimeUnit::Millisecond => handle_prim!(Time32Millisecond),
-                    _ => panic!("unsupported data type: {dt:?}"),
-                },
-                DataType::Time64(time_unit) => match time_unit {
-                    TimeUnit::Microsecond => handle_prim!(Time64Microsecond),
-                    TimeUnit::Nanosecond => handle_prim!(Time64Nanosecond),
-                    _ => panic!("unsupported data type: {dt:?}"),
-                },
-                DataType::Decimal128(precision, scale) => Ok(Arc::new(
-                    handle_prim!(Decimal128)?
-                        .as_primitive::<Decimal128Type>()
-                        .clone()
-                        .with_precision_and_scale(*precision, *scale)?,
-                )),
-                _ => panic!("unsupported data type: {dt:?}"),
-            },
-            AccGenericColumn::Bytes { items, .. } => match dt {
-                DataType::Utf8 => {
-                    let mut string_builder = StringBuilder::with_capacity(idx.len(), 0);
-                    idx_for! {
-                        (idx in idx) => {
-                            match &items[idx] {
-                                Some(bytes) => {
-                                    string_builder.append_value(unsafe {
-                                        std::str::from_utf8_unchecked(bytes.as_ref())
-                                    })
-                                }
-                                None => string_builder.append_null(),
-                            }
-                        }
-                    }
-                    Ok(Arc::new(string_builder.finish()))
-                }
-                DataType::Binary => {
-                    let mut binary_builder = BinaryBuilder::with_capacity(idx.len(), 0);
-                    idx_for! {
-                        (idx in idx) => {
-                            match &items[idx] {
-                                Some(bytes) => binary_builder.append_value(bytes.as_ref()),
-                                None => binary_builder.append_null(),
-                            }
-                        }
-                    }
-                    Ok(Arc::new(binary_builder.finish()))
-                }
-                _ => panic!("unsupported data type: {dt:?}"),
-            },
-            AccGenericColumn::Scalar { items, .. } => {
-                let mut scalars = Vec::with_capacity(idx.len());
-                idx_for! {
-                    (idx in idx) => {
-                        scalars.push(std::mem::replace(&mut items[idx], ScalarValue::Null));
-                    }
-                }
-                Ok(ScalarValue::iter_to_array(scalars).expect("unsupported data type: {dt:?}"))
-            }
-        }
-    }
-
-    pub fn items_heap_mem_used(&self, idx: IdxSelection) -> usize {
-        let mut heap_mem_used = 0;
-        match self {
-            AccGenericColumn::Prim { .. } => {}
-            AccGenericColumn::Bytes { items, .. } => {
-                idx_for! {
-                    (idx in idx) => {
-                        if let Some(item) = &items[idx] && item.spilled() {
-                            heap_mem_used += item.len();
-                        }
-                    }
-                }
-            }
-            AccGenericColumn::Scalar { items, .. } => {
-                idx_for! {
-                    (idx in idx) => {
-                        heap_mem_used += scalar_value_heap_mem_size(&items[idx]);
-                    }
-                }
-            }
-        }
-        heap_mem_used
-    }
-
-    pub fn add_heap_mem_used(&mut self, heap_mem_used: usize) {
-        match self {
-            AccGenericColumn::Prim { .. } => {}
-            AccGenericColumn::Bytes {
-                heap_mem_used: heap_mem_used_ref,
-                ..
-            } => {
-                *heap_mem_used_ref += heap_mem_used;
-            }
-            AccGenericColumn::Scalar {
-                heap_mem_used: heap_mem_used_ref,
-                ..
-            } => {
-                *heap_mem_used_ref += heap_mem_used;
-            }
-        }
+    pub fn to_array(&self, dt: &DataType, idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        assert!(dt == &DataType::Boolean);
+        idx_with_iter!((idx @ idx) => {
+            Ok(Arc::new(BooleanArray::from_iter(
+                idx.map(|i| self.valids[i].then_some(self.values[i]))
+            )))
+        })
     }
 }
 
-impl AccColumn for AccGenericColumn {
+impl AccColumn for AccBooleanColumn {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -429,189 +161,48 @@ impl AccColumn for AccGenericColumn {
     }
 
     fn resize(&mut self, len: usize) {
-        match self {
-            &mut AccGenericColumn::Prim {
-                ref mut raw,
-                ref mut valids,
-                prim_size,
-            } => {
-                unsafe {
-                    // resize without initialization to zeroes
-                    let new_len = (prim_size * len + 15) / 16;
-                    if new_len > raw.len() {
-                        raw.reserve(new_len - raw.len());
-                        raw.set_len(new_len);
-                    } else {
-                        raw.truncate(new_len);
-                    }
-                }
-                valids.resize(len, false);
-            }
-            AccGenericColumn::Bytes {
-                items,
-                heap_mem_used,
-            } => {
-                for idx in len..items.len() {
-                    if let Some(bytes) = &items[idx]
-                        && bytes.spilled()
-                    {
-                        *heap_mem_used -= bytes.len();
-                    }
-                }
-                items.resize(len, None);
-            }
-            AccGenericColumn::Scalar {
-                items,
-                dt,
-                heap_mem_used,
-            } => {
-                for idx in len..items.len() {
-                    *heap_mem_used -= scalar_value_heap_mem_size(&items[idx]);
-                }
-                items.resize_with(len, || {
-                    ScalarValue::try_from(&*dt).expect("unsupported data type: {dt:?}")
-                });
-            }
-        }
+        self.valids.resize(len, false);
+        self.values.resize(len, false);
     }
 
     fn shrink_to_fit(&mut self) {
-        match self {
-            AccGenericColumn::Prim { raw, valids, .. } => {
-                raw.shrink_to_fit();
-                valids.shrink_to_fit();
-            }
-            AccGenericColumn::Bytes { items, .. } => items.shrink_to_fit(),
-            AccGenericColumn::Scalar { items, .. } => items.shrink_to_fit(),
-        }
+        self.valids.shrink_to_fit();
+        self.values.shrink_to_fit();
     }
 
     fn num_records(&self) -> usize {
-        match self {
-            AccGenericColumn::Prim { valids, .. } => valids.len(),
-            AccGenericColumn::Bytes { items, .. } => items.len(),
-            AccGenericColumn::Scalar { items, .. } => items.len(),
-        }
+        self.values.len()
     }
 
     fn mem_used(&self) -> usize {
-        match self {
-            AccGenericColumn::Prim { raw, valids, .. } => {
-                raw.capacity() * 2 + valids.capacity() * 2 / 8
-            }
-            AccGenericColumn::Bytes {
-                items,
-                heap_mem_used,
-                ..
-            } => heap_mem_used + items.capacity() * 2 * size_of::<Option<AccBytes>>(),
-            AccGenericColumn::Scalar {
-                items,
-                heap_mem_used,
-                ..
-            } => heap_mem_used + items.capacity() * 2 * size_of::<ScalarValue>(),
-        }
+        self.num_records() / 4 // 2 bits for each value
     }
 
-    fn freeze_to_rows(&self, idx: IdxSelection, array: &mut [Vec<u8>]) -> Result<()> {
-        let mut array_idx = 0;
-
-        match self {
-            &AccGenericColumn::Prim {
-                ref raw,
-                ref valids,
-                prim_size,
-            } => {
-                idx_for! {
-                    (i in idx) => {
-                        let w = &mut array[array_idx];
-                        if valids[i] {
-                            w.write_u8(1)?;
-                            w.write_all(&raw.as_raw_bytes()[prim_size * i..][..prim_size])?;
-                        } else {
-                            w.write_u8(0)?;
-                        }
-                        array_idx += 1;
-                    }
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        idx_with_iter!((idx @ idx) => {
+            for (i, w) in idx.zip(array) {
+                if self.valids[i] {
+                    w.write_u8(1 + self.values[i] as u8)?;
+                } else {
+                    w.write_u8(0)?;
                 }
             }
-            AccGenericColumn::Bytes { items, .. } => {
-                idx_for! {
-                    (i in idx) => {
-                        let w = &mut array[array_idx];
-                        if let Some(v) = &items[i] {
-                            write_len(1 + v.len(), w)?;
-                            w.write_all(v)?;
-                        } else {
-                            w.write_u8(0)?;
-                        }
-                        array_idx += 1;
-                    }
-                }
-            }
-            AccGenericColumn::Scalar { items, .. } => {
-                idx_for! {
-                    (i in idx) => {
-                        let w = &mut array[array_idx];
-                        write_scalar(&items[i], true, w)?;
-                        array_idx += 1;
-                    }
-                }
-            }
-        }
+        });
         Ok(())
     }
 
     fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
-        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
-        self.resize(cursors.len());
+        self.resize(0);
 
-        match self {
-            &mut AccGenericColumn::Prim {
-                ref mut raw,
-                ref mut valids,
-                prim_size,
-            } => {
-                for (idx, cursor) in cursors.iter_mut().enumerate() {
-                    let valid = cursor.read_u8()?;
-                    if valid == 1 {
-                        cursor.read_exact(
-                            &mut raw.as_raw_bytes_mut()[prim_size * idx..][..prim_size],
-                        )?;
-                        valids.set(idx, true);
-                    } else {
-                        valids.set(idx, false);
-                    }
+        for cursor in cursors {
+            match cursor.read_u8()? {
+                0 => {
+                    self.valids.push(false);
+                    self.values.push(false);
                 }
-            }
-            AccGenericColumn::Bytes {
-                items,
-                heap_mem_used,
-            } => {
-                for (idx, cursor) in cursors.iter_mut().enumerate() {
-                    let len = read_len(cursor)?;
-                    if len > 0 {
-                        let len = len - 1;
-                        let bytes = AccBytes::from_vec({
-                            let vec: Vec<u8> = read_bytes_slice(cursor, len)?.into();
-                            vec
-                        });
-                        if bytes.spilled() {
-                            *heap_mem_used += bytes.len();
-                        }
-                        items[idx] = Some(bytes);
-                    } else {
-                        items[idx] = None;
-                    }
-                }
-            }
-            AccGenericColumn::Scalar {
-                items,
-                dt,
-                heap_mem_used,
-            } => {
-                for (idx, cursor) in cursors.iter_mut().enumerate() {
-                    items[idx] = read_scalar(cursor, dt, true)?;
-                    *heap_mem_used += scalar_value_heap_mem_size(&items[idx]);
+                v => {
+                    self.valids.push(true);
+                    self.values.push(v - 1 != 0);
                 }
             }
         }
@@ -619,100 +210,519 @@ impl AccColumn for AccGenericColumn {
     }
 
     fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
-        match self {
-            &AccGenericColumn::Prim {
-                ref raw,
-                ref valids,
-                prim_size,
-            } => {
-                // write valids
-                let mut bits: BitVec<u8> = BitVec::with_capacity(idx.len());
-                idx_for! {
-                    (idx in idx) => {
-                        bits.push(valids[idx]);
-                    }
-                }
-                w.write_all(bits.as_raw_slice())?;
+        let mut buf = vec![];
 
-                // write raw data
-                idx_for! {
-                    (idx in idx) => {
-                        if valids[idx] {
-                            w.write_all(&raw.as_raw_bytes()[prim_size * idx..][..prim_size])?;
-                        }
-                    }
+        idx_for! {
+             (idx in idx) => {
+                 if self.valids[idx] {
+                    buf.push(1 + self.values[idx] as u8);
+                } else {
+                    buf.push(0);
+                }
+             }
+        }
+        w.write_all(&buf)?;
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        self.resize(num_rows);
+        let mut buf = Vec::uninitialized_init(num_rows);
+        r.read_exact(&mut buf)?;
+        for (i, v) in buf.into_iter().enumerate() {
+            if v == 0 {
+                self.valids.set(i, false);
+            } else {
+                self.valids.set(i, true);
+                self.values.set(i, v - 1 != 0);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct AccPrimColumn<T: ArrowNativeType> {
+    values: Vec<T>,
+    valids: BitVec,
+}
+
+impl<T: ArrowNativeType> AccPrimColumn<T> {
+    pub fn new(num_records: usize) -> Self {
+        Self {
+            values: vec![T::default(); num_records],
+            valids: bitvec![0; num_records],
+        }
+    }
+
+    pub fn value(&self, idx: usize) -> Option<T> {
+        if self.valids[idx] {
+            Some(self.values[idx])
+        } else {
+            None
+        }
+    }
+
+    pub fn set_value(&mut self, idx: usize, value: Option<T>) {
+        if let Some(value) = value {
+            self.values[idx] = value;
+            self.valids.set(idx, true);
+        } else {
+            self.valids.set(idx, false);
+        }
+    }
+
+    pub fn update_value(&mut self, idx: usize, default_value: T, update: impl Fn(T) -> T) {
+        if self.valids[idx] {
+            self.values[idx] = update(self.values[idx]);
+        } else {
+            self.values[idx] = default_value;
+            self.valids.set(idx, true);
+        }
+    }
+
+    pub fn to_array(&self, dt: &DataType, idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let array: ArrayRef;
+
+        macro_rules! primitive_helper {
+            ($ty:ty) => {{
+                type TNative = <$ty as ArrowPrimitiveType>::Native;
+                let self_prim = downcast_any!(self, AccPrimColumn<TNative>)?;
+                idx_with_iter!((idx @ idx) => {
+                    array = Arc::new(PrimitiveArray::<$ty>::from_iter(
+                        idx.map(|i| self_prim.valids[i].then_some(self_prim.values[i]))
+                    ));
+                })
+            }};
+        }
+        downcast_primitive! {
+            dt => (primitive_helper),
+            other => return df_execution_err!("expected primitive type, got {other:?}"),
+        }
+
+        if let Ok(decimal_array) = downcast_any!(array, Decimal128Array) {
+            return Ok(Arc::new(decimal_array.clone().with_data_type(dt.clone())));
+        }
+        Ok(array)
+    }
+}
+
+impl<T: ArrowNativeType> AccColumn for AccPrimColumn<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn resize(&mut self, len: usize) {
+        self.values.resize(len, T::default());
+        self.valids.resize(len, false);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.values.shrink_to_fit();
+        self.valids.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.values.len()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.values.allocated_size() + (self.valids.capacity() + 7) / 8
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        idx_with_iter!((idx @ idx) => {
+            for (i, w) in idx.zip(array) {
+                if self.valids[i] {
+                    w.write_u8(1)?;
+                    w.write_all([self.values[i]].as_raw_bytes())?;
+                } else {
+                    w.write_u8(0)?;
                 }
             }
-            AccGenericColumn::Bytes { items, .. } => {
-                idx_for! {
-                    (i in idx) => {
-                        if let Some(v) = &items[i] {
-                            write_len(1 + v.len(), w)?;
-                            w.write_all(v)?;
-                        } else {
-                            w.write_u8(0)?;
-                        }
-                    }
+        });
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        self.resize(0);
+        let mut value_buf = [T::default()];
+
+        for cursor in cursors {
+            let valid = cursor.read_u8()?;
+            if valid == 1 {
+                cursor.read_exact(value_buf.as_raw_bytes_mut())?;
+                self.values.push(value_buf[0]);
+                self.valids.push(true);
+            } else {
+                self.values.push(T::default());
+                self.valids.push(false);
+            }
+        }
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        // write valids
+        let mut bits: BitVec<u8> = BitVec::with_capacity(idx.len());
+        idx_for! {
+             (idx in idx) => {
+                 bits.push(self.valids[idx]);
+             }
+        }
+        let num_valids = bits.count_ones();
+        write_len(num_valids, w)?;
+        w.write_all(bits.as_raw_slice())?;
+
+        // write values
+        let mut values = Vec::with_capacity(num_valids);
+        idx_for! {
+            (idx in idx) => {
+                if self.valids[idx] {
+                   values.push(self.values[idx]);
                 }
             }
-            AccGenericColumn::Scalar { items, .. } => {
-                idx_for! {
-                    (i in idx) => {
-                        write_scalar(&items[i], true, w)?;
-                    }
+        }
+        w.write_all(values.as_raw_bytes())?;
+        Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        let num_valids = read_len(r)?;
+
+        // read valids
+        let mut bits: BitVec<u8> = BitVec::repeat(false, num_rows);
+        r.read_exact(bits.as_raw_mut_slice())?;
+        self.valids.clear();
+        self.valids.extend_from_bitslice(bits.as_bitslice());
+
+        // read values
+        self.values.resize(num_rows, T::default());
+        let mut read_values: Vec<T> = Vec::uninitialized_init(num_valids);
+        let mut read_value_pos = 0;
+        r.read_exact(read_values.as_raw_bytes_mut())?;
+        for i in self.valids.iter_ones() {
+            self.values[i] = read_values[read_value_pos];
+            read_value_pos += 1;
+        }
+        Ok(())
+    }
+}
+
+pub struct AccBytesColumn {
+    items: Vec<Option<AccBytes>>,
+    heap_mem_used: usize,
+}
+
+impl AccBytesColumn {
+    pub fn new(num_records: usize) -> Self {
+        Self {
+            items: vec![None; num_records],
+            heap_mem_used: 0,
+        }
+    }
+
+    pub fn value(&self, idx: usize) -> Option<&AccBytes> {
+        self.items[idx].as_ref()
+    }
+
+    pub fn take_value(&mut self, idx: usize) -> Option<AccBytes> {
+        self.heap_mem_used -= self.item_heap_mem_used(idx);
+        std::mem::take(&mut self.items[idx])
+    }
+
+    pub fn set_value(&mut self, idx: usize, value: Option<AccBytes>) {
+        self.heap_mem_used -= self.item_heap_mem_used(idx);
+        self.items[idx] = value;
+        self.heap_mem_used += self.item_heap_mem_used(idx);
+    }
+
+    fn to_array(&self, dt: &DataType, idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        let binary;
+
+        idx_with_iter!((idx @ idx) => {
+            binary = BinaryArray::from_iter(idx.map(|i| self.items[i].as_ref()));
+        });
+        match dt {
+            DataType::Utf8 => Ok(make_array(
+                binary
+                    .to_data()
+                    .into_builder()
+                    .data_type(DataType::Utf8)
+                    .build()?,
+            )),
+            DataType::Binary => Ok(Arc::new(binary)),
+            _ => df_execution_err!("expected string or binary type, got {dt:?}"),
+        }
+    }
+
+    fn item_heap_mem_used(&self, idx: usize) -> usize {
+        if let Some(v) = &self.items[idx]
+            && v.spilled()
+        {
+            v.capacity()
+        } else {
+            0
+        }
+    }
+
+    fn refresh_heap_mem_used(&mut self) {
+        self.heap_mem_used = 0;
+        for item in &self.items {
+            if let Some(v) = item {
+                if v.spilled() {
+                    self.heap_mem_used += v.capacity();
                 }
+            }
+        }
+    }
+
+    fn save_value(&self, idx: usize, w: &mut impl Write) -> Result<()> {
+        if let Some(v) = &self.items[idx] {
+            write_len(1 + v.len(), w)?;
+            w.write_all(v)?;
+        } else {
+            w.write_u8(0)?;
+        }
+        Ok(())
+    }
+
+    fn load_value(&mut self, r: &mut impl Read) -> Result<()> {
+        let read_len = read_len(r)?;
+        if read_len == 0 {
+            self.items.push(None);
+        } else {
+            let len = read_len - 1;
+            let mut bytes = AccBytes::uninitialized_init(len);
+            r.read_exact(bytes.as_mut())?;
+            self.items.push(Some(bytes));
+        }
+        Ok(())
+    }
+}
+
+impl AccColumn for AccBytesColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn resize(&mut self, len: usize) {
+        if len > self.items.len() {
+            self.items.resize(len, Default::default());
+        } else {
+            for idx in len..self.items.len() {
+                self.heap_mem_used -= self.item_heap_mem_used(idx);
+            }
+            self.items.truncate(len);
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.items.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.items.len()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.heap_mem_used + self.items.allocated_size()
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        idx_with_iter!((idx @ idx) => {
+            for (i, w) in idx.zip(array) {
+                self.save_value(i, w)?;
+            }
+        });
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        self.items.resize(0, Default::default());
+        for cursor in cursors {
+            self.load_value(cursor)?;
+        }
+        self.refresh_heap_mem_used();
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        idx_for! {
+            (idx in idx) => {
+                self.save_value(idx, w)?;
             }
         }
         Ok(())
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        assert_eq!(self.num_records(), 0, "expect empty AccColumn");
-        self.resize(num_rows);
+        for _ in 0..num_rows {
+            self.load_value(r)?;
+        }
+        self.refresh_heap_mem_used();
+        Ok(())
+    }
+}
 
-        match self {
-            &mut AccGenericColumn::Prim {
-                ref mut raw,
-                ref mut valids,
-                prim_size,
-            } => {
-                let mut bits: BitVec<u8> = BitVec::repeat(false, num_rows);
-                r.read_exact(bits.as_raw_mut_slice())?;
-                valids.clear();
-                valids.extend_from_bitslice(bits.as_bitslice());
-                for i in 0..num_rows {
-                    if valids[i] {
-                        r.read_exact(&mut raw.as_raw_bytes_mut()[prim_size * i..][..prim_size])?;
-                    }
-                }
+pub struct AccScalarValueColumn {
+    items: Vec<ScalarValue>,
+    dt: DataType,
+    heap_mem_used: usize,
+}
+
+impl AccScalarValueColumn {
+    pub fn new(dt: &DataType, num_rows: usize) -> Self {
+        Self {
+            items: vec![ScalarValue::Null; num_rows],
+            dt: dt.clone(),
+            heap_mem_used: 0,
+        }
+    }
+
+    pub fn to_array(&mut self, _dt: &DataType, idx: IdxSelection<'_>) -> Result<ArrayRef> {
+        idx_with_iter!((idx @ idx) => {
+            ScalarValue::iter_to_array(idx.map(|i| {
+                std::mem::replace(&mut self.items[i], ScalarValue::Null)
+            }))
+        })
+    }
+
+    pub fn value(&self, idx: usize) -> &ScalarValue {
+        &self.items[idx]
+    }
+
+    pub fn take_value(&mut self, idx: usize) -> ScalarValue {
+        self.heap_mem_used -= scalar_value_heap_mem_size(&self.items[idx]);
+        std::mem::replace(&mut self.items[idx], ScalarValue::Null)
+    }
+
+    pub fn set_value(&mut self, idx: usize, value: ScalarValue) {
+        self.heap_mem_used -= scalar_value_heap_mem_size(&self.items[idx]);
+        self.items[idx] = value;
+        self.heap_mem_used += scalar_value_heap_mem_size(&self.items[idx]);
+    }
+}
+
+impl AccColumn for AccScalarValueColumn {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn resize(&mut self, len: usize) {
+        if len > self.items.len() {
+            self.items.resize(len, ScalarValue::Null);
+        } else {
+            for idx in len..self.items.len() {
+                self.heap_mem_used -= scalar_value_heap_mem_size(&self.items[idx]);
             }
-            AccGenericColumn::Bytes {
-                items,
-                heap_mem_used,
-            } => {
-                for i in 0..num_rows {
-                    let len = read_len(r)?;
-                    if len > 0 {
-                        let len = len - 1;
-                        let bytes = read_bytes_slice(r, len)?.into();
-                        items[i] = Some(AccBytes::from_vec(bytes));
-                        *heap_mem_used += len;
-                    } else {
-                        items[i] = None;
-                    }
-                }
+            self.items.truncate(len);
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.items.shrink_to_fit();
+    }
+
+    fn num_records(&self) -> usize {
+        self.items.len()
+    }
+
+    fn mem_used(&self) -> usize {
+        self.heap_mem_used + self.items.allocated_size()
+    }
+
+    fn freeze_to_rows(&self, idx: IdxSelection<'_>, array: &mut [Vec<u8>]) -> Result<()> {
+        idx_with_iter!((idx @ idx) => {
+            for (i, w) in idx.zip(array) {
+                write_scalar(&self.items[i], true, w)?;
             }
-            AccGenericColumn::Scalar {
-                items,
-                dt,
-                heap_mem_used,
-            } => {
-                for i in 0..num_rows {
-                    items[i] = read_scalar(r, dt, true)?;
-                    *heap_mem_used += scalar_value_heap_mem_size(&items[i]);
-                }
+        });
+        Ok(())
+    }
+
+    fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
+        self.items.resize(0, ScalarValue::Null);
+        self.heap_mem_used = 0;
+
+        for cursor in cursors {
+            let scalar = read_scalar(cursor, &self.dt, true)?;
+            self.heap_mem_used += scalar_value_heap_mem_size(&scalar);
+            self.items.push(scalar);
+        }
+        Ok(())
+    }
+
+    fn spill(&self, idx: IdxSelection<'_>, w: &mut SpillCompressedWriter) -> Result<()> {
+        idx_for! {
+            (idx in idx) => {
+                write_scalar(&self.items[idx], true, w)?;
             }
         }
         Ok(())
+    }
+
+    fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
+        self.items.resize(0, ScalarValue::Null);
+        self.heap_mem_used = 0;
+
+        for _ in 0..num_rows {
+            let scalar = read_scalar(r, &self.dt, true)?;
+            self.heap_mem_used += scalar_value_heap_mem_size(&scalar);
+            self.items.push(scalar);
+        }
+        Ok(())
+    }
+}
+
+pub fn create_acc_generic_column(dt: &DataType, num_rows: usize) -> AccColumnRef {
+    macro_rules! primitive_helper {
+        ($t:ty) => {
+            Box::new(AccPrimColumn::<<$t as ArrowPrimitiveType>::Native>::new(
+                num_rows,
+            ))
+        };
+    }
+    downcast_primitive! {
+        dt => (primitive_helper),
+        DataType::Boolean => Box::new(AccBooleanColumn::new(num_rows)),
+        DataType::Utf8 | DataType::Binary => Box::new(AccBytesColumn::new(num_rows)),
+        other => Box::new(AccScalarValueColumn::new(other, num_rows)),
+    }
+}
+
+pub fn acc_generic_column_to_array(
+    column: &mut AccColumnRef,
+    dt: &DataType,
+    idx: IdxSelection<'_>,
+) -> Result<ArrayRef> {
+    macro_rules! primitive_helper {
+        ($t:ty) => {
+            downcast_any!(column, mut AccPrimColumn::<<$t as ArrowPrimitiveType>::Native>)?
+                .to_array(dt, idx)
+        };
+    }
+    downcast_primitive! {
+        dt => (primitive_helper),
+        DataType::Boolean => {
+            downcast_any!(column, mut AccBooleanColumn)?.to_array(dt, idx)
+        }
+        DataType::Utf8 | DataType::Binary => {
+            downcast_any!(column, mut AccBytesColumn)?.to_array(dt, idx)
+        }
+        _other => {
+            downcast_any!(column, mut AccScalarValueColumn)?.to_array(dt, idx)
+        }
     }
 }
