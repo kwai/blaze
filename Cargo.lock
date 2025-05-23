@@ -876,7 +876,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -932,7 +932,7 @@ dependencies = [
 [[package]]
 name = "datafusion-catalog"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow-schema",
  "async-trait",
@@ -946,7 +946,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -969,7 +969,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common-runtime"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "log",
  "tokio",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "datafusion-execution"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "chrono",
@@ -998,7 +998,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1019,7 +1019,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr-common"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "datafusion-common",
@@ -1049,6 +1049,7 @@ dependencies = [
  "paste",
  "radsort",
  "rand 0.9.1",
+ "smallvec 2.0.0-alpha.11",
  "tempfile",
  "thrift",
  "tokio",
@@ -1136,7 +1137,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "arrow-buffer",
@@ -1162,7 +1163,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-aggregate"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1182,7 +1183,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-aggregate-common"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1195,7 +1196,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-nested"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -1217,7 +1218,7 @@ dependencies = [
 [[package]]
 name = "datafusion-functions-window"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "datafusion-common",
  "datafusion-expr",
@@ -1228,7 +1229,7 @@ dependencies = [
 [[package]]
 name = "datafusion-optimizer"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "async-trait",
@@ -1247,7 +1248,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1278,7 +1279,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr-common"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1291,7 +1292,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-optimizer"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow-schema",
  "datafusion-common",
@@ -1304,7 +1305,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-plan"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "ahash",
  "arrow",
@@ -1338,7 +1339,7 @@ dependencies = [
 [[package]]
 name = "datafusion-sql"
 version = "42.0.0"
-source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=e9e2128a7#e9e2128a7c1d2354342907afa511b7c12601b7a6"
+source = "git+https://github.com/blaze-init/arrow-datafusion.git?rev=39e16a76d4fcdcdb3bdcaf1ac84607cef887075b#39e16a76d4fcdcdb3bdcaf1ac84607cef887075b"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -2604,7 +2605,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "orc-rust"
 version = "0.4.1"
-source = "git+https://github.com/blaze-init/datafusion-orc.git?rev=0d798f8#0d798f828d8ef033d482544427e012e2887caf68"
+source = "git+https://github.com/blaze-init/datafusion-orc.git?rev=dad3b032fda52bebe578d13e5177fd3e14d222e7#dad3b032fda52bebe578d13e5177fd3e14d222e7"
 dependencies = [
  "arrow",
  "async-trait",

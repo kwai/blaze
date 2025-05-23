@@ -93,7 +93,7 @@ impl Agg for AggCount {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccCountColumn)?;
 
         if partial_args.is_empty() {
             idx_for_zipped! {
@@ -130,8 +130,8 @@ impl Agg for AggCount {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccCountColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccCountColumn)?;
+        let merging_accs = downcast_any!(merging_accs, mut AccCountColumn)?;
 
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
@@ -146,7 +146,7 @@ impl Agg for AggCount {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccCountColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccCountColumn)?;
 
         idx_with_iter! {
             (acc_idx_iter @ acc_idx) => {

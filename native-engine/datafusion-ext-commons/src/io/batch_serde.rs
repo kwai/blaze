@@ -29,6 +29,7 @@ use unchecked_index::unchecked_index;
 use crate::{
     df_unimplemented_err,
     io::{read_bytes_slice, read_len, write_len},
+    UninitializedInit,
 };
 
 pub fn write_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
@@ -531,7 +532,7 @@ fn write_primitive_raw_array<T: Default + Copy + Sized, W: Write>(
         // safety: transmute to raw bytes is safe for primitive arrays
         std::slice::from_raw_parts(array.as_ptr() as *const u8, num_item_bytes * num_items)
     };
-    let mut raw_out = vec![0u8; raw.len()];
+    let mut raw_out = Vec::uninitialized_init(raw.len());
 
     // write byte-transposed data for better compression ratio
     // for example uint32 array [1,2,3,4,5,6] is stored as raw bytes:
@@ -548,7 +549,7 @@ fn read_primitive_raw_array<T: Default + Copy + Sized, R: Read>(
     input: &mut R,
     num_items: usize,
 ) -> Result<Vec<T>> {
-    let mut out = vec![T::default(); num_items];
+    let mut out = Vec::uninitialized_init(num_items);
     let num_item_bytes = size_of::<T>();
     let raw = read_bytes_slice(input, num_item_bytes * num_items)?;
     let mut raw_out =

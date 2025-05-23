@@ -36,6 +36,7 @@ use datafusion::{
 use datafusion_ext_commons::{
     downcast_any,
     io::{read_len, write_len},
+    UninitializedInit,
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
@@ -93,7 +94,7 @@ impl SparkUDAFWrapper {
         partial_arg_idx: IdxSelection<'_>,
         cache: &OnceCell<LocalRef>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn)?;
 
         let params_schema = self.params_schema.get_or_init(|| {
             Arc::new(Schema::new(
@@ -143,8 +144,8 @@ impl SparkUDAFWrapper {
         merging_acc_idx: IdxSelection<'_>,
         cache: &OnceCell<LocalRef>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccUDAFBufferRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn)?;
+        let merging_accs = downcast_any!(merging_accs, mut AccUDAFBufferRowsColumn)?;
 
         // create zipped indices (using cached indices array)
         let zipped_indices_array = cache.get_or_try_init(move || {
@@ -171,7 +172,7 @@ impl SparkUDAFWrapper {
         acc_idx: IdxSelection<'_>,
         cache: &OnceCell<LocalRef>,
     ) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccUDAFBufferRowsColumn)?;
         let acc_indices_array = cache.get_or_try_init(move || {
             let acc_indices = acc_idx.to_int32_vec();
             Ok::<_, DataFusionError>(jni_new_prim_array!(int, &acc_indices[..])?)
@@ -299,7 +300,7 @@ impl AccUDAFBufferRowsColumn {
                 idx_array.as_obj(),
             ) -> JObject)?;
         let serialized_len = jni_get_byte_array_len!(serialized.as_obj())?;
-        let mut serialized_bytes = vec![0u8; serialized_len];
+        let mut serialized_bytes = Vec::uninitialized_init(serialized_len);
         jni_get_byte_array_region!(serialized.as_obj(), 0, &mut serialized_bytes[..])?;
 
         // UnsafeRow is serialized with big-endian i32 length prefix

@@ -21,11 +21,12 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 use datafusion_ext_commons::{df_unimplemented_err, downcast_any};
-use paste::paste;
 
 use crate::{
     agg::{
-        acc::{AccColumn, AccColumnRef, AccGenericColumn},
+        acc::{
+            acc_generic_column_to_array, create_acc_generic_column, AccColumnRef, AccPrimColumn,
+        },
         agg::IdxSelection,
         Agg,
     },
@@ -82,7 +83,7 @@ impl Agg for AggSum {
     }
 
     fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
-        Box::new(AccGenericColumn::new(&self.data_type, num_rows))
+        create_acc_generic_column(&self.data_type, num_rows)
     }
 
     fn partial_update(
@@ -92,43 +93,21 @@ impl Agg for AggSum {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
+        let partial_arg = &partial_args[0];
         accs.ensure_size(acc_idx);
 
-        macro_rules! handle {
-            ($ty:ident) => {{
-                type TArray = paste! {[<$ty Array>]};
-                type TType = paste! {[<$ty Type>]};
-                type TNative = <TType as ArrowPrimitiveType>::Native;
-                let partial_arg = downcast_any!(&partial_args[0], TArray).unwrap();
+        downcast_primitive_array! {
+            partial_arg => {
+                let accs = downcast_any!(accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
                         if partial_arg.is_valid(partial_arg_idx) {
                             let partial_value = partial_arg.value(partial_arg_idx);
-                            if !accs.prim_valid(acc_idx) {
-                                accs.set_prim_valid(acc_idx, true);
-                                accs.set_prim_value(acc_idx, partial_value);
-                            } else {
-                                accs.update_prim_value::<TNative>(acc_idx, |v| *v += partial_value);
-                            }
+                            accs.update_value(acc_idx, partial_value, |v| v + partial_value);
                         }
                     }
                 }
-            }};
-        }
-        match &self.data_type {
-            DataType::Null => {}
-            DataType::Float32 => handle!(Float32),
-            DataType::Float64 => handle!(Float64),
-            DataType::Int8 => handle!(Int8),
-            DataType::Int16 => handle!(Int16),
-            DataType::Int32 => handle!(Int32),
-            DataType::Int64 => handle!(Int64),
-            DataType::UInt8 => handle!(UInt8),
-            DataType::UInt16 => handle!(UInt16),
-            DataType::UInt32 => handle!(UInt32),
-            DataType::UInt64 => handle!(UInt64),
-            DataType::Decimal128(..) => handle!(Decimal128),
+            }
             other => df_unimplemented_err!("unsupported data type in sum(): {other}")?,
         }
         Ok(())
@@ -141,47 +120,30 @@ impl Agg for AggSum {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccGenericColumn).unwrap();
         accs.ensure_size(acc_idx);
 
-        macro_rules! handle {
+        macro_rules! handle_primitive {
             ($ty:ty) => {{
+                type TNative = <$ty as ArrowPrimitiveType>::Native;
+                let accs = downcast_any!(accs, mut AccPrimColumn<TNative>)?;
+                let merging_accs = downcast_any!(merging_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if merging_accs.prim_valid(merging_acc_idx) {
-                            let merging_value = merging_accs.prim_value::<$ty>(merging_acc_idx);
-                            if !accs.prim_valid(acc_idx) {
-                                accs.set_prim_valid(acc_idx, true);
-                                accs.set_prim_value(acc_idx, merging_value);
-                            } else {
-                                accs.update_prim_value::<$ty>(acc_idx, |v| *v += merging_value);
-                            }
+                        if let Some(merging_value) = merging_accs.value(merging_acc_idx) {
+                            accs.update_value(acc_idx, merging_value, |v| v + merging_value);
                         }
                     }
                 }
             }};
         }
-        match &self.data_type {
-            DataType::Null => {}
-            DataType::Float32 => handle!(f32),
-            DataType::Float64 => handle!(f64),
-            DataType::Int8 => handle!(i8),
-            DataType::Int16 => handle!(i16),
-            DataType::Int32 => handle!(i32),
-            DataType::Int64 => handle!(i64),
-            DataType::UInt8 => handle!(u8),
-            DataType::UInt16 => handle!(u16),
-            DataType::UInt32 => handle!(u32),
-            DataType::UInt64 => handle!(u64),
-            DataType::Decimal128(..) => handle!(u128),
+        downcast_primitive! {
+            (&self.data_type) => (handle_primitive),
             other => df_unimplemented_err!("unsupported data type in sum(): {other}")?,
         }
         Ok(())
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccGenericColumn).unwrap();
-        accs.to_array(acc_idx, &self.data_type)
+        acc_generic_column_to_array(accs, &self.data_type, acc_idx)
     }
 }

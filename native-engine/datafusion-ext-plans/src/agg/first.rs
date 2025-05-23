@@ -28,11 +28,13 @@ use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_
 
 use crate::{
     agg::{
-        acc::{AccBytes, AccColumn, AccColumnRef, AccGenericColumn},
+        acc::{
+            acc_generic_column_to_array, create_acc_generic_column, AccBooleanColumn, AccBytes,
+            AccBytesColumn, AccColumn, AccColumnRef, AccPrimColumn, AccScalarValueColumn,
+        },
         agg::IdxSelection,
         Agg,
     },
-    common::SliceAsRawBytes,
     idx_for_zipped,
     memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };
@@ -80,8 +82,8 @@ impl Agg for AggFirst {
 
     fn create_acc_column(&self, num_rows: usize) -> AccColumnRef {
         Box::new(AccFirstColumn {
-            values: AccGenericColumn::new(&self.data_type, num_rows),
-            flags: AccGenericColumn::new(&DataType::Boolean, num_rows),
+            values: create_acc_generic_column(&self.data_type, num_rows),
+            flags: AccBooleanColumn::new(num_rows),
         })
     }
 
@@ -93,23 +95,24 @@ impl Agg for AggFirst {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let partial_arg = &partial_args[0];
-        let accs = downcast_any!(accs, mut AccFirstColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccFirstColumn)?;
         accs.ensure_size(acc_idx);
 
-        let old_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
+        let (value_accs, flag_accs) = accs.inner_mut();
 
         macro_rules! handle_bytes {
-            ($ty:ident) => {{
-                type TArray = paste::paste! {[<$ty Array>]};
-                let partial_arg = downcast_any!(partial_arg, TArray).unwrap();
+            ($array:expr) => {{
+                let value_accs = downcast_any!(value_accs, mut AccBytesColumn)?;
+                let partial_arg = $array;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !accs.flags.prim_valid(acc_idx) {
-                            accs.flags.set_prim_valid(acc_idx, true);
+                        if !flag_accs.value(acc_idx).is_none() {
                             if partial_arg.is_valid(partial_arg_idx) {
-                                accs.values.set_bytes_value(acc_idx, Some(AccBytes::from(partial_arg.value(partial_arg_idx).as_ref())));
+                                value_accs.set_value(acc_idx, Some(AccBytes::from(partial_arg.value(partial_arg_idx).as_ref())));
+                                flag_accs.set_value(acc_idx, Some(true));
                             } else {
-                                accs.values.set_bytes_value(acc_idx, None);
+                                value_accs.set_value(acc_idx, None);
+                                flag_accs.set_value(acc_idx, Some(true));
                             }
                         }
                     }
@@ -119,33 +122,57 @@ impl Agg for AggFirst {
 
         downcast_primitive_array! {
             partial_arg => {
+                let value_accs = downcast_any!(value_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !accs.flags.prim_valid(acc_idx) {
-                            accs.flags.set_prim_valid(acc_idx, true);
-                            accs.values.set_prim_valid(acc_idx, partial_arg.is_valid(partial_arg_idx));
-                            accs.values.set_prim_value(acc_idx, partial_arg.value(partial_arg_idx));
+                        if !flag_accs.value(acc_idx).is_none() {
+                            if partial_arg.is_valid(partial_arg_idx) {
+                                value_accs.set_value(acc_idx, Some(partial_arg.value(partial_arg_idx)));
+                                flag_accs.set_value(acc_idx, Some(true));
+                            } else {
+                                value_accs.set_value(acc_idx, None);
+                                flag_accs.set_value(acc_idx, Some(true));
+                            }
                         }
                     }
                 }
             }
-            DataType::Utf8 => handle_bytes!(String),
-            DataType::Binary => handle_bytes!(Binary),
-            _other => {
+            DataType::Boolean => {
+                let value_accs = downcast_any!(value_accs, mut AccBooleanColumn)?;
+                let partial_arg = downcast_any!(partial_arg, BooleanArray)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if accs.flags.prim_valid(acc_idx) {
-                            accs.flags.set_prim_valid(acc_idx, true);
-                            accs.values.scalar_values_mut()[acc_idx] = compacted_scalar_value_from_array(partial_arg, partial_arg_idx)?;
+                        if !flag_accs.value(acc_idx).is_none() {
+                            if partial_arg.is_valid(partial_arg_idx) {
+                                value_accs.set_value(acc_idx, Some(partial_arg.value(partial_arg_idx)));
+                                flag_accs.set_value(acc_idx, Some(true));
+                            } else {
+                                value_accs.set_value(acc_idx, None);
+                                flag_accs.set_value(acc_idx, Some(true));
+                            }
+                        }
+                    }
+                }
+            }
+            DataType::Utf8 => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
+            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, BinaryArray)?),
+            _other => {
+                let value_accs = downcast_any!(value_accs, mut AccScalarValueColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
+                        if !flag_accs.value(acc_idx).is_none() {
+                            if partial_arg.is_valid(partial_arg_idx) {
+                                value_accs.set_value(acc_idx, compacted_scalar_value_from_array(partial_arg, partial_arg_idx)?);
+                                flag_accs.set_value(acc_idx, Some(true));
+                            } else {
+                                value_accs.set_value(acc_idx, ScalarValue::Null);
+                                flag_accs.set_value(acc_idx, Some(true));
+                            }
                         }
                     }
                 }
             }
         }
-
-        let new_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
-        accs.values
-            .add_heap_mem_used(new_heap_mem_used - old_heap_mem_used);
         Ok(())
     }
 
@@ -156,93 +183,103 @@ impl Agg for AggFirst {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccFirstColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccFirstColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccFirstColumn)?;
+        let merging_accs = downcast_any!(merging_accs, mut AccFirstColumn)?;
         accs.ensure_size(acc_idx);
 
-        let old_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
+        let (value_accs, flag_accs) = accs.inner_mut();
+        let (merging_value_accs, merging_flag_accs) = merging_accs.inner_mut();
 
-        // safety: bypass borrow checker
-        let accs_values: &mut AccGenericColumn = unsafe { std::mem::transmute(&mut accs.values) };
-
-        match (accs_values, &mut merging_accs.values) {
-            (
-                AccGenericColumn::Prim {
-                    raw,
-                    valids,
-                    prim_size,
-                },
-                AccGenericColumn::Prim {
-                    raw: other_raw,
-                    valids: other_valids,
-                    ..
-                },
-            ) => {
+        macro_rules! handle_primitive {
+            ($ty:ty) => {{
+                type TNative = <$ty as ArrowPrimitiveType>::Native;
+                let value_accs = downcast_any!(value_accs, mut AccPrimColumn<TNative>)?;
+                let merging_value_accs = downcast_any!(merging_value_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
-                            let acc_offset = *prim_size * acc_idx;
-                            let merging_acc_offset = *prim_size * merging_acc_idx;
-                            raw.as_raw_bytes_mut()[acc_offset..][..*prim_size]
-                                .copy_from_slice(&other_raw.as_raw_bytes()[merging_acc_offset..][..*prim_size]);
-                            valids.set(acc_idx, other_valids[merging_acc_idx]);
-                            accs.flags.set_prim_valid(acc_idx, true);
+                        if flag_accs.value(acc_idx).is_none()
+                            && merging_flag_accs.value(merging_acc_idx).is_some()
+                        {
+                            merging_flag_accs.set_value(merging_acc_idx, None);
+                            flag_accs.set_value(acc_idx, Some(true));
+                            value_accs.set_value(acc_idx, merging_value_accs.value(merging_acc_idx));
                         }
                     }
                 }
-            }
-            (
-                AccGenericColumn::Bytes { items, .. },
-                AccGenericColumn::Bytes {
-                    items: other_items, ..
-                },
-            ) => {
-                idx_for_zipped! {
-                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
-                            let item = &mut items[acc_idx];
-                            let mut other_item = &mut other_items[merging_acc_idx];
-                            *item = std::mem::take(&mut other_item);
-                            accs.flags.set_prim_valid(acc_idx, true);
-                        }
-                    }
-                }
-            }
-            (
-                AccGenericColumn::Scalar { items, .. },
-                AccGenericColumn::Scalar {
-                    items: other_items, ..
-                },
-            ) => {
-                idx_for_zipped! {
-                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if !accs.flags.prim_valid(acc_idx) && merging_accs.flags.prim_valid(merging_acc_idx) {
-                            let item = & mut items[acc_idx];
-                            let mut other_item = & mut other_items[merging_acc_idx];
-                            * item = std::mem::replace(& mut other_item, ScalarValue::Null);
-                            accs.flags.set_prim_valid(acc_idx, true);
-                        }
-                    }
-                }
-            }
-            _ => unreachable!(),
+            }}
         }
 
-        let new_heap_mem_used = accs.values.items_heap_mem_used(acc_idx);
-        accs.values
-            .add_heap_mem_used(new_heap_mem_used - old_heap_mem_used);
+        macro_rules! handle_boolean {
+            () => {{
+                let value_accs = downcast_any!(value_accs, mut AccBooleanColumn)?;
+                let merging_value_accs = downcast_any!(merging_value_accs, mut AccBooleanColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if flag_accs.value(acc_idx).is_none()
+                            && merging_flag_accs.value(merging_acc_idx).is_some()
+                        {
+                            value_accs.set_value(acc_idx, merging_value_accs.value(merging_acc_idx));
+                        }
+                    }
+                }
+            }}
+        }
+
+        macro_rules! handle_bytes {
+            () => {{
+                let value_accs = downcast_any!(value_accs, mut AccBytesColumn)?;
+                let merging_value_accs = downcast_any!(merging_value_accs, mut AccBytesColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if flag_accs.value(acc_idx).is_none()
+                            && merging_flag_accs.value(merging_acc_idx).is_some()
+                        {
+                            value_accs.set_value(acc_idx, merging_value_accs.take_value(merging_acc_idx));
+                        }
+                    }
+                }
+            }}
+        }
+
+        downcast_primitive! {
+            (&self.data_type) => (handle_primitive),
+            DataType::Boolean => handle_boolean!(),
+            DataType::Utf8 | DataType::Binary => handle_bytes!(),
+            DataType::Null => {}
+            _ => {
+                let value_accs = downcast_any!(value_accs, mut AccScalarValueColumn)?;
+                let merging_value_accs = downcast_any!(merging_value_accs, mut AccScalarValueColumn)?;
+                idx_for_zipped! {
+                    ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
+                        if flag_accs.value(acc_idx).is_none()
+                            && merging_flag_accs.value(merging_acc_idx).is_some()
+                        {
+                            value_accs.set_value(acc_idx, merging_value_accs.take_value(merging_acc_idx));
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccFirstColumn).unwrap();
-        accs.values.to_array(acc_idx, &self.data_type)
+        let accs = downcast_any!(accs, mut AccFirstColumn)?;
+        acc_generic_column_to_array(&mut accs.values, &self.data_type, acc_idx)
     }
 }
 
 struct AccFirstColumn {
-    values: AccGenericColumn,
-    flags: AccGenericColumn,
+    values: AccColumnRef,
+    flags: AccBooleanColumn,
+}
+
+impl AccFirstColumn {
+    fn inner_mut(&mut self) -> (&mut AccColumnRef, &mut AccBooleanColumn) {
+        let values = &mut self.values as *mut AccColumnRef;
+        let flags = &mut self.flags as *mut AccBooleanColumn;
+        unsafe { (&mut *values, &mut *flags) } // safety: bypass borrow checker
+    }
 }
 
 impl AccColumn for AccFirstColumn {

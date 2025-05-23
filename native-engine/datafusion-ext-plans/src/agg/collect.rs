@@ -122,7 +122,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut C).unwrap();
+        let accs = downcast_any!(accs, mut C)?;
         accs.ensure_size(acc_idx);
 
         idx_for_zipped! {
@@ -143,10 +143,10 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut C).unwrap();
+        let accs = downcast_any!(accs, mut C)?;
         accs.ensure_size(acc_idx);
 
-        let merging_accs = downcast_any!(merging_accs, mut C).unwrap();
+        let merging_accs = downcast_any!(merging_accs, mut C)?;
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
                 accs.merge_items(acc_idx, merging_accs, merging_acc_idx);
@@ -156,7 +156,7 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut C).unwrap();
+        let accs = downcast_any!(accs, mut C)?;
         let mut list = Vec::with_capacity(accs.num_records());
 
         idx_for! {
@@ -510,7 +510,9 @@ impl InternalSet {
     }
 
     fn convert_to_huge_if_needed(&mut self, list: &mut AccList) {
-        if let Self::Small(s) = self {
+        if let Self::Small(s) = self
+            && s.len() >= 4
+        {
             let mut huge = RawTable::default();
 
             for &mut pos_len in s {

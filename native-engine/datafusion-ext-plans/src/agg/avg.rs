@@ -112,7 +112,7 @@ impl Agg for AggAvg {
         partial_args: &[ArrayRef],
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccAvgColumn)?;
         self.agg_sum
             .partial_update(&mut accs.sum, acc_idx, partial_args, partial_arg_idx)?;
         self.agg_count
@@ -127,8 +127,8 @@ impl Agg for AggAvg {
         merging_accs: &mut AccColumnRef,
         merging_acc_idx: IdxSelection<'_>,
     ) -> Result<()> {
-        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
-        let merging_accs = downcast_any!(merging_accs, mut AccAvgColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccAvgColumn)?;
+        let merging_accs = downcast_any!(merging_accs, mut AccAvgColumn)?;
         self.agg_sum.partial_merge(
             &mut accs.sum,
             acc_idx,
@@ -145,7 +145,7 @@ impl Agg for AggAvg {
     }
 
     fn final_merge(&self, accs: &mut AccColumnRef, acc_idx: IdxSelection<'_>) -> Result<ArrayRef> {
-        let accs = downcast_any!(accs, mut AccAvgColumn).unwrap();
+        let accs = downcast_any!(accs, mut AccAvgColumn)?;
         let sums = self.agg_sum.final_merge(&mut accs.sum, acc_idx)?;
         let counts = self.agg_count.final_merge(&mut accs.count, acc_idx)?;
 
