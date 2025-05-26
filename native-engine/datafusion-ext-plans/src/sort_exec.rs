@@ -251,7 +251,6 @@ impl MemConsumer for ExternalSorter {
             .lock()
             .await
             .push(LevelSpill { spill, level: 0 });
-        self.update_mem_used(0).await?;
 
         // merge if there are too many spills
         let mut spills = self.spills.lock().await;
@@ -274,9 +273,10 @@ impl MemConsumer for ExternalSorter {
                     std::mem::take(&mut levels[level])
                         .into_iter()
                         .map(|spill| LevelSpill { spill, level }),
-                )
+                );
             }
         }
+        self.update_mem_used(0).await?;
         Ok(())
     }
 }
