@@ -29,7 +29,7 @@ radsort = "0.1.1"
 smallvec = "2.0.0-alpha.11"
 tempfile = "3"
 thrift = "0.17.0"
-tokio = "1.45.0"
+tokio = "1.45.1"
 unchecked-index = "0.2.2"
 
 [dev-dependencies]
