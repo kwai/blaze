@@ -278,7 +278,16 @@ pub trait MemConsumer: Send + Sync {
     where
         Self: Sized,
     {
-        update_consumer_mem_used_with_custom_updater(self, |_| (0, 0), true).await
+        update_consumer_mem_used_with_custom_updater(
+            self,
+            |consumer_status| {
+                let old_used = consumer_status.mem_used;
+                let new_used = old_used + 1;
+                (old_used, new_used)
+            },
+            true,
+        )
+        .await
     }
 
     /// spills this consumer and returns used memory after spilling
