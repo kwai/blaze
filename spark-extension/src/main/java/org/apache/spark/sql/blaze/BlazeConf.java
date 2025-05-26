@@ -103,7 +103,10 @@ public enum BlazeConf {
     // batches in memory at the same time
     SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.blaze.suggested.batch.memSize.multiwayMerging", 1048576),
 
-    ORC_FORCE_POSITIONAL_EVOLUTION("spark.blaze.orc.force.positional.evolution", false);
+    ORC_FORCE_POSITIONAL_EVOLUTION("spark.blaze.orc.force.positional.evolution", false),
+
+    // enable CUDA supports (via libcudf)
+    ENABLE_CUDA("spark.blaze.enable.cuda", false);
 
     public final String key;
     private final Object defaultValue;

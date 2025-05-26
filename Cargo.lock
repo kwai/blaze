@@ -521,6 +521,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blaze-cudf-bridge"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "datafusion",
+ "datafusion-ext-commons",
+ "log",
+ "num",
+ "parquet",
+ "paste",
+]
+
+[[package]]
 name = "blaze-jni-bridge"
 version = "0.1.0"
 dependencies = [
@@ -1099,6 +1112,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bitvec",
+ "blaze-cudf-bridge",
  "blaze-jni-bridge",
  "byteorder",
  "bytes 1.10.1",
