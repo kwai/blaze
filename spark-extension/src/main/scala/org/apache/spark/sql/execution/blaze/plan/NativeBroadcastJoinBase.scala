@@ -18,6 +18,7 @@ package org.apache.spark.sql.execution.blaze.plan
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
+import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
 import org.apache.spark.sql.blaze.MetricNode
@@ -26,7 +27,6 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeRDD
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
-import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -40,6 +40,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
+import org.apache.spark.sql.execution.joins.HashJoin
 import org.apache.spark.sql.types.LongType
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.JoinOn
@@ -72,7 +73,7 @@ abstract class NativeBroadcastJoinBase(
         "input_row_count"))
       .toSeq: _*)
 
-  private val isLongHashRelation = {
+  {
     val baseBroadcast = broadcastSide match {
       case BroadcastLeft => Shims.get.getUnderlyingBroadcast(left)
       case BroadcastRight => Shims.get.getUnderlyingBroadcast(right)
@@ -91,20 +92,24 @@ abstract class NativeBroadcastJoinBase(
 
   private def nativeSchema = Util.getNativeSchema(output)
 
-  private def nativeJoinOn = leftKeys.zip(rightKeys).map { case (leftKey, rightKey) =>
-    val leftKeyExpr = leftKey match {
-      case k if !isLongHashRelation || k.dataType == LongType => k
-      case k => Cast(k, LongType)
+  private def nativeJoinOn = {
+    if (leftKeys.nonEmpty && rightKeys.nonEmpty) {
+      val rewrittenLeftKeys = MethodUtils
+        .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", leftKeys)
+        .asInstanceOf[Seq[Expression]]
+      val rewrittenRightKeys = MethodUtils
+        .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", rightKeys)
+        .asInstanceOf[Seq[Expression]]
+      rewrittenLeftKeys.zip(rewrittenRightKeys).map { case (leftKey, rightKey) =>
+        JoinOn
+          .newBuilder()
+          .setLeft(NativeConverters.convertExpr(leftKey))
+          .setRight(NativeConverters.convertExpr(rightKey))
+          .build()
+      }
+    } else {
+      Nil
     }
-    val rightKeyExpr = rightKey match {
-      case k if !isLongHashRelation || k.dataType == LongType => k
-      case k => Cast(k, LongType)
-    }
-    JoinOn
-      .newBuilder()
-      .setLeft(NativeConverters.convertExpr(leftKeyExpr))
-      .setRight(NativeConverters.convertExpr(rightKeyExpr))
-      .build()
   }
 
   private def nativeJoinType = NativeConverters.convertJoinType(joinType)
