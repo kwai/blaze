@@ -77,7 +77,7 @@ pub fn batch_size() -> usize {
 
 pub fn suggested_batch_mem_size() -> usize {
     static V: OnceCell<usize> = OnceCell::new();
-    *V.get_or_init(|| SUGGESTED_BATCH_MEM_SIZE.value().unwrap_or(25165824) as usize)
+    *V.get_or_init(|| SUGGESTED_BATCH_MEM_SIZE.value().unwrap_or(8388608) as usize)
 }
 
 pub fn suggested_kway_merge_batch_mem_size() -> usize {
