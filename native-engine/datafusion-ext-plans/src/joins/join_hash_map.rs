@@ -16,7 +16,6 @@ use std::{
     fmt::{Debug, Formatter},
     hash::{BuildHasher, Hasher},
     io::{Cursor, Read, Write},
-    mem::MaybeUninit,
     simd::{cmp::SimdPartialEq, Simd},
     sync::Arc,
 };
@@ -27,10 +26,10 @@ use arrow::{
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
-    io::{read_len, read_raw_slice, write_len, write_raw_slice},
+    io::{read_len, write_len},
     prefetch_read_data,
     spark_hash::create_hashes,
-    unchecked,
+    unchecked, SliceAsRawBytes, UninitializedInit,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -195,15 +194,8 @@ impl Table {
         // read map
         let num_valid_items = read_len(&mut r)?;
         let map_mod_bits = read_len(&mut r)? as u32;
-        let mut map = vec![
-            unsafe {
-                // safety: no need to init to zeros
-                #[allow(invalid_value)]
-                MaybeUninit::<MapValueGroup>::uninit().assume_init()
-            };
-            1usize << map_mod_bits
-        ];
-        read_raw_slice(&mut map, &mut r)?;
+        let mut map = Vec::uninitialized_init(1usize << map_mod_bits);
+        r.read_exact(map.as_raw_bytes_mut())?;
 
         // read mapped indices
         let mapped_indices_len = read_len(&mut r)?;
@@ -224,7 +216,7 @@ impl Table {
         // write map
         write_len(self.num_valid_items, &mut w)?;
         write_len(self.map_mod_bits as usize, &mut w)?;
-        write_raw_slice(&self.map, &mut w)?;
+        w.write_all(self.map.as_raw_bytes())?;
 
         // write mapped indices
         write_len(self.mapped_indices.len(), &mut w)?;

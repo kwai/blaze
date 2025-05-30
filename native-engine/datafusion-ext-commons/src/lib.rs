@@ -16,6 +16,7 @@
 #![feature(core_intrinsics)]
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
+#![feature(let_chains)]
 
 use blaze_jni_bridge::conf::{
     IntConf, BATCH_SIZE, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
@@ -201,5 +202,28 @@ impl<T: Copy, const N: usize> UninitializedInit<SmallVec<T, N>> for SmallVec<T, 
         let mut v = SmallVec::with_capacity(len);
         unsafe { v.set_len(len) };
         v
+    }
+}
+
+pub trait SliceAsRawBytes {
+    fn as_raw_bytes<'a>(&self) -> &'a [u8];
+    fn as_raw_bytes_mut<'a>(&mut self) -> &'a mut [u8];
+}
+
+impl<T: Sized + Copy> SliceAsRawBytes for [T] {
+    fn as_raw_bytes<'a>(&self) -> &'a [u8] {
+        let bytes_ptr = self.as_ptr() as *const u8;
+        unsafe {
+            // safety: access raw bytes
+            std::slice::from_raw_parts(bytes_ptr, size_of::<T>() * self.len())
+        }
+    }
+
+    fn as_raw_bytes_mut<'a>(&mut self) -> &'a mut [u8] {
+        let bytes_ptr = self.as_mut_ptr() as *mut u8;
+        unsafe {
+            // safety: access raw bytes
+            std::slice::from_raw_parts_mut(bytes_ptr, size_of::<T>() * self.len())
+        }
     }
 }

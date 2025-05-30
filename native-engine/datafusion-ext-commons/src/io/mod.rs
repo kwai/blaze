@@ -23,66 +23,20 @@ pub use batch_serde::{read_array, write_array};
 use datafusion::common::Result;
 pub use scalar_serde::{read_scalar, write_scalar};
 
-use crate::arrow::cast::cast;
+use crate::{arrow::cast::cast, UninitializedInit};
 
 mod batch_serde;
 mod scalar_serde;
 
-pub fn write_raw_slice<T: Sized + Copy>(
-    values: &[T],
-    mut output: impl Write,
-) -> std::io::Result<()> {
-    let raw_item_size = size_of::<T>();
-    let raw_slice = unsafe {
-        // safety: transmute copyable slice to bytes slice
-        std::slice::from_raw_parts(values.as_ptr() as *const u8, raw_item_size * values.len())
-    };
-    output.write_all(raw_slice)
-}
-
-pub fn read_raw_slice<T: Sized + Copy>(
-    values: &mut [T],
-    mut input: impl Read,
-) -> std::io::Result<()> {
-    let raw_item_size = size_of::<T>();
-    let raw_slice = unsafe {
-        // safety: transmute copyable slice to bytes slice
-        std::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, raw_item_size * values.len())
-    };
-    input.read_exact(raw_slice)
-}
-
 pub fn write_one_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
-    assert!(cols.iter().all(|col| col.len() == num_rows));
-
-    let mut batch_data = vec![];
-    batch_serde::write_batch(num_rows, cols, &mut batch_data)?;
-    write_len(batch_data.len(), &mut output)?;
-    output.write_all(&batch_data)?;
-    Ok(())
+    batch_serde::write_batch(num_rows, cols, &mut output)
 }
 
 pub fn read_one_batch(
     mut input: impl Read,
     schema: &SchemaRef,
 ) -> Result<Option<(usize, Vec<ArrayRef>)>> {
-    let batch_data_len = match read_len(&mut input) {
-        Ok(len) => len,
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                return Ok(None);
-            }
-            return Err(e.into());
-        }
-    };
-    let mut input = input.take(batch_data_len as u64);
-    let (num_rows, cols) = batch_serde::read_batch(&mut input, schema)?;
-
-    // consume trailing bytes
-    std::io::copy(&mut input, &mut std::io::sink())?;
-
-    assert!(cols.iter().all(|col| col.len() == num_rows));
-    return Ok(Some((num_rows, cols)));
+    batch_serde::read_batch(&mut input, schema)
 }
 
 pub fn recover_named_batch(
@@ -138,25 +92,8 @@ pub fn read_u8<R: Read>(input: &mut R) -> std::io::Result<u8> {
     Ok(buf[0])
 }
 
-pub fn read_bytes_into_vec<R: Read>(
-    input: &mut R,
-    buf: &mut Vec<u8>,
-    len: usize,
-) -> std::io::Result<()> {
-    buf.reserve(len);
-    unsafe {
-        // safety: space has been reserved
-        input.read_exact(std::slice::from_raw_parts_mut(
-            buf.as_mut_ptr().add(buf.len()),
-            len,
-        ))?;
-        buf.set_len(buf.len() + len);
-    }
-    Ok(())
-}
 pub fn read_bytes_slice<R: Read>(input: &mut R, len: usize) -> std::io::Result<Box<[u8]>> {
-    // safety - assume_init() is safe for [u8]
-    let mut byte_slice = unsafe { Box::new_uninit_slice(len).assume_init() };
-    input.read_exact(byte_slice.as_mut())?;
-    Ok(byte_slice)
+    let mut buf = Vec::uninitialized_init(len);
+    input.read_exact(buf.as_mut())?;
+    Ok(buf.into())
 }
