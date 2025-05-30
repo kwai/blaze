@@ -19,26 +19,3 @@ pub mod ipc_compression;
 pub mod offsetted;
 pub mod stream_exec;
 pub mod timer_helper;
-
-pub trait SliceAsRawBytes {
-    fn as_raw_bytes<'a>(&self) -> &'a [u8];
-    fn as_raw_bytes_mut<'a>(&mut self) -> &'a mut [u8];
-}
-
-impl<T: Sized + Copy> SliceAsRawBytes for [T] {
-    fn as_raw_bytes<'a>(&self) -> &'a [u8] {
-        let bytes_ptr = self.as_ptr() as *const u8;
-        unsafe {
-            // safety: access raw bytes
-            std::slice::from_raw_parts(bytes_ptr, size_of::<T>() * self.len())
-        }
-    }
-
-    fn as_raw_bytes_mut<'a>(&mut self) -> &'a mut [u8] {
-        let bytes_ptr = self.as_mut_ptr() as *mut u8;
-        unsafe {
-            // safety: access raw bytes
-            std::slice::from_raw_parts_mut(bytes_ptr, size_of::<T>() * self.len())
-        }
-    }
-}
