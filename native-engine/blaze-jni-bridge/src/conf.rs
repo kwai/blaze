@@ -51,6 +51,7 @@ define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE);
 define_conf!(IntConf, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE);
 define_conf!(BooleanConf, ORC_FORCE_POSITIONAL_EVOLUTION);
 define_conf!(IntConf, UDAF_FALLBACK_NUM_UDAFS_TRIGGER_SORT_AGG);
+define_conf!(BooleanConf, ENABLE_CUDA);
 
 pub trait BooleanConf {
     fn key(&self) -> &'static str;
