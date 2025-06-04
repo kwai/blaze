@@ -22,6 +22,7 @@ members = [
     "native-engine/blaze",
     "native-engine/blaze-jni-bridge",
     "native-engine/blaze-serde",
+    "native-engine/blaze-cudf-bridge",
 ]
 
 [profile.release]
@@ -45,6 +46,7 @@ overflow-checks = false
 [workspace.dependencies]
 blaze = { path = "./native-engine/blaze" }
 blaze-jni-bridge = { path = "./native-engine/blaze-jni-bridge" }
+blaze-cudf-bridge = { path = "./native-engine/blaze-cudf-bridge" }
 blaze-serde = { path = "./native-engine/blaze-serde" }
 datafusion-ext-commons = { path = "./native-engine/datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "./native-engine/datafusion-ext-exprs" }

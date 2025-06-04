@@ -39,6 +39,8 @@ impl Fs {
 
     pub fn mkdirs(&self, path: &str) -> Result<()> {
         let _timer = self.io_time.timer();
+        log::info!("hdfs mkdirs: {path}");
+
         let path_str = jni_new_string!(path)?;
         let path_uri = jni_new_object!(JavaURI(path_str.as_obj()))?;
         let path = jni_new_object!(HadoopPath(path_uri.as_obj()))?;
@@ -53,6 +55,8 @@ impl Fs {
 
     pub fn open(&self, path: &str) -> Result<Arc<FsDataInputWrapper>> {
         let _timer = self.io_time.timer();
+        log::info!("hdfs open: {path}");
+
         let path = jni_new_string!(path)?;
         let wrapper = jni_call_static!(
             JniBridge.openFileAsDataInputWrapper(self.fs.as_obj(), path.as_obj()) -> JObject
@@ -66,6 +70,8 @@ impl Fs {
 
     pub fn create(&self, path: &str) -> Result<Arc<FsDataOutputWrapper>> {
         let _timer = self.io_time.timer();
+        log::info!("hdfs create: {path}");
+
         let path = jni_new_string!(path)?;
         let wrapper = jni_call_static!(
             JniBridge.createFileAsDataOutputWrapper(self.fs.as_obj(), path.as_obj()) -> JObject

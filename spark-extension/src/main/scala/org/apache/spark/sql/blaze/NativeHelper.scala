@@ -99,6 +99,7 @@ object NativeHelper extends Logging {
       "output_rows" -> metric("Native.output_rows"),
       "output_batches" -> metric("Native.output_batches"),
       "elapsed_compute" -> nanoTimingMetric("Native.elapsed_compute"),
+      "cudf_elapsed_compute" -> nanoTimingMetric("Native.cudf_elapsed_compute"),
       "build_hash_map_time" -> nanoTimingMetric("Native.build_hash_map_time"),
       "probed_side_hash_time" -> nanoTimingMetric("Native.probed_side_hash_time"),
       "probed_side_search_time" -> nanoTimingMetric("Native.probed_side_search_time"),
@@ -125,6 +126,9 @@ object NativeHelper extends Logging {
   private def getDefaultNativeFileMetrics(sc: SparkContext): Map[String, SQLMetric] = {
     TreeMap(
       "bytes_scanned" -> SQLMetrics.createSizeMetric(sc, "Native.bytes_scanned"),
+      "cudf_elapsed_compute" -> SQLMetrics.createNanoTimingMetric(
+        sc,
+        "Native.cudf_elapsed_compute"),
       "io_time" -> SQLMetrics.createNanoTimingMetric(sc, "Native.io_time"),
       "io_time_getfs" -> SQLMetrics.createNanoTimingMetric(sc, "Native.io_time_getfs"),
       // Parquet metrics
