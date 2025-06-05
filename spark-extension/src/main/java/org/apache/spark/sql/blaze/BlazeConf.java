@@ -96,7 +96,7 @@ public enum BlazeConf {
     ON_HEAP_SPILL_MEM_FRACTION("spark.blaze.onHeapSpill.memoryFraction", 0.9),
 
     // suggested memory size for record batch
-    SUGGESTED_BATCH_MEM_SIZE("spark.blaze.suggested.batch.memSize", 25165824),
+    SUGGESTED_BATCH_MEM_SIZE("spark.blaze.suggested.batch.memSize", 8388608),
 
     // suggested memory size for k-way merging
     // use smaller batch memory size for kway merging since there will be multiple
