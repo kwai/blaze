@@ -29,11 +29,6 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
     extends ShuffleWriter[K, V]
     with Logging {
 
-  // disable other off-heap memory usages
-  System.setProperty("spark.memory.offHeap.enabled", "false")
-  System.setProperty("io.netty.maxDirectMemory", "0")
-  System.setProperty("io.netty.noPreferDirect", "true")
-
   protected var partitionLengths: Array[Long] = Array[Long]()
   private var mapStatus: Option[MapStatus] = None
 

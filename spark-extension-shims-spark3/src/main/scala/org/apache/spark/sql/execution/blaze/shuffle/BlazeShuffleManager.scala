@@ -26,6 +26,12 @@ import org.blaze.sparkver
 class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   val sortShuffleManager = new SortShuffleManager(conf)
 
+  // disable other off-heap memory usages
+  System.setProperty("spark.memory.offHeap.enabled", "false")
+  System.setProperty("io.netty.maxDirectMemory", "0")
+  System.setProperty("io.netty.noPreferDirect", "true")
+  System.setProperty("io.netty.noUnsafe", "true")
+
   if (!conf.getBoolean("spark.shuffle.spill", defaultValue = true)) {
     logWarning(
       "spark.shuffle.spill was set to false, but this configuration is ignored as of Spark 1.6+." +
