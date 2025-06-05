@@ -13,55 +13,102 @@
 // limitations under the License.
 
 use std::{
-    io::{Read, Write},
-    mem::size_of,
+    io::{ErrorKind, Read, Write},
     sync::Arc,
 };
 
-use arrow::{
-    array::*,
-    buffer::{Buffer, MutableBuffer},
-    datatypes::*,
-};
+use arrow::{array::*, buffer::Buffer, datatypes::*};
 use datafusion::common::Result;
-use unchecked_index::unchecked_index;
 
 use crate::{
     df_unimplemented_err,
     io::{read_bytes_slice, read_len, write_len},
-    UninitializedInit,
+    SliceAsRawBytes, UninitializedInit,
 };
+
+pub enum TransposeOpt {
+    Disabled,
+    Transpose(Box<[u8]>),
+}
+
+impl TransposeOpt {
+    pub fn with_transpose<'a>(
+        num_rows: usize,
+        data_types: impl Iterator<Item = &'a DataType>,
+    ) -> Self {
+        let max_bytes_width = data_types
+            .map(Self::data_type_bytes_width)
+            .max()
+            .unwrap_or(0);
+        TransposeOpt::Transpose(Vec::<u8>::uninitialized_init(num_rows * max_bytes_width).into())
+    }
+
+    pub fn data_type_bytes_width(dt: &DataType) -> usize {
+        match dt {
+            DataType::Null => 0,
+            DataType::Boolean => 0,
+            dt if dt.primitive_width() == Some(1) => 0,
+            dt if dt.primitive_width() >= Some(2) => dt.primitive_width().unwrap(),
+            DataType::Utf8 | DataType::Binary => 4,
+            DataType::List(f) | DataType::Map(f, _) => {
+                Self::data_type_bytes_width(f.data_type()).max(4)
+            }
+            DataType::Struct(fields) => fields
+                .iter()
+                .map(|f| Self::data_type_bytes_width(f.data_type()))
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+}
 
 pub fn write_batch(num_rows: usize, cols: &[ArrayRef], mut output: impl Write) -> Result<()> {
     // write number of columns and rows
     write_len(num_rows, &mut output)?;
 
     // write columns
+    let mut transpose_opt =
+        TransposeOpt::with_transpose(num_rows, cols.iter().map(|col| col.data_type()));
     for col in cols {
-        write_array(col, &mut output)?;
+        write_array(col, &mut output, &mut transpose_opt)?;
     }
     Ok(())
 }
 
-pub fn read_batch(mut input: impl Read, schema: &SchemaRef) -> Result<(usize, Vec<ArrayRef>)> {
+pub fn read_batch(
+    mut input: impl Read,
+    schema: &SchemaRef,
+) -> Result<Option<(usize, Vec<ArrayRef>)>> {
     // read number of columns and rows
-    let num_rows = read_len(&mut input)?;
+    let num_rows = match read_len(&mut input) {
+        Ok(n) => n,
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
 
     // read columns
+    let mut transpose_opt =
+        TransposeOpt::with_transpose(num_rows, schema.fields().iter().map(|f| f.data_type()));
     let cols = schema
         .fields()
         .into_iter()
-        .map(|field| read_array(&mut input, &field.data_type(), num_rows))
+        .map(|field| read_array(&mut input, &field.data_type(), num_rows, &mut transpose_opt))
         .collect::<Result<_>>()?;
-    Ok((num_rows, cols))
+    Ok(Some((num_rows, cols)))
 }
 
-pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
+pub fn write_array<W: Write>(
+    array: &dyn Array,
+    output: &mut W,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<()> {
     macro_rules! write_primitive {
         ($ty:ident) => {{
             write_primitive_array(
                 as_primitive_array::<paste::paste! {[<$ty Type>]}>(array),
                 output,
+                transpose_opt,
             )?
         }};
     }
@@ -79,17 +126,19 @@ pub fn write_array<W: Write>(array: &dyn Array, output: &mut W) -> Result<()> {
         DataType::Float32 => write_primitive!(Float32),
         DataType::Float64 => write_primitive!(Float64),
         DataType::Decimal128(..) => write_primitive!(Decimal128),
-        DataType::Utf8 => write_bytes_array(as_string_array(array), output)?,
-        DataType::Binary => write_bytes_array(as_generic_binary_array::<i32>(array), output)?,
+        DataType::Utf8 => write_bytes_array(as_string_array(array), output, transpose_opt)?,
+        DataType::Binary => {
+            write_bytes_array(as_generic_binary_array::<i32>(array), output, transpose_opt)?
+        }
         DataType::Date32 => write_primitive!(Date32),
         DataType::Date64 => write_primitive!(Date64),
         DataType::Timestamp(TimeUnit::Second, _) => write_primitive!(TimestampSecond),
         DataType::Timestamp(TimeUnit::Millisecond, _) => write_primitive!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => write_primitive!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => write_primitive!(TimestampNanosecond),
-        DataType::List(_field) => write_list_array(as_list_array(array), output)?,
-        DataType::Map(..) => write_map_array(as_map_array(array), output)?,
-        DataType::Struct(_) => write_struct_array(as_struct_array(array), output)?,
+        DataType::List(_field) => write_list_array(as_list_array(array), output, transpose_opt)?,
+        DataType::Map(..) => write_map_array(as_map_array(array), output, transpose_opt)?,
+        DataType::Struct(_) => write_struct_array(as_struct_array(array), output, transpose_opt)?,
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     }
     Ok(())
@@ -99,10 +148,11 @@ pub fn read_array<R: Read>(
     input: &mut R,
     data_type: &DataType,
     num_rows: usize,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     macro_rules! read_primitive {
         ($ty:ident) => {{
-            read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input)?
+            read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input, transpose_opt)?
         }};
     }
     Ok(match data_type {
@@ -129,13 +179,13 @@ pub fn read_array<R: Read>(
         DataType::Timestamp(TimeUnit::Millisecond, _) => read_primitive!(TimestampMillisecond),
         DataType::Timestamp(TimeUnit::Microsecond, _) => read_primitive!(TimestampMicrosecond),
         DataType::Timestamp(TimeUnit::Nanosecond, _) => read_primitive!(TimestampNanosecond),
-        DataType::Utf8 => read_bytes_array(num_rows, input, DataType::Utf8)?,
-        DataType::Binary => read_bytes_array(num_rows, input, DataType::Binary)?,
-        DataType::List(list_field) => read_list_array(num_rows, input, list_field)?,
+        DataType::Utf8 => read_bytes_array(num_rows, input, DataType::Utf8, transpose_opt)?,
+        DataType::Binary => read_bytes_array(num_rows, input, DataType::Binary, transpose_opt)?,
+        DataType::List(list_field) => read_list_array(num_rows, input, list_field, transpose_opt)?,
         DataType::Map(map_field, is_sorted) => {
-            read_map_array(num_rows, input, map_field, *is_sorted)?
+            read_map_array(num_rows, input, map_field, *is_sorted, transpose_opt)?
         }
-        DataType::Struct(fields) => read_struct_array(num_rows, input, fields)?,
+        DataType::Struct(fields) => read_struct_array(num_rows, input, fields, transpose_opt)?,
         other => df_unimplemented_err!("unsupported data type: {other}")?,
     })
 }
@@ -166,9 +216,64 @@ fn read_bits_buffer<R: Read>(input: &mut R, bits_len: usize) -> Result<Buffer> {
     Ok(Buffer::from_vec(buf.into()))
 }
 
+fn write_offsets<W: Write>(
+    output: &mut W,
+    offsets: &[i32],
+    transpose_opt: &mut TransposeOpt,
+) -> Result<()> {
+    let lens = offsets
+        .iter()
+        .zip(&offsets[1..])
+        .map(|(beg, end)| end - beg)
+        .collect::<Vec<_>>();
+
+    if let TransposeOpt::Transpose(buffer) = transpose_opt {
+        transpose::transpose(
+            lens.as_raw_bytes(),
+            buffer.as_raw_bytes_mut()[..4 * lens.len()].as_mut(),
+            4,
+            lens.len(),
+        );
+        output.write_all(buffer[..4 * lens.len()].as_ref())?;
+    } else {
+        output.write_all(lens.as_raw_bytes())?;
+    }
+    Ok(())
+}
+
+fn read_offsets<R: Read>(
+    input: &mut R,
+    num_rows: usize,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<Vec<i32>> {
+    let mut lens: Vec<i32> = Vec::uninitialized_init(num_rows + 1);
+
+    if let TransposeOpt::Transpose(buffer) = transpose_opt {
+        input.read_exact(buffer[..4 * num_rows].as_mut())?;
+        transpose::transpose(
+            buffer[..4 * num_rows].as_ref(),
+            lens[..num_rows].as_raw_bytes_mut(),
+            num_rows,
+            4,
+        );
+    } else {
+        input.read_exact(lens[..num_rows].as_raw_bytes_mut())?;
+    }
+    lens[num_rows] = 0;
+
+    let mut offsets = lens;
+    let mut cur_offset = 0;
+    for offset in &mut offsets {
+        cur_offset += *offset;
+        *offset = cur_offset - *offset;
+    }
+    Ok(offsets)
+}
+
 fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     array: &PrimitiveArray<PT>,
     output: &mut W,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<()> {
     let offset = array.offset();
     let len = array.len();
@@ -184,13 +289,28 @@ fn write_primitive_array<W: Write, PT: ArrowPrimitiveType>(
     } else {
         write_len(0, output)?;
     }
-    write_primitive_raw_array(&array_data.buffer::<PT::Native>(0)[offset..][..len], output)?;
+
+    let byte_width = PT::Native::get_byte_width();
+    if let TransposeOpt::Transpose(buffer) = transpose_opt
+        && byte_width > 1
+    {
+        transpose::transpose(
+            array_data.buffer::<PT::Native>(0)[offset..][..len].as_raw_bytes(),
+            buffer[..byte_width * array.len()].as_raw_bytes_mut(),
+            byte_width,
+            array.len(),
+        );
+        output.write_all(buffer[..byte_width * array.len()].as_ref())?;
+    } else {
+        output.write_all(array_data.buffer::<PT::Native>(0)[offset..][..len].as_raw_bytes())?;
+    }
     Ok(())
 }
 
 fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
     num_rows: usize,
     input: &mut R,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -199,24 +319,38 @@ fn read_primitive_array<R: Read, PT: ArrowPrimitiveType>(
         None
     };
 
-    let data_buffers: Vec<Buffer> = {
-        let data_buffer =
-            Buffer::from_vec(read_primitive_raw_array::<PT::Native, R>(input, num_rows)?);
-        vec![data_buffer]
-    };
+    let mut values: Vec<PT::Native> = Vec::uninitialized_init(num_rows);
+    let byte_width = PT::Native::get_byte_width();
+    if let TransposeOpt::Transpose(buffer) = transpose_opt
+        && byte_width > 1
+    {
+        input.read_exact(buffer[..byte_width * num_rows].as_mut())?;
+        transpose::transpose(
+            buffer[..byte_width * num_rows].as_ref(),
+            values.as_raw_bytes_mut(),
+            num_rows,
+            byte_width,
+        );
+    } else {
+        input.read_exact(values.as_raw_bytes_mut())?;
+    }
 
     let array_data = ArrayData::try_new(
         PT::DATA_TYPE,
         num_rows,
         null_buffer,
         0,
-        data_buffers,
+        vec![Buffer::from_vec(values)],
         vec![],
     )?;
     Ok(make_array(array_data))
 }
 
-fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> Result<()> {
+fn write_list_array<W: Write>(
+    array: &ListArray,
+    output: &mut W,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_len(1, output)?;
         write_bits_buffer(
@@ -230,15 +364,17 @@ fn write_list_array<W: Write>(array: &ListArray, output: &mut W) -> Result<()> {
     }
 
     let value_offsets = array.value_offsets();
-    for (beg, end) in value_offsets.iter().zip(&value_offsets[1..]) {
-        let len = end - beg;
-        write_len(len as usize, output)?;
-    }
+    write_offsets(output, value_offsets, transpose_opt)?;
+
     let values = array.values().slice(
         value_offsets[0] as usize,
         value_offsets[array.len()] as usize - value_offsets[0] as usize,
     );
-    write_array(&values, output)?;
+    write_array(
+        &values,
+        output,
+        &mut TransposeOpt::with_transpose(values.len(), std::iter::once(&array.value_type())),
+    )?;
     Ok(())
 }
 
@@ -246,6 +382,7 @@ fn read_list_array<R: Read>(
     num_rows: usize,
     input: &mut R,
     list_field: &FieldRef,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -254,18 +391,15 @@ fn read_list_array<R: Read>(
         None
     };
 
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for _ in 0..num_rows {
-        let len = read_len(input)?;
-        let offset = cur_offset + len;
-        offsets_buffer.push(offset as u32);
-        cur_offset = offset;
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
-    let values_len = cur_offset;
-    let values = read_array(input, list_field.data_type(), values_len)?;
+    let offsets = read_offsets(input, num_rows, transpose_opt)?;
+    let values_len = offsets.last().cloned().unwrap() as usize;
+    let offsets_buffer: Buffer = Buffer::from_vec(offsets);
+    let values = read_array(
+        input,
+        list_field.data_type(),
+        values_len,
+        &mut TransposeOpt::with_transpose(values_len, std::iter::once(list_field.data_type())),
+    )?;
 
     let array_data = ArrayData::try_new(
         DataType::List(list_field.clone()),
@@ -278,7 +412,11 @@ fn read_list_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> Result<()> {
+fn write_map_array<W: Write>(
+    array: &MapArray,
+    output: &mut W,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<()> {
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
@@ -292,22 +430,18 @@ fn write_map_array<W: Write>(array: &MapArray, output: &mut W) -> Result<()> {
         write_len(0, output)?;
     }
 
-    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
-    let mut cur_offset = first_offset;
-    for &offset in array.value_offsets().iter().skip(1) {
-        let len = offset - cur_offset;
-        write_len(len as usize, output)?;
-        cur_offset = offset;
-    }
-    let entries_len = cur_offset - first_offset;
-    let keys = array
-        .keys()
-        .slice(first_offset as usize, entries_len as usize);
-    let values = array
-        .values()
-        .slice(first_offset as usize, entries_len as usize);
-    write_array(&keys, output)?;
-    write_array(&values, output)?;
+    let value_offsets = array.value_offsets();
+    write_offsets(output, value_offsets, transpose_opt)?;
+
+    let first_offset = value_offsets.first().cloned().unwrap() as usize;
+    let entries_len = value_offsets.last().cloned().unwrap() as usize - first_offset;
+    let keys = array.keys().slice(first_offset, entries_len);
+    let values = array.values().slice(first_offset, entries_len);
+
+    let mut child_transpose_opt =
+        TransposeOpt::with_transpose(entries_len, std::iter::once(array.data_type()));
+    write_array(&keys, output, &mut child_transpose_opt)?;
+    write_array(&values, output, &mut child_transpose_opt)?;
     Ok(())
 }
 
@@ -316,6 +450,7 @@ fn read_map_array<R: Read>(
     input: &mut R,
     map_field: &FieldRef,
     is_sorted: bool,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -324,31 +459,25 @@ fn read_map_array<R: Read>(
         None
     };
 
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for _ in 0..num_rows {
-        let len = read_len(input)?;
-        let offset = cur_offset + len;
-        offsets_buffer.push(offset as u32);
-        cur_offset = offset;
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
-    let values_len = cur_offset;
+    let offsets = read_offsets(input, num_rows, transpose_opt)?;
+    let entries_len = offsets.last().cloned().unwrap() as usize;
+    let offsets_buffer = Buffer::from_vec(offsets);
 
     // build inner struct
+    let mut child_transpose_opt =
+        TransposeOpt::with_transpose(entries_len, std::iter::once(map_field.data_type()));
     let kv_fields = match map_field.data_type() {
         DataType::Struct(fields) => fields,
         _ => unreachable!(),
     };
     let key_values: Vec<ArrayRef> = kv_fields
         .iter()
-        .map(|f| read_array(input, f.data_type(), values_len))
+        .map(|f| read_array(input, f.data_type(), entries_len, &mut child_transpose_opt))
         .collect::<Result<_>>()?;
 
     let struct_array_data = ArrayData::try_new(
         DataType::Struct(kv_fields.clone()),
-        values_len,
+        entries_len,
         None,
         0,
         vec![],
@@ -367,7 +496,11 @@ fn read_map_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> Result<()> {
+fn write_struct_array<W: Write>(
+    array: &StructArray,
+    output: &mut W,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<()> {
     let array_data = array.to_data();
     if let Some(null_buffer) = array_data.nulls() {
         write_len(1, output)?;
@@ -381,12 +514,17 @@ fn write_struct_array<W: Write>(array: &StructArray, output: &mut W) -> Result<(
         write_len(0, output)?;
     }
     for column in array.columns() {
-        write_array(&column, output)?;
+        write_array(&column, output, transpose_opt)?;
     }
     Ok(())
 }
 
-fn read_struct_array<R: Read>(num_rows: usize, input: &mut R, fields: &Fields) -> Result<ArrayRef> {
+fn read_struct_array<R: Read>(
+    num_rows: usize,
+    input: &mut R,
+    fields: &Fields,
+    transpose_opt: &mut TransposeOpt,
+) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
         Some(read_bits_buffer(input, num_rows)?)
@@ -396,7 +534,7 @@ fn read_struct_array<R: Read>(num_rows: usize, input: &mut R, fields: &Fields) -
 
     let child_arrays: Vec<ArrayRef> = fields
         .iter()
-        .map(|field| read_array(input, field.data_type(), num_rows))
+        .map(|field| read_array(input, field.data_type(), num_rows, transpose_opt))
         .collect::<Result<_>>()?;
 
     let array_data = ArrayData::try_new(
@@ -459,6 +597,7 @@ fn read_boolean_array<R: Read>(num_rows: usize, input: &mut R) -> Result<ArrayRe
 fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
     array: &GenericByteArray<T>,
     output: &mut W,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<()> {
     if let Some(null_buffer) = array.to_data().nulls() {
         write_len(1, output)?;
@@ -472,17 +611,12 @@ fn write_bytes_array<T: ByteArrayType<Offset = i32>, W: Write>(
         write_len(0, output)?;
     }
 
-    // transform offsets to lengths for better compression
-    let first_offset = array.value_offsets().first().cloned().unwrap_or_default();
-    let mut cur_offset = first_offset;
-    let mut lens = vec![];
-    for &offset in array.value_offsets().iter().skip(1) {
-        let len = offset - cur_offset;
-        cur_offset = offset;
-        lens.push(len);
-    }
-    write_primitive_raw_array(&lens, output)?;
-    output.write_all(&array.value_data()[first_offset as usize..cur_offset as usize])?;
+    let value_offsets = array.value_offsets();
+    write_offsets(output, value_offsets, transpose_opt)?;
+
+    let first_offset = value_offsets.first().cloned().unwrap() as usize;
+    let last_offset = value_offsets.last().cloned().unwrap() as usize;
+    output.write_all(&array.value_data()[first_offset..last_offset])?;
     Ok(())
 }
 
@@ -490,6 +624,7 @@ fn read_bytes_array<R: Read>(
     num_rows: usize,
     input: &mut R,
     data_type: DataType,
+    transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     let has_null_buffer = read_len(input)? == 1;
     let null_buffer: Option<Buffer> = if has_null_buffer {
@@ -498,19 +633,11 @@ fn read_bytes_array<R: Read>(
         None
     };
 
-    let lens = read_primitive_raw_array::<i32, R>(input, num_rows)?;
-    let mut cur_offset = 0;
-    let mut offsets_buffer = MutableBuffer::new((num_rows + 1) * 4);
-    offsets_buffer.push(0u32);
-    for len in lens {
-        let offset = cur_offset + len;
-        cur_offset = offset;
-        offsets_buffer.push(offset as u32);
-    }
-    let offsets_buffer: Buffer = offsets_buffer.into();
+    let offsets = read_offsets(input, num_rows, transpose_opt)?;
+    let values_len = offsets.last().cloned().unwrap() as usize;
+    let offsets_buffer = Buffer::from_vec(offsets);
 
-    let data_len = cur_offset as usize;
-    let data_buffer = Buffer::from_vec(read_bytes_slice(input, data_len)?.into());
+    let data_buffer = Buffer::from_vec(read_bytes_slice(input, values_len)?.into());
     let array_data = ArrayData::try_new(
         data_type,
         num_rows,
@@ -522,56 +649,6 @@ fn read_bytes_array<R: Read>(
     Ok(make_array(array_data))
 }
 
-fn write_primitive_raw_array<T: Default + Copy + Sized, W: Write>(
-    array: &[T],
-    output: &mut W,
-) -> Result<()> {
-    let num_item_bytes = size_of::<T>();
-    let num_items = array.len();
-    let raw = unsafe {
-        // safety: transmute to raw bytes is safe for primitive arrays
-        std::slice::from_raw_parts(array.as_ptr() as *const u8, num_item_bytes * num_items)
-    };
-    let mut raw_out = Vec::uninitialized_init(raw.len());
-
-    // write byte-transposed data for better compression ratio
-    // for example uint32 array [1,2,3,4,5,6] is stored as raw bytes:
-    //  [0,0,0,1,0,0,0,2,0,0,0,3,0,0,0,4,0,0,0,5,0,0,0,6]
-    // after transpose it becomes:
-    //  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,4,5,6]
-    // which should have better compression ratio.
-    transpose_raw_bytes(&raw, &mut raw_out, num_items, num_item_bytes);
-    output.write_all(&mut raw_out)?;
-    Ok(())
-}
-
-fn read_primitive_raw_array<T: Default + Copy + Sized, R: Read>(
-    input: &mut R,
-    num_items: usize,
-) -> Result<Vec<T>> {
-    let mut out = Vec::uninitialized_init(num_items);
-    let num_item_bytes = size_of::<T>();
-    let raw = read_bytes_slice(input, num_item_bytes * num_items)?;
-    let mut raw_out =
-        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, raw.len()) };
-    transpose_raw_bytes(&raw, &mut raw_out, num_item_bytes, num_items);
-    Ok(out)
-}
-
-fn transpose_raw_bytes(src: &[u8], dest: &mut [u8], num_items: usize, num_item_bytes: usize) {
-    unsafe {
-        // safety: ignore boundary checking
-        let mut buf = unchecked_index(dest);
-        let src = unchecked_index(src);
-
-        for byte_idx in 0..num_item_bytes {
-            for i in 0..num_items {
-                buf[num_items * byte_idx + i] = src[num_item_bytes * i + byte_idx];
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::{io::Cursor, sync::Arc};
@@ -580,20 +657,9 @@ mod test {
     use datafusion::assert_batches_eq;
 
     use crate::io::{
-        batch_serde::{
-            read_batch, read_primitive_raw_array, write_batch, write_primitive_raw_array,
-        },
+        batch_serde::{read_batch, write_batch},
         recover_named_batch,
     };
-
-    #[test]
-    fn test_primitive_raw_bytes() {
-        let src = vec![1, 2, 3, 4, 5, 6];
-        let mut buf = vec![];
-        write_primitive_raw_array(&src, &mut buf).unwrap();
-        let out = read_primitive_raw_array::<i32, _>(&mut Cursor::new(&buf), src.len()).unwrap();
-        assert_eq!(out, src)
-    }
 
     #[test]
     fn test_write_and_read_batch() {
@@ -626,7 +692,8 @@ mod test {
         let mut buf = vec![];
         write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
             batch
@@ -637,7 +704,8 @@ mod test {
         let mut buf = vec![];
         write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
             sliced
@@ -678,7 +746,8 @@ mod test {
         let mut buf = vec![];
         write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_batches_eq!(
             vec![
                 "+-----------+-----------+",
@@ -698,7 +767,8 @@ mod test {
         let mut buf = vec![];
         write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_batches_eq!(
             vec![
                 "+----------+----------+",
@@ -742,7 +812,8 @@ mod test {
         let mut buf = vec![];
         write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
             batch
@@ -753,7 +824,8 @@ mod test {
         let mut buf = vec![];
         write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, sliced.schema()).unwrap(),
             sliced
@@ -780,7 +852,8 @@ mod test {
         let mut buf = vec![];
         write_batch(batch.num_rows(), batch.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
             batch
@@ -791,7 +864,8 @@ mod test {
         let mut buf = vec![];
         write_batch(sliced.num_rows(), sliced.columns(), &mut buf).unwrap();
         let mut cursor = Cursor::new(buf);
-        let (decoded_num_rows, decoded_cols) = read_batch(&mut cursor, &batch.schema()).unwrap();
+        let (decoded_num_rows, decoded_cols) =
+            read_batch(&mut cursor, &batch.schema()).unwrap().unwrap();
         assert_eq!(
             recover_named_batch(decoded_num_rows, &decoded_cols, batch.schema()).unwrap(),
             sliced

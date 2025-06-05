@@ -25,7 +25,10 @@ use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValu
 
 use crate::{
     df_unimplemented_err,
-    io::{read_array, read_bytes_slice, read_len, read_u8, write_array, write_len, write_u8},
+    io::{
+        batch_serde::TransposeOpt, read_array, read_bytes_slice, read_len, read_u8, write_array,
+        write_len, write_u8,
+    },
 };
 
 pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut W) -> Result<()> {
@@ -83,15 +86,15 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut 
             }
         }
         ScalarValue::List(v) => {
-            write_array(v.as_ref(), output)?;
+            write_array(v.as_ref(), output, &mut TransposeOpt::Disabled)?;
         }
         ScalarValue::Struct(v) => {
             for col in v.columns() {
-                write_array(col, output)?;
+                write_array(col, output, &mut TransposeOpt::Disabled)?;
             }
         }
         ScalarValue::Map(v) => {
-            write_array(v.as_ref(), output)?;
+            write_array(v.as_ref(), output, &mut TransposeOpt::Disabled)?;
         }
         other => df_unimplemented_err!("unsupported scalarValue type: {other}")?,
     }
@@ -176,18 +179,22 @@ pub fn read_scalar<R: Read>(
             }
         }
         DataType::List(_) => {
-            let list = read_array(input, data_type, 1)?.as_list().clone();
+            let list = read_array(input, data_type, 1, &mut TransposeOpt::Disabled)?
+                .as_list()
+                .clone();
             ScalarValue::List(Arc::new(list))
         }
         DataType::Struct(fields) => {
             let columns = fields
                 .iter()
-                .map(|field| read_array(input, field.data_type(), 1))
+                .map(|field| read_array(input, field.data_type(), 1, &mut TransposeOpt::Disabled))
                 .collect::<Result<Vec<_>>>()?;
             ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), columns, None)))
         }
         DataType::Map(field, _bool) => {
-            let map = read_array(input, field.data_type(), 1)?.as_map().clone();
+            let map = read_array(input, field.data_type(), 1, &mut TransposeOpt::Disabled)?
+                .as_map()
+                .clone();
             ScalarValue::Map(Arc::new(map))
         }
         other => df_unimplemented_err!("unsupported data type: {other}")?,

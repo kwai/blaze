@@ -33,6 +33,7 @@ use datafusion_ext_commons::{
     batch_size, compute_suggested_batch_size_for_kway_merge,
     compute_suggested_batch_size_for_output, df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, write_len},
+    SliceAsRawBytes,
 };
 use futures::lock::Mutex;
 use once_cell::sync::OnceCell;
@@ -49,7 +50,6 @@ use crate::{
     common::{
         execution_context::{ExecutionContext, WrappedRecordBatchSender},
         timer_helper::TimerHelper,
-        SliceAsRawBytes,
     },
     memmgr::{
         spill::{try_new_spill, Spill, SpillCompressedReader, SpillCompressedWriter},
