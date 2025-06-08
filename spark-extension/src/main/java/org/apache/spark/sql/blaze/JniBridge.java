@@ -98,6 +98,10 @@ public class JniBridge {
     private static final List<BufferPoolMXBean> directMXBeans =
             ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class);
 
+    public static long getTotalMemoryLimited() {
+        return NativeHelper$.MODULE$.totalMemory();
+    }
+
     public static long getDirectMemoryUsed() {
         return directMXBeans.stream()
                 .mapToLong(BufferPoolMXBean::getTotalCapacity)

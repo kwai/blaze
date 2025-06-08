@@ -27,6 +27,10 @@ public enum BlazeConf {
     /// actual off-heap memory usage is expected to be spark.executor.memoryOverhead * fraction.
     MEMORY_FRACTION("spark.blaze.memoryFraction", 0.6),
 
+    /// suggested fraction of process total memory (on-heap and off-heap).
+    /// this limit is for process's resident memory usage
+    PROCESS_MEMORY_FRACTION("spark.blaze.process.vmrss.memoryFraction", 0.9),
+
     /// enable converting upper/lower functions to native, special cases may provide different
     /// outputs from spark due to different unicode versions.
     CASE_CONVERT_FUNCTIONS_ENABLE("spark.blaze.enable.caseconvert.functions", true),

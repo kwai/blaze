@@ -569,6 +569,8 @@ pub struct JniBridge<'a> {
     pub method_createFileAsDataOutputWrapper_ret: ReturnType,
     pub method_getDirectMemoryUsed: JStaticMethodID,
     pub method_getDirectMemoryUsed_ret: ReturnType,
+    pub method_getTotalMemoryLimited: JStaticMethodID,
+    pub method_getTotalMemoryLimited_ret: ReturnType,
     pub method_getDirectWriteSpillToDiskFile: JStaticMethodID,
     pub method_getDirectWriteSpillToDiskFile_ret: ReturnType,
 }
@@ -643,6 +645,12 @@ impl<'a> JniBridge<'a> {
                 "()J",
             )?,
             method_getDirectMemoryUsed_ret: ReturnType::Primitive(Primitive::Long),
+            method_getTotalMemoryLimited: env.get_static_method_id(
+                class,
+                "getTotalMemoryLimited",
+                "()J",
+            )?,
+            method_getTotalMemoryLimited_ret: ReturnType::Primitive(Primitive::Long),
             method_getDirectWriteSpillToDiskFile: env.get_static_method_id(
                 class,
                 "getDirectWriteSpillToDiskFile",
