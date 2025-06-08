@@ -723,9 +723,9 @@ message ExpandProjection {
 
 // Unique identifier for a materialized partition of data
 message PartitionId {
-  string job_id = 1;
   uint32 stage_id = 2;
   uint32 partition_id = 4;
+  uint64 task_id = 5;
 }
 
 message TaskDefinition {

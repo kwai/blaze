@@ -150,7 +150,7 @@ case class BlazeCallNativeWrapper(
       .newBuilder()
       .setPartitionId(partition.index)
       .setStageId(context.map(_.stageId()).getOrElse(0))
-      .setJobId(partition.index.toString)
+      .setTaskId(context.map(_.taskAttemptId()).getOrElse(0))
       .build()
 
     val taskDefinition = TaskDefinition

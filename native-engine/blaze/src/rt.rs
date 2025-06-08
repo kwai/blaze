@@ -53,7 +53,7 @@ use tokio::{runtime::Runtime, task::JoinHandle};
 
 use crate::{
     handle_unwinded_scope,
-    logging::{THREAD_PARTITION_ID, THREAD_STAGE_ID},
+    logging::{THREAD_PARTITION_ID, THREAD_STAGE_ID, THREAD_TID},
     metrics::update_spark_metric_node,
 };
 
@@ -80,6 +80,7 @@ impl NativeExecutionRuntime {
         let task_id = &task_definition.task_id.expect("task_id is empty");
         let stage_id = task_id.stage_id as usize;
         let partition_id = task_id.partition_id as usize;
+        let tid = task_id.task_id as usize;
         let plan = &task_definition.plan.expect("plan is empty");
         drop(raw_task_definition);
 
@@ -118,6 +119,7 @@ impl NativeExecutionRuntime {
                 );
                 THREAD_STAGE_ID.set(stage_id);
                 THREAD_PARTITION_ID.set(partition_id);
+                THREAD_TID.set(tid);
             });
         if num_worker_threads > 0 {
             tokio_runtime_builder.worker_threads(num_worker_threads as usize);
