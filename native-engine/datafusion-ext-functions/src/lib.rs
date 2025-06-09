@@ -26,6 +26,7 @@ pub mod spark_get_json_object;
 mod spark_hash;
 mod spark_make_array;
 mod spark_make_decimal;
+mod spark_normalize_nan_and_zero;
 mod spark_null_if;
 mod spark_sha2;
 mod spark_strings;
@@ -60,6 +61,9 @@ pub fn create_spark_ext_function(name: &str) -> Result<ScalarFunctionImplementat
         "Month" => Arc::new(spark_dates::spark_month),
         "Day" => Arc::new(spark_dates::spark_day),
         "BrickhouseArrayUnion" => Arc::new(brickhouse::array_union::array_union),
+        "NormalizeNanAndZero" => {
+            Arc::new(spark_normalize_nan_and_zero::spark_normalize_nan_and_zero)
+        }
         _ => df_unimplemented_err!("spark ext function not implemented: {name}")?,
     })
 }

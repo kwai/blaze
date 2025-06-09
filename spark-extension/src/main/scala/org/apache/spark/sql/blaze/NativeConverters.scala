@@ -48,6 +48,7 @@ import org.apache.spark.sql.catalyst.plans.LeftOuter
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.optimizer.NormalizeNaNAndZero
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.execution.blaze.plan.Util
 import org.apache.spark.sql.execution.ExecSubqueryExpression
@@ -955,6 +956,9 @@ object NativeConverters extends Logging {
           e.child :: Literal
             .apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
+
+      case e: NormalizeNaNAndZero =>
+        buildExtScalarFunction("NormalizeNanAndZero", e.children, e.dataType)
 
       case e: CreateArray => buildExtScalarFunction("MakeArray", e.children, e.dataType)
 
