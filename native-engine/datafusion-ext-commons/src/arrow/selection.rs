@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::{ptr::NonNull, sync::Arc};
 
 use arrow::{
     array::{
         downcast_primitive, Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanBufferBuilder,
-        BufferBuilder, GenericByteArray, PrimitiveArray, StringArray,
+        GenericByteArray, PrimitiveArray, StringArray,
     },
-    buffer::{MutableBuffer, NullBuffer, OffsetBuffer},
+    buffer::{MutableBuffer, NullBuffer, OffsetBuffer, ScalarBuffer},
     datatypes::{ArrowNativeType, ByteArrayType},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use arrow_schema::DataType;
 use datafusion::common::Result;
 
-use crate::{downcast_any, prefetch_read_data};
+use crate::{downcast_any, prefetch_read_data, unchecked};
 
 pub fn take_batch<T: ArrowPrimitiveType>(
     batch: RecordBatch,
@@ -131,22 +131,23 @@ pub fn create_array_interleaver(
         let nulls = interleaver.nulls(indices);
         let mut values = Vec::with_capacity(indices.len());
 
-        for (i, (a, b)) in indices.iter().enumerate() {
+        for (i, &(array_idx, value_idx)) in indices.iter().enumerate() {
             if WITH_PREFETCHING {
                 const PREFETCH_AHEAD: usize = 4;
                 if i + PREFETCH_AHEAD < indices.len() {
-                    let (pa, pb) = indices[i + PREFETCH_AHEAD];
+                    let (prefetch_array_idx, prefetch_value_idx) = indices[i + PREFETCH_AHEAD];
                     prefetch_read_data!({
-                        let array = interleaver.arrays.get_unchecked(pa);
-                        let ptr = array.values().as_ptr().wrapping_add(array.offset() + pb);
+                        let array = interleaver.arrays.get_unchecked(prefetch_array_idx);
+                        let ptr = array
+                            .values()
+                            .get_unchecked(array.offset() + prefetch_value_idx);
                         ptr
                     });
                 }
             }
-            let array = &interleaver.arrays[*a];
-            if array.is_valid(*b) {
-                let v = interleaver.arrays[*a].value(*b);
-                values.push(v)
+            let array = &interleaver.arrays[array_idx];
+            if array.is_valid(value_idx) {
+                values.push(array.value(value_idx));
             } else {
                 values.push(Default::default());
             }
@@ -162,53 +163,77 @@ pub fn create_array_interleaver(
         indices: &[(usize, usize)],
     ) -> Result<ArrayRef> {
         let nulls = interleaver.nulls(indices);
+        let mut offsets = Vec::with_capacity(indices.len() + 1);
+        let mut take_value_ptrs = Vec::with_capacity(indices.len());
         let mut capacity = 0;
-        let mut offsets = BufferBuilder::<T::Offset>::new(indices.len() + 1);
+        let zero = T::Offset::default();
 
-        offsets.append(T::Offset::from_usize(0).unwrap());
-        for (i, (a, b)) in indices.iter().enumerate() {
-            if WITH_PREFETCHING {
-                const PREFETCH_AHEAD: usize = 4;
-                if i + PREFETCH_AHEAD < indices.len() {
-                    let (pa, pb) = indices[i + PREFETCH_AHEAD];
-                    prefetch_read_data!({
-                        let array = interleaver.arrays.get_unchecked(pa);
-                        array.value_offsets().get_unchecked(pb)
-                    });
+        offsets.push(zero);
+        for &(array_idx, value_idx) in indices {
+            let array = &interleaver.arrays[array_idx];
+            if array.is_valid(value_idx) {
+                let value_offsets = unchecked!(array.value_offsets());
+                let value_start = value_offsets[value_idx];
+                let value_end = value_offsets[value_idx + 1];
+                let value_len = value_end - value_start;
+                capacity += value_len.as_usize();
+                if value_len > zero {
+                    let value_ptr = array.values().as_ptr().wrapping_add(value_start.as_usize());
+                    take_value_ptrs.push(value_ptr);
                 }
             }
-            let array = &interleaver.arrays[*a];
-            if array.is_valid(*b) {
-                let o = array.value_offsets();
-                let element_len = o[*b + 1].as_usize() - o[*b].as_usize();
-                capacity += element_len;
-            }
-            offsets.append(T::Offset::from_usize(capacity).expect("overflow"));
+            offsets.push(T::Offset::from_usize(capacity).expect("overflow"));
         }
 
-        let mut values = MutableBuffer::new(capacity);
-        for (i, (a, b)) in indices.iter().enumerate() {
-            if WITH_PREFETCHING {
-                const PREFETCH_AHEAD: usize = 4;
-                if i + PREFETCH_AHEAD < indices.len() {
-                    let (pa, pb) = indices[i + PREFETCH_AHEAD];
-                    prefetch_read_data!({
-                        let array = interleaver.arrays.get_unchecked(pa);
-                        let start = *array.value_offsets().get_unchecked(pb);
-                        let ptr = array.values().as_ptr().wrapping_add(start.as_usize());
-                        ptr
-                    });
-                }
-            }
-            let array = &interleaver.arrays[*a];
-            if array.is_valid(*b) {
-                values.extend_from_slice(interleaver.arrays[*a].value(*b).as_ref());
-            }
-        }
-
-        // Safety: safe by construction
         let array = unsafe {
-            let offsets = OffsetBuffer::new_unchecked(offsets.finish().into());
+            let mut values = MutableBuffer::new(capacity);
+            let mut dest_ptr = NonNull::new_unchecked(values.as_mut_ptr());
+            values.set_len(capacity);
+
+            let mut src_start_ptr = NonNull::dangling(); // initial value is unused
+            let mut src_end_ptr = src_start_ptr;
+
+            macro_rules! apply_copy {
+                () => {{
+                    if src_end_ptr != src_start_ptr {
+                        let src_len = src_end_ptr.offset_from(src_start_ptr) as usize;
+                        dest_ptr.copy_from_nonoverlapping(src_start_ptr, src_len);
+                        dest_ptr = dest_ptr.add(src_len);
+                    }
+                }};
+            }
+
+            let mut take_value_ptr_idx = 0;
+            for i in 0..indices.len() {
+                let take_value_ptrs = unchecked!(&take_value_ptrs);
+                let offsets = unchecked!(&offsets);
+                let value_len = (offsets[i + 1] - offsets[i]).as_usize();
+                if value_len == 0 {
+                    continue;
+                }
+                let value_ptr =
+                    NonNull::new_unchecked(take_value_ptrs[take_value_ptr_idx] as *mut u8);
+                take_value_ptr_idx += 1;
+
+                // for continous elements, just extend the area to copy
+                // otherwise, copy current area end move to the next area
+                if src_end_ptr != value_ptr {
+                    prefetch_read_data!(value_ptr.as_ptr()); // prefetch next while copying current
+                    apply_copy!();
+                    src_start_ptr = value_ptr;
+                }
+                src_end_ptr = value_ptr.add(value_len);
+            }
+
+            // copy last area
+            apply_copy!();
+            assert_eq!(
+                dest_ptr.as_ptr(),
+                values.as_mut_ptr().wrapping_add(capacity)
+            );
+
+            // build array
+            let offsets = OffsetBuffer::new_unchecked(ScalarBuffer::from(offsets));
             GenericByteArray::<T>::new_unchecked(offsets, values.into(), nulls)
         };
         Ok(Arc::new(array))
