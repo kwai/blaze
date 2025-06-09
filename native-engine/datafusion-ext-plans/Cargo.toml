@@ -43,7 +43,7 @@ smallvec = "2.0.0-alpha.11"
 tempfile = "3"
 tokio = "1.45.1"
 unchecked-index = "0.2.2"
-uuid = "1.15.1"
+uuid = "1.17.0"
 zstd = "0.13.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
