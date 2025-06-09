@@ -21,7 +21,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use blaze_jni_bridge::{is_jni_bridge_inited, jni_call_static};
+use blaze_jni_bridge::{conf, conf::DoubleConf, is_jni_bridge_inited, jni_call_static};
 use bytesize::ByteSize;
 use datafusion::common::Result;
 use once_cell::sync::OnceCell;
@@ -140,10 +140,11 @@ impl MemManager {
     pub fn dump_status(&self) {
         let mm_status = self.status.lock();
         log::info!(
-            "mem manager status: total: {}, mem_used: {}, jvm_direct: {}",
+            "mem manager status: total: {}, mem_used: {}, jvm_direct: {}, proc resident: {}",
             ByteSize(self.total as u64),
             ByteSize(mm_status.total_used as u64),
             ByteSize(get_mem_jvm_direct_used() as u64),
+            ByteSize(get_proc_memory_used() as u64),
         );
         drop(mm_status);
 
@@ -313,7 +314,7 @@ async fn update_consumer_mem_used_with_custom_updater(
         Nothing, // do nothing
     }
 
-    let (mem_unspillable, mem_jvm_direct_used);
+    let (mem_unspillable, mem_jvm_direct_used, mem_proc_total_used);
     let (mem_used, total_used, operation) = {
         let mut mm_status = mm.status.lock();
         let mut consumer_status = consumer_info.status.lock();
@@ -359,10 +360,18 @@ async fn update_consumer_mem_used_with_custom_updater(
         let consumer_mem_max = total_managed / num_spillables;
         let consumer_mem_min = consumer_mem_max / 8;
 
+        static PROCESS_MEMORY_FRACTION: OnceCell<f64> = OnceCell::new();
+        let proc_mem_fraction = PROCESS_MEMORY_FRACTION
+            .get_or_init(|| conf::PROCESS_MEMORY_FRACTION.value().unwrap_or(1.0));
+        let mem_proc_max = (get_proc_memory_limited() as f64 * proc_mem_fraction) as usize;
+        mem_proc_total_used = get_proc_memory_used();
+
         let total_overflowed = total_used > total_managed;
         let consumer_overflowed = new_used > consumer_mem_max;
+        let proc_overflowed = mem_proc_total_used > mem_proc_max;
+
         let operation = if forced
-            || ((total_overflowed || consumer_overflowed)
+            || ((total_overflowed || consumer_overflowed || proc_overflowed)
                 && new_used > MIN_TRIGGER_SIZE
                 && new_used > old_used)
         {
@@ -396,12 +405,13 @@ async fn update_consumer_mem_used_with_custom_updater(
     // trigger spilling
     if operation == Operation::Spill {
         log::info!(
-            "mem manager spilling {consumer_name} (mem_used: {}), total: {}/{}, unspillable: {}, jvm_direct: {}",
+            "mem manager spilling {consumer_name} (consumer: {}), total_consumer: {}/{}, unspillable: {}, jvm_direct: {}, proc resident: {}",
             ByteSize(mem_used as u64),
             ByteSize(total_used as u64),
             ByteSize(mm.total as u64),
             ByteSize(mem_unspillable as u64),
             ByteSize(mem_jvm_direct_used as u64),
+            ByteSize(mem_proc_total_used as u64),
         );
         consumer.spill().await?;
         return Ok(());
@@ -415,4 +425,32 @@ fn get_mem_jvm_direct_used() -> usize {
     } else {
         0
     }
+}
+
+fn get_proc_memory_limited() -> usize {
+    if is_jni_bridge_inited() {
+        jni_call_static!(JniBridge.getTotalMemoryLimited() -> i64).unwrap_or_default() as usize
+    } else {
+        0
+    }
+}
+
+fn get_proc_memory_used() -> usize {
+    #[cfg(target_os = "linux")]
+    fn get_vmrss_used() -> usize {
+        use procfs::{process::Process, ProcResult};
+
+        fn get_vmrss_used_impl() -> ProcResult<usize> {
+            let self_proc = Process::myself()?;
+            let statm = self_proc.statm()?;
+            Ok(statm.resident as usize * procfs::page_size() as usize)
+        }
+        get_vmrss_used_impl().unwrap_or(0)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn get_vmrss_used() -> usize {
+        0
+    }
+    get_vmrss_used()
 }
