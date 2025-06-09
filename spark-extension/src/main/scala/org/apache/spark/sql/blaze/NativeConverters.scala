@@ -957,7 +957,8 @@ object NativeConverters extends Logging {
             .apply(precision, IntegerType) :: Literal.apply(scale, IntegerType) :: Nil
         buildExtScalarFunction("CheckOverflow", args, DecimalType(precision, scale))
 
-      case e: NormalizeNaNAndZero =>
+      case e: NormalizeNaNAndZero
+          if e.dataType.isInstanceOf[FloatType] || e.dataType.isInstanceOf[DoubleType] =>
         buildExtScalarFunction("NormalizeNanAndZero", e.children, e.dataType)
 
       case e: CreateArray => buildExtScalarFunction("MakeArray", e.children, e.dataType)
