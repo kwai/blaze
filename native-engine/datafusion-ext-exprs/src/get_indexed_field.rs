@@ -76,8 +76,9 @@ impl PhysicalExpr for GetIndexedFieldExpr {
 
     fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         let data_type = self.arg.data_type(input_schema)?;
+        let nullable = self.arg.nullable(input_schema)?;
         let field = get_indexed_field(input_schema, &self.arg, &data_type, &self.key)?;
-        Ok(field.is_nullable())
+        Ok(nullable || field.is_nullable())
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
