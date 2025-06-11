@@ -2261,9 +2261,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.169"
+version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5aba8db14291edd000dfcc4d620c7ebfb122c613afb886ca8803fa4e128a20a"
+checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
 name = "libloading"
@@ -2454,9 +2454,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.29.0"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
 dependencies = [
  "bitflags 2.6.0",
  "cfg-if",
@@ -2811,9 +2811,9 @@ checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 
 [[package]]
 name = "poem"
-version = "3.1.10"
+version = "3.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45d6156bc3d60b0e1ce2cceb9d6de2f0853b639173a05f6c4ed224bee0d2ef2e"
+checksum = "3ea63e9302279b1ca262d15342760f8d08f04fb974d4997e8baed7d034b94121"
 dependencies = [
  "bytes 1.10.1",
  "futures-util",
@@ -2823,7 +2823,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "mime",
- "nix 0.29.0",
+ "nix 0.30.1",
  "parking_lot",
  "percent-encoding",
  "pin-project-lite",
@@ -2848,9 +2848,9 @@ dependencies = [
 
 [[package]]
 name = "poem-derive"
-version = "3.1.10"
+version = "3.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c1924cc95d22ee595117635c5e7b8659e664638399177d5a527e1edfd8c301d"
+checksum = "824e7fe35343b7fe354e5d4ac444ddbe674676ebba4b4e48565835661033d338"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
