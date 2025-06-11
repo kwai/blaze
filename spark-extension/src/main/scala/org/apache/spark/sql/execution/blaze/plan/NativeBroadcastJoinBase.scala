@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
-import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.Partition
 import org.apache.spark.sql.blaze.MetricNode
@@ -40,7 +39,6 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.BinaryExecNode
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
-import org.apache.spark.sql.execution.joins.HashJoin
 import org.apache.spark.sql.types.LongType
 import org.blaze.{protobuf => pb}
 import org.blaze.protobuf.JoinOn
@@ -94,12 +92,8 @@ abstract class NativeBroadcastJoinBase(
 
   private def nativeJoinOn = {
     if (leftKeys.nonEmpty && rightKeys.nonEmpty) {
-      val rewrittenLeftKeys = MethodUtils
-        .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", leftKeys)
-        .asInstanceOf[Seq[Expression]]
-      val rewrittenRightKeys = MethodUtils
-        .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", rightKeys)
-        .asInstanceOf[Seq[Expression]]
+      val rewrittenLeftKeys = rewriteKeyExprToLong(leftKeys)
+      val rewrittenRightKeys = rewriteKeyExprToLong(rightKeys)
       rewrittenLeftKeys.zip(rewrittenRightKeys).map { case (leftKey, rightKey) =>
         JoinOn
           .newBuilder()
@@ -118,6 +112,8 @@ abstract class NativeBroadcastJoinBase(
     case BroadcastLeft => pb.JoinSide.LEFT_SIDE
     case BroadcastRight => pb.JoinSide.RIGHT_SIDE
   }
+
+  protected def rewriteKeyExprToLong(exprs: Seq[Expression]): Seq[Expression]
 
   // check whether native converting is supported
   nativeSchema

@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.blaze.plan
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
-import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -31,7 +30,6 @@ import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.BinaryExecNode
-import org.apache.spark.sql.execution.joins.HashJoin
 import org.blaze.{protobuf => pb}
 
 abstract class NativeShuffledHashJoinBase(
@@ -65,12 +63,8 @@ abstract class NativeShuffledHashJoinBase(
   private def nativeSchema = Util.getNativeSchema(output)
 
   private def nativeJoinOn = {
-    val rewrittenLeftKeys = MethodUtils
-      .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", leftKeys)
-      .asInstanceOf[Seq[Expression]]
-    val rewrittenRightKeys = MethodUtils
-      .invokeStaticMethod(classOf[HashJoin], "rewriteKeyExpr", rightKeys)
-      .asInstanceOf[Seq[Expression]]
+    val rewrittenLeftKeys = rewriteKeyExprToLong(leftKeys)
+    val rewrittenRightKeys = rewriteKeyExprToLong(rightKeys)
     rewrittenLeftKeys.zip(rewrittenRightKeys).map { case (leftKey, rightKey) =>
       pb.JoinOn
         .newBuilder()
@@ -86,6 +80,9 @@ abstract class NativeShuffledHashJoinBase(
     case BuildLeft => pb.JoinSide.LEFT_SIDE
     case BuildRight => pb.JoinSide.RIGHT_SIDE
   }
+
+  protected def rewriteKeyExprToLong(exprs: Seq[Expression]): Seq[Expression]
+
   // check whether native converting is supported
   nativeSchema
   nativeJoinOn
