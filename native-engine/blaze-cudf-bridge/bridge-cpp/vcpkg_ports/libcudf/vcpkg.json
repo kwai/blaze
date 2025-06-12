@@ -1,0 +1,12 @@
+{
+  "name": "libcudf",
+  "version": "25.6",
+  "description": "GPU DataFrame Library for Apache Arrow",
+  "homepage": "https://github.com/rapidsai/cudf",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "vcpkg-cmake",
+    "cuda"
+  ],
+  "supports": "linux | windows | osx"
+}
