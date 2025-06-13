@@ -44,7 +44,7 @@ class BlazeUniffleShuffleWriter[K, V, C](
   override def rssStop(success: Boolean): Unit = {
     waitAndCheckBlocksSend()
     logInfo(s"Reporting the shuffle result...")
-    super.stop(success)
+    // Don't call super.stop() here to avoid recursive loop due to BlazeRssShuffleWriterBase.stop()
     rssShuffleWriter.stop(success)
   }
 }
