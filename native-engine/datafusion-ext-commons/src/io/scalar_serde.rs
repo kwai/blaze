@@ -17,10 +17,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::{
-    array::{AsArray, StructArray},
-    datatypes::*,
-};
+use arrow::{array::AsArray, datatypes::*};
 use datafusion::{common::Result, parquet::data_type::AsBytes, scalar::ScalarValue};
 
 use crate::{
@@ -89,9 +86,7 @@ pub fn write_scalar<W: Write>(value: &ScalarValue, nullable: bool, output: &mut 
             write_array(v.as_ref(), output, &mut TransposeOpt::Disabled)?;
         }
         ScalarValue::Struct(v) => {
-            for col in v.columns() {
-                write_array(col, output, &mut TransposeOpt::Disabled)?;
-            }
+            write_array(v.as_ref(), output, &mut TransposeOpt::Disabled)?;
         }
         ScalarValue::Map(v) => {
             write_array(v.as_ref(), output, &mut TransposeOpt::Disabled)?;
@@ -184,15 +179,14 @@ pub fn read_scalar<R: Read>(
                 .clone();
             ScalarValue::List(Arc::new(list))
         }
-        DataType::Struct(fields) => {
-            let columns = fields
-                .iter()
-                .map(|field| read_array(input, field.data_type(), 1, &mut TransposeOpt::Disabled))
-                .collect::<Result<Vec<_>>>()?;
-            ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), columns, None)))
+        DataType::Struct(_) => {
+            let struct_ = read_array(input, data_type, 1, &mut TransposeOpt::Disabled)?
+                .as_struct()
+                .clone();
+            ScalarValue::Struct(Arc::new(struct_))
         }
-        DataType::Map(field, _bool) => {
-            let map = read_array(input, field.data_type(), 1, &mut TransposeOpt::Disabled)?
+        DataType::Map(_, _bool) => {
+            let map = read_array(input, data_type, 1, &mut TransposeOpt::Disabled)?
                 .as_map()
                 .clone();
             ScalarValue::Map(Arc::new(map))

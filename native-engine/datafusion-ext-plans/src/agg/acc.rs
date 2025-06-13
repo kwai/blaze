@@ -574,14 +574,17 @@ impl AccColumn for AccBytesColumn {
 pub struct AccScalarValueColumn {
     items: Vec<ScalarValue>,
     dt: DataType,
+    null_value: ScalarValue,
     heap_mem_used: usize,
 }
 
 impl AccScalarValueColumn {
     pub fn new(dt: &DataType, num_rows: usize) -> Self {
+        let null_value = ScalarValue::try_from(dt).expect("unsupported data type");
         Self {
-            items: vec![ScalarValue::Null; num_rows],
+            items: (0..num_rows).map(|_| null_value.clone()).collect(),
             dt: dt.clone(),
+            null_value,
             heap_mem_used: 0,
         }
     }
@@ -589,7 +592,7 @@ impl AccScalarValueColumn {
     pub fn to_array(&mut self, _dt: &DataType, idx: IdxSelection<'_>) -> Result<ArrayRef> {
         idx_with_iter!((idx @ idx) => {
             ScalarValue::iter_to_array(idx.map(|i| {
-                std::mem::replace(&mut self.items[i], ScalarValue::Null)
+                std::mem::replace(&mut self.items[i], self.null_value.clone())
             }))
         })
     }
@@ -600,7 +603,7 @@ impl AccScalarValueColumn {
 
     pub fn take_value(&mut self, idx: usize) -> ScalarValue {
         self.heap_mem_used -= scalar_value_heap_mem_size(&self.items[idx]);
-        std::mem::replace(&mut self.items[idx], ScalarValue::Null)
+        std::mem::replace(&mut self.items[idx], self.null_value.clone())
     }
 
     pub fn set_value(&mut self, idx: usize, value: ScalarValue) {
@@ -621,7 +624,7 @@ impl AccColumn for AccScalarValueColumn {
 
     fn resize(&mut self, len: usize) {
         if len > self.items.len() {
-            self.items.resize(len, ScalarValue::Null);
+            self.items.resize_with(len, || self.null_value.clone());
         } else {
             for idx in len..self.items.len() {
                 self.heap_mem_used -= scalar_value_heap_mem_size(&self.items[idx]);
@@ -652,7 +655,7 @@ impl AccColumn for AccScalarValueColumn {
     }
 
     fn unfreeze_from_rows(&mut self, cursors: &mut [Cursor<&[u8]>]) -> Result<()> {
-        self.items.resize(0, ScalarValue::Null);
+        self.items.truncate(0);
         self.heap_mem_used = 0;
 
         for cursor in cursors {
@@ -673,7 +676,7 @@ impl AccColumn for AccScalarValueColumn {
     }
 
     fn unspill(&mut self, num_rows: usize, r: &mut SpillCompressedReader) -> Result<()> {
-        self.items.resize(0, ScalarValue::Null);
+        self.items.truncate(0);
         self.heap_mem_used = 0;
 
         for _ in 0..num_rows {
