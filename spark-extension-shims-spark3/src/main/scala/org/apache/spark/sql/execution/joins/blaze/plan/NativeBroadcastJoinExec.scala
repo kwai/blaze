@@ -74,9 +74,6 @@ case class NativeBroadcastJoinExec(
     }
   }
 
-  override def rewriteKeyExprToLong(exprs: Seq[Expression]): Seq[Expression] =
-    HashJoin.rewriteKeyExpr(exprs)
-
   @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   override def supportCodegen: Boolean = false
 

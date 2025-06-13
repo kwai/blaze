@@ -20,7 +20,6 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.blaze.plan.BuildSide
 import org.apache.spark.sql.execution.blaze.plan.NativeShuffledHashJoinBase
-import org.apache.spark.sql.execution.joins.HashJoin
 import org.blaze.sparkver
 
 case object NativeShuffledHashJoinExecProvider {
@@ -53,10 +52,6 @@ case object NativeShuffledHashJoinExecProvider {
       override def isSkewJoin: Boolean = false
 
       override def supportCodegen: Boolean = false
-
-      override def rewriteKeyExprToLong(exprs: Seq[Expression]): Seq[Expression] =
-        HashJoin.rewriteKeyExpr(exprs)
-
 
       override def inputRDDs(): Seq[RDD[InternalRow]] = {
         throw new NotImplementedError("NativeSortMergeJoin dose not support codegen")
