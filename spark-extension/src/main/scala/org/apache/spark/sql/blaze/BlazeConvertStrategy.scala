@@ -44,6 +44,7 @@ import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
 import org.apache.spark.sql.execution.UnaryExecNode
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 
 object BlazeConvertStrategy extends Logging {
@@ -176,7 +177,9 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: LocalTableScanExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e: DataWritingCommandExec if isNative(e.child) =>
+      case e: DataWritingCommandExec
+          if isNative(e.child) || (e.child.isInstanceOf[AdaptiveSparkPlanExec] && isNative(
+            e.child.asInstanceOf[AdaptiveSparkPlanExec].inputPlan)) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e if e.getTagValue(convertToNonNativeTag).contains(true) =>
