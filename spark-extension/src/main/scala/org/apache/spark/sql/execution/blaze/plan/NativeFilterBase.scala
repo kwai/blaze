@@ -52,6 +52,7 @@ abstract class NativeFilterBase(condition: Expression, override val child: Spark
           "stage_id",
           "output_rows",
           "elapsed_compute",
+          "cudf_elapsed_compute",
           "input_batch_count",
           "input_batch_mem_size",
           "input_row_count"))

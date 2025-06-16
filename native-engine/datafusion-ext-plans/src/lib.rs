@@ -54,6 +54,9 @@ pub mod agg;
 pub mod common;
 pub mod generate;
 pub mod joins;
-mod scan;
+pub mod scan;
 pub mod shuffle;
 pub mod window;
+
+// cudf integration
+mod cudf;
