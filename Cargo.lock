@@ -512,7 +512,7 @@ dependencies = [
  "paste",
  "poem",
  "pprof",
- "prost 0.13.5",
+ "prost 0.14.0",
  "serde",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
@@ -545,7 +545,7 @@ dependencies = [
  "log",
  "object_store",
  "parking_lot",
- "prost 0.13.5",
+ "prost 0.14.0",
  "tonic-build",
 ]
 
@@ -2979,6 +2979,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbe28332295ca4451b7d779aff2749b144cabe5e6e05fe86f31337831d7df232"
+dependencies = [
+ "bytes 1.10.1",
+ "prost-derive 0.14.0",
+]
+
+[[package]]
 name = "prost-build"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3016,6 +3026,19 @@ name = "prost-derive"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
+dependencies = [
+ "anyhow",
+ "itertools 0.14.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.91",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26ac3e3c6b0e1c219e61ceda600eaad26d7195ecc9b5c027925c904091374ab5"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",
