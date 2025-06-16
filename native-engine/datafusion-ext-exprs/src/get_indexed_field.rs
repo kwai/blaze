@@ -70,14 +70,14 @@ impl PhysicalExpr for GetIndexedFieldExpr {
 
     fn data_type(&self, input_schema: &Schema) -> Result<DataType> {
         let data_type = self.arg.data_type(input_schema)?;
-        let field = get_indexed_field(input_schema, &self.arg, &data_type, &self.key)?;
+        let field = get_indexed_field(&data_type, &self.key)?;
         Ok(field.data_type().clone())
     }
 
     fn nullable(&self, input_schema: &Schema) -> Result<bool> {
         let data_type = self.arg.data_type(input_schema)?;
         let nullable = self.arg.nullable(input_schema)?;
-        let field = get_indexed_field(input_schema, &self.arg, &data_type, &self.key)?;
+        let field = get_indexed_field(&data_type, &self.key)?;
         Ok(nullable || field.is_nullable())
     }
 
@@ -133,18 +133,10 @@ impl PhysicalExpr for GetIndexedFieldExpr {
                 }
                 Ok(ColumnarValue::Array(taken))
             }
-            (DataType::List(_), key) => df_execution_err!(
-                "get indexed field is only possible on lists with int64 indexes. \
-                         Tried with {key:?} index"
-            ),
-            (DataType::Struct(_), key) => df_execution_err!(
-                "get indexed field is only possible on struct with int32 indexes. \
-                         Tried with {key:?} index"
-            ),
-            (dt, key) => df_execution_err!(
-                "get indexed field is only possible on lists with int64 indexes or struct \
-                         with utf8 indexes. Tried {dt:?} with {key:?} index"
-            ),
+            (dt, key) => {
+                let key_dt = key.data_type();
+                df_execution_err!("unsupported data types for GetIndexedField: ({dt}, {key_dt})")
+            }
         }
     }
 
@@ -177,35 +169,24 @@ impl PartialEq<dyn Any> for GetIndexedFieldExpr {
     }
 }
 
-fn get_indexed_field(
-    input_schema: &Schema,
-    arg: &Arc<dyn PhysicalExpr>,
-    data_type: &DataType,
-    key: &ScalarValue,
-) -> Result<Field> {
+fn get_indexed_field(data_type: &DataType, key: &ScalarValue) -> Result<Arc<Field>> {
     match (data_type, key) {
-        (DataType::List(lt), ScalarValue::Int64(Some(i))) => {
-            Ok(Field::new(i.to_string(), lt.data_type().clone(), true))
-        }
+        (DataType::List(lt), ScalarValue::Int64(Some(i))) => Ok(Arc::new(Field::new(
+            i.to_string(),
+            lt.data_type().clone(),
+            true,
+        ))),
         (DataType::Struct(fields), ScalarValue::Int32(Some(k))) => {
             let field: Option<&Arc<Field>> = fields.get(*k as usize);
             match field {
                 None => df_execution_err!("Field {k} not found in struct"),
-                Some(f) => Ok(f
-                    .as_ref()
-                    .clone()
-                    .with_nullable(arg.nullable(input_schema)?)),
+                Some(f) => Ok(f.clone()),
             }
         }
-        (DataType::Struct(_), _) => {
-            df_execution_err!("Only ints are valid as an indexed field in a struct",)
+        (dt, key) => {
+            let key_dt = key.data_type();
+            df_execution_err!("unsupported data types for GetIndexedField: ({dt}, {key_dt})")
         }
-        (DataType::List(_), _) => {
-            df_execution_err!("Only ints are valid as an indexed field in a list",)
-        }
-        _ => df_execution_err!(
-            "The expression to get an indexed field is only valid for List or Struct types",
-        ),
     }
 }
 
