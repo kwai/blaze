@@ -20,6 +20,7 @@
 use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use arrow_schema::DataType;
 use blaze_jni_bridge::{
     conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
 };
@@ -37,7 +38,7 @@ use datafusion::{
         errors::ParquetError,
         file::metadata::ParquetMetaData,
     },
-    physical_expr::EquivalenceProperties,
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
         metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
@@ -96,6 +97,15 @@ impl ParquetExec {
                         None
                     }
                 }
+            })
+            .filter(|p| {
+                // https://github.com/kwai/blaze/issues/1032
+                // predicate pruning is buggy for decimal type, so we need to
+                // temporarily disable predicate pruning for decimal type
+                matches!(
+                    expr_contains_decimal_type(p.predicate_expr(), file_schema),
+                    Ok(false)
+                )
             })
             .filter(|p| !p.always_true());
 
@@ -487,4 +497,16 @@ impl AsyncFileReader for ParquetFileReaderRef {
         }
         .boxed()
     }
+}
+
+fn expr_contains_decimal_type(expr: &PhysicalExprRef, schema: &SchemaRef) -> Result<bool> {
+    if matches!(expr.data_type(schema)?, DataType::Decimal128(..)) {
+        return Ok(true);
+    }
+    for child_expr in expr.children().iter() {
+        if expr_contains_decimal_type(&child_expr, schema)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
