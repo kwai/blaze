@@ -51,7 +51,7 @@ pub fn create_hashes<T: num::PrimInt>(
     if arrays.is_empty() {
         return vec![seed; len];
     }
-    let mut hash_buffer = vec![T::zero(); len];
+    let mut hash_buffer = vec![seed; len];
 
     // hash first column
     hash_array(&arrays[0], &mut hash_buffer, seed, true, h);
