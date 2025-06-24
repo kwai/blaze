@@ -127,8 +127,12 @@ impl ExecutionPlan for FilterExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let predicates = self.predicates.clone();
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        if let Ok(stream) = exec_ctx.execute_with_cudf(self) {
+            return Ok(stream);
+        }
+
+        let predicates = self.predicates.clone();
         let input = exec_ctx.execute_with_input_stats(&self.input)?;
         let filtered = execute_filter(input, predicates, exec_ctx.clone())?;
         Ok(exec_ctx.coalesce_with_default_batch_size(filtered))
