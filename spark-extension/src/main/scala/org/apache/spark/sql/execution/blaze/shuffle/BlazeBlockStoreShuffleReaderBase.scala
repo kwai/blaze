@@ -15,11 +15,9 @@
  */
 package org.apache.spark.sql.execution.blaze.shuffle
 
-import java.io.{FileInputStream, InputStream}
+import java.io.{FileInputStream, IOException, InputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, ReadableByteChannel}
-import scala.annotation.tailrec
-
 import org.apache.commons.lang3.reflect.{FieldUtils, MethodUtils}
 import org.apache.spark.{InterruptibleIterator, ShuffleDependency, TaskContext}
 import org.apache.spark.internal.Logging
@@ -59,6 +57,9 @@ object BlazeBlockStoreShuffleReaderBase extends Logging {
           override def getFileOffset: Long = offset
           override def getFileLength: Long = limit
           override def close(): Unit = in.close()
+          override def throwFetchFailed(errmsg: String): Unit = {
+            throwFetchFailedOnInputStream(in, errmsg)
+          }
         }
       case None =>
     }
@@ -69,6 +70,9 @@ object BlazeBlockStoreShuffleReaderBase extends Logging {
           override def hasByteBuffer: Boolean = true
           override def getByteBuffer: ByteBuffer = buf
           override def close(): Unit = in.close()
+          override def throwFetchFailed(errmsg: String): Unit = {
+            throwFetchFailedOnInputStream(in, errmsg)
+          }
         }
       case None =>
     }
@@ -77,18 +81,55 @@ object BlazeBlockStoreShuffleReaderBase extends Logging {
     new BlockObject {
       override def getChannel: ReadableByteChannel = channel
       override def close(): Unit = channel.close()
+      override def throwFetchFailed(errmsg: String): Unit = {
+        throwFetchFailedOnInputStream(in, errmsg)
+      }
     }
   }
 
-  @tailrec
   private def unwrapInputStream(in: InputStream): InputStream = {
-    val bufferReleasingInputStreamClsName = "org.apache.spark.storage.BufferReleasingInputStream"
-    in match {
-      case in if bufferReleasingInputStreamClsName.endsWith(in.getClass.getName) =>
-        val inner = MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
-        unwrapInputStream(inner)
-      case in => in
+    val bufferReleasingInputStreamCls =
+      Class.forName("org.apache.spark.storage.BufferReleasingInputStream")
+    if (in.getClass != bufferReleasingInputStreamCls) {
+      return in
     }
+
+    try {
+      return MethodUtils.invokeMethod(in, true, "delegate").asInstanceOf[InputStream]
+    } catch {
+      case _: ReflectiveOperationException => // passthrough
+    }
+
+    try {
+      val fallbackMethodName = "org$apache$spark$storage$BufferReleasingInputStream$$delegate"
+      return MethodUtils.invokeMethod(in, true, fallbackMethodName).asInstanceOf[InputStream]
+    } catch {
+      case _: ReflectiveOperationException => // passthrough
+    }
+    throw new RuntimeException("cannot unwrap BufferReleasingInputStream")
+  }
+
+  private def throwFetchFailedOnInputStream(in: InputStream, errmsg: String): Unit = {
+    // for spark 3.x
+    try {
+      val throwFunction: () => Object = () => throw new IOException(errmsg)
+      MethodUtils.invokeMethod(in, true, "tryOrFetchFailedException", throwFunction)
+      return
+    } catch {
+      case _: ReflectiveOperationException => // passthrough
+    }
+
+    // for spark 2.x
+    try {
+      val throwFunction: () => Object = () => throw new IOException("Stream is corrupted")
+      MethodUtils.invokeMethod(in, true, "wrapFetchFailedError", throwFunction)
+      return
+    } catch {
+      case _: ReflectiveOperationException => // passthrough
+    }
+
+    // fallback
+    throw new IOException(errmsg)
   }
 
   def getFileSegmentFromInputStream(in: InputStream): Option[(String, Long, Long)] = {
@@ -137,4 +178,5 @@ trait BlockObject extends AutoCloseable {
   def getFileLength: Long = throw new UnsupportedOperationException
   def getByteBuffer: ByteBuffer = throw new UnsupportedOperationException
   def getChannel: ReadableByteChannel = throw new UnsupportedOperationException
+  def throwFetchFailed(errmsg: String): Unit = throw new UnsupportedOperationException
 }
