@@ -205,7 +205,7 @@ impl Agg for AggFirstIgnoresNull {
                 let merging_accs = downcast_any!(merging_accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if merging_accs.value(merging_acc_idx).is_null() {
+                        if !merging_accs.value(merging_acc_idx).is_null() {
                             accs.set_value(acc_idx, merging_accs.take_value(merging_acc_idx));
                         }
                     }

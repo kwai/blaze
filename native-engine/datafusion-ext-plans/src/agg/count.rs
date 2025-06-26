@@ -94,6 +94,7 @@ impl Agg for AggCount {
         partial_arg_idx: IdxSelection<'_>,
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccCountColumn)?;
+        accs.ensure_size(acc_idx);
 
         if partial_args.is_empty() {
             idx_for_zipped! {
@@ -132,6 +133,7 @@ impl Agg for AggCount {
     ) -> Result<()> {
         let accs = downcast_any!(accs, mut AccCountColumn)?;
         let merging_accs = downcast_any!(merging_accs, mut AccCountColumn)?;
+        accs.ensure_size(acc_idx);
 
         idx_for_zipped! {
             ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
