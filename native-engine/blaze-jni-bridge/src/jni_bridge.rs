@@ -1511,6 +1511,8 @@ pub struct BlazeBlockObject<'a> {
     pub method_getByteBuffer_ret: ReturnType,
     pub method_getChannel: JMethodID,
     pub method_getChannel_ret: ReturnType,
+    pub method_throwFetchFailed: JMethodID,
+    pub method_throwFetchFailed_ret: ReturnType,
 }
 
 impl<'a> BlazeBlockObject<'a> {
@@ -1542,6 +1544,12 @@ impl<'a> BlazeBlockObject<'a> {
                 "()Ljava/nio/channels/ReadableByteChannel;",
             )?,
             method_getChannel_ret: ReturnType::Object,
+            method_throwFetchFailed: env.get_method_id(
+                class,
+                "throwFetchFailed",
+                "(Ljava/lang/String;)V",
+            )?,
+            method_throwFetchFailed_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

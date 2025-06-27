@@ -189,7 +189,9 @@ fn read_ipc(
                 .expect("tokio spawn_blocking error")?
             } {
                 // get ipc reader
-                let mut reader = tokio::task::spawn_blocking(move || {
+                let block_cloned = block.clone();
+                let mut reader = tokio::task::spawn_blocking(|| {
+                    let block = block_cloned;
                     if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? {
                         return get_file_reader(block.as_obj());
                     }
@@ -201,7 +203,16 @@ fn read_ipc(
                 .await
                 .expect("tokio spawn_blocking error")?;
 
-                while let Some((num_rows, cols)) = reader.read_batch(&exec_ctx.output_schema())? {
+                while let Some((num_rows, cols)) =
+                    reader.read_batch(&exec_ctx.output_schema()).or_else(|e| {
+                        // throw FetchFailureException
+                        let block = block.clone();
+                        let errmsg = jni_new_string!(e.message().as_ref())?;
+                        jni_call!(BlazeBlockObject(block.as_obj())
+                            .throwFetchFailed(errmsg.as_obj()) -> ())?; // always return error
+                        Ok::<_, DataFusionError>(None)
+                    })?
+                {
                     let (cur_staging_num_rows, cur_staging_mem_size) = {
                         let staging_cols_cloned = staging_cols.clone();
                         let mut staging_cols = staging_cols_cloned.lock();
