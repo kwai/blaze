@@ -127,7 +127,7 @@ impl Agg for AggFirstIgnoresNull {
                 }
             }
             DataType::Utf8 => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
-            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
+            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, BinaryArray)?),
             _other => {
                 let accs = downcast_any!(accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
