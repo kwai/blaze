@@ -127,7 +127,7 @@ impl Agg for AggFirstIgnoresNull {
                 }
             }
             DataType::Utf8 => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
-            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, StringArray)?),
+            DataType::Binary => handle_bytes!(downcast_any!(partial_arg, BinaryArray)?),
             _other => {
                 let accs = downcast_any!(accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
@@ -159,7 +159,7 @@ impl Agg for AggFirstIgnoresNull {
                 let merging_accs = downcast_any!(merging_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if merging_accs.value(merging_acc_idx).is_some() {
+                        if accs.value(acc_idx).is_none() && merging_accs.value(merging_acc_idx).is_some() {
                             accs.set_value(acc_idx, merging_accs.value(merging_acc_idx));
                         }
                     }
@@ -173,7 +173,7 @@ impl Agg for AggFirstIgnoresNull {
                 let merging_accs = downcast_any!(merging_accs, mut AccBooleanColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if merging_accs.value(merging_acc_idx).is_some() {
+                        if accs.value(acc_idx).is_none() && merging_accs.value(merging_acc_idx).is_some() {
                             accs.set_value(acc_idx, merging_accs.value(merging_acc_idx));
                         }
                     }
@@ -187,7 +187,7 @@ impl Agg for AggFirstIgnoresNull {
                 let merging_accs = downcast_any!(merging_accs, mut AccBytesColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if merging_accs.value(merging_acc_idx).is_some() {
+                        if accs.value(acc_idx).is_none() && merging_accs.value(merging_acc_idx).is_some() {
                             accs.set_value(acc_idx, merging_accs.take_value(merging_acc_idx));
                         }
                     }
@@ -205,7 +205,7 @@ impl Agg for AggFirstIgnoresNull {
                 let merging_accs = downcast_any!(merging_accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, merging_acc_idx) in (acc_idx, merging_acc_idx)) => {
-                        if !merging_accs.value(merging_acc_idx).is_null() {
+                        if accs.value(acc_idx).is_null() && !merging_accs.value(merging_acc_idx).is_null() {
                             accs.set_value(acc_idx, merging_accs.take_value(merging_acc_idx));
                         }
                     }
