@@ -106,7 +106,7 @@ impl Agg for AggFirst {
                 let partial_arg = $array;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !flag_accs.value(acc_idx).is_none() {
+                        if flag_accs.value(acc_idx).is_none() {
                             if partial_arg.is_valid(partial_arg_idx) {
                                 value_accs.set_value(acc_idx, Some(AccBytes::from(partial_arg.value(partial_arg_idx).as_ref())));
                                 flag_accs.set_value(acc_idx, Some(true));
@@ -125,7 +125,7 @@ impl Agg for AggFirst {
                 let value_accs = downcast_any!(value_accs, mut AccPrimColumn<_>)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !flag_accs.value(acc_idx).is_none() {
+                        if flag_accs.value(acc_idx).is_none() {
                             if partial_arg.is_valid(partial_arg_idx) {
                                 value_accs.set_value(acc_idx, Some(partial_arg.value(partial_arg_idx)));
                                 flag_accs.set_value(acc_idx, Some(true));
@@ -142,7 +142,7 @@ impl Agg for AggFirst {
                 let partial_arg = downcast_any!(partial_arg, BooleanArray)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !flag_accs.value(acc_idx).is_none() {
+                        if flag_accs.value(acc_idx).is_none() {
                             if partial_arg.is_valid(partial_arg_idx) {
                                 value_accs.set_value(acc_idx, Some(partial_arg.value(partial_arg_idx)));
                                 flag_accs.set_value(acc_idx, Some(true));
@@ -160,7 +160,7 @@ impl Agg for AggFirst {
                 let value_accs = downcast_any!(value_accs, mut AccScalarValueColumn)?;
                 idx_for_zipped! {
                     ((acc_idx, partial_arg_idx) in (acc_idx, partial_arg_idx)) => {
-                        if !flag_accs.value(acc_idx).is_none() {
+                        if flag_accs.value(acc_idx).is_none() {
                             if partial_arg.is_valid(partial_arg_idx) {
                                 value_accs.set_value(acc_idx, compacted_scalar_value_from_array(partial_arg, partial_arg_idx)?);
                                 flag_accs.set_value(acc_idx, Some(true));
@@ -200,9 +200,8 @@ impl Agg for AggFirst {
                         if flag_accs.value(acc_idx).is_none()
                             && merging_flag_accs.value(merging_acc_idx).is_some()
                         {
-                            merging_flag_accs.set_value(merging_acc_idx, None);
-                            flag_accs.set_value(acc_idx, Some(true));
                             value_accs.set_value(acc_idx, merging_value_accs.value(merging_acc_idx));
+                            flag_accs.set_value(acc_idx, Some(true));
                         }
                     }
                 }
@@ -219,6 +218,7 @@ impl Agg for AggFirst {
                             && merging_flag_accs.value(merging_acc_idx).is_some()
                         {
                             value_accs.set_value(acc_idx, merging_value_accs.value(merging_acc_idx));
+                            flag_accs.set_value(acc_idx, Some(true));
                         }
                     }
                 }
@@ -235,6 +235,7 @@ impl Agg for AggFirst {
                             && merging_flag_accs.value(merging_acc_idx).is_some()
                         {
                             value_accs.set_value(acc_idx, merging_value_accs.take_value(merging_acc_idx));
+                            flag_accs.set_value(acc_idx, Some(true));
                         }
                     }
                 }
@@ -255,6 +256,7 @@ impl Agg for AggFirst {
                             && merging_flag_accs.value(merging_acc_idx).is_some()
                         {
                             value_accs.set_value(acc_idx, merging_value_accs.take_value(merging_acc_idx));
+                            flag_accs.set_value(acc_idx, Some(true));
                         }
                     }
                 }
