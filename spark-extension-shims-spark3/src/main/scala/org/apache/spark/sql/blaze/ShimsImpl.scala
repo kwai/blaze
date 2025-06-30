@@ -898,7 +898,7 @@ class ShimsImpl extends Shims with Logging {
       fallback: Expression => pb.PhysicalExprNode): Option[pb.PhysicalExprNode] = {
     import org.apache.spark.sql.catalyst.expressions.PromotePrecision
     e match {
-      case PromotePrecision(_1) =>
+      case PromotePrecision(_1) if NativeConverters.decimalArithOpEnabled =>
         Some(NativeConverters.convertExprWithFallback(_1, isPruningExpr, fallback))
       case _ => None
     }
