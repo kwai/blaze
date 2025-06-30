@@ -79,7 +79,10 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
   // initialize all nondeterministic children exprs
   expr.foreach {
     case nondeterministic: Nondeterministic =>
-      nondeterministic.initialize(TaskContext.get.partitionId())
+      nondeterministic.initialize(TaskContext.get match {
+        case tc: TaskContext => tc.partitionId()
+        case null => 0
+      })
     case _ =>
   }
 
