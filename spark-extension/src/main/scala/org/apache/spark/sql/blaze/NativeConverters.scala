@@ -37,7 +37,7 @@ import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
 import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, Attribute, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, DayOfMonth, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetJsonObject, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, LeafExpression, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Month, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, TruncDate, Unevaluable, UnscaledValue, Upper, XxHash64, Year}
-import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, AggregateFunction, Average, CollectList, CollectSet, Count, First, Max, Min, Sum}
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, AggregateFunction, Average, CollectList, CollectSet, Count, DeclarativeAggregate, First, Max, Min, Sum, TypedImperativeAggregate}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
 import org.apache.spark.sql.catalyst.expressions.codegen.ExprCode
 import org.apache.spark.sql.catalyst.plans.FullOuter
@@ -359,9 +359,12 @@ object NativeConverters extends Logging {
       isPruningExpr: Boolean,
       fallback: Expression => pb.PhysicalExprNode): pb.PhysicalExprNode = {
 
-    val buildBinaryExprNode = this.buildBinaryExprNode(_, _, _, isPruningExpr, fallback)
-    val buildScalarFunction = this.buildScalarFunctionNode(_, _, _, isPruningExpr, fallback)
-    val buildExtScalarFunction = this.buildExtScalarFunctionNode(_, _, _, isPruningExpr, fallback)
+    val buildBinaryExprNode: (Expression, Expression, String) => PhysicalExprNode =
+      this.buildBinaryExprNode(_, _, _, isPruningExpr, fallback)
+    val buildScalarFunction: (pb.ScalarFunction, Seq[Expression], DataType) => PhysicalExprNode =
+      this.buildScalarFunctionNode(_, _, _, isPruningExpr, fallback)
+    val buildExtScalarFunction: (String, Seq[Expression], DataType) => PhysicalExprNode =
+      this.buildExtScalarFunctionNode(_, _, _, isPruningExpr, fallback)
     def isDecimalType(lhs: Expression, rhs: Expression): Boolean =
       lhs.dataType.isInstanceOf[DecimalType] && rhs.dataType.isInstanceOf[DecimalType]
     def enableDecimalBinaryOperator(lhs: Expression, rhs: Expression): Boolean =
@@ -1134,6 +1137,14 @@ object NativeConverters extends Logging {
 
         // fallback to UDAF
         if (BlazeConf.UDAF_FALLBACK_ENABLE.booleanConf()) {
+          udaf match {
+            case _: DeclarativeAggregate =>
+            case _: TypedImperativeAggregate[_] =>
+            case u =>
+              throw new NotImplementedError(
+                s"Unsupported UDAF: ${u.getClass.getName}, expect" +
+                  s" DeclarativeAggregate/TypeImperativeAggregate")
+          }
           aggBuilder.setAggFunction(pb.AggFunction.UDAF)
           val convertedChildren = mutable.LinkedHashMap[pb.PhysicalExprNode, BoundReference]()
           val bound = udaf.mapChildren {
