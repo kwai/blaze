@@ -507,7 +507,7 @@ object NativeConverters extends Logging {
       case GreaterThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "GtEq")
       case LessThanOrEqual(lhs, rhs) => buildBinaryExprNode(lhs, rhs, "LtEq")
 
-      case e: Add if e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
+      case e: Add if !e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
         val lhs = e.left
         val rhs = e.right
         if (e.dataType.isInstanceOf[DecimalType]) {
@@ -546,7 +546,7 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Plus")
         }
 
-      case e: Subtract if e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
+      case e: Subtract if !e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
         val lhs = e.left
         val rhs = e.right
         if (e.dataType.isInstanceOf[DecimalType]) {
@@ -586,7 +586,7 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Minus")
         }
 
-      case e: Multiply if e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
+      case e: Multiply if !e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
         val lhs = e.left
         val rhs = e.right
         if (e.dataType.isInstanceOf[DecimalType]) {
@@ -626,7 +626,7 @@ object NativeConverters extends Logging {
           buildBinaryExprNode(lhs, rhs, "Multiply")
         }
 
-      case e: Divide if e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
+      case e: Divide if !e.dataType.isInstanceOf[DecimalType] || decimalArithOpEnabled =>
         val lhs = e.left
         val rhs = e.right
         if (e.dataType.isInstanceOf[DecimalType]) {
