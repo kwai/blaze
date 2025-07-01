@@ -325,7 +325,7 @@ case class DeclarativeAggRowsColumn(
       rowsMemUsed += newRow.getSizeInBytes
       newRow
     }))
-    rowsMemUsed -= rows.slice(len, rows.length).map(_.getSizeInBytes).sum
+    rowsMemUsed -= rows.slice(len, rows.length).filter(_ != null).map(_.getSizeInBytes).sum
     rows.trimEnd(rows.length - len)
   }
 
