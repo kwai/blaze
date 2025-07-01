@@ -78,6 +78,10 @@ impl ProjectExec {
             props: OnceCell::new(),
         })
     }
+
+    pub fn named_exprs(&self) -> &[(PhysicalExprRef, String)] {
+        &self.expr
+    }
 }
 
 impl DisplayAs for ProjectExec {
@@ -136,8 +140,11 @@ impl ExecutionPlan for ProjectExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-        let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
+        if let Ok(stream) = exec_ctx.execute_with_cudf(self) {
+            return Ok(stream);
+        }
 
+        let exprs: Vec<PhysicalExprRef> = self.expr.iter().map(|(e, _name)| e.clone()).collect();
         let output = if let Ok(filter_exec) = downcast_any!(self.input, FilterExec) {
             execute_project_with_filtering(
                 filter_exec.children()[0].clone(),

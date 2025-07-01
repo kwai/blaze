@@ -62,6 +62,12 @@ impl InternalFileReader {
         Ok(input.clone())
     }
 
+    pub fn read_fully_into_buffer(&self, range: Range<usize>, buf: &mut [u8]) -> Result<()> {
+        assert_eq!(range.len(), buf.len());
+        self.get_input()?.read_fully(range.start as u64, buf)?;
+        Ok(())
+    }
+
     pub fn read_fully(&self, range: Range<usize>) -> Result<Bytes> {
         let mut bytes = Vec::uninitialized_init(range.len());
         self.get_input()?

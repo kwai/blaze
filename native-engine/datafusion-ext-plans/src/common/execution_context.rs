@@ -22,7 +22,11 @@ use std::{
 };
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
-use blaze_jni_bridge::{conf, conf::BooleanConf, is_task_running};
+use blaze_cudf_bridge::plans::{split_table::CudfSplitTablePlan, CudfPlan};
+use blaze_jni_bridge::{
+    conf::{self, BooleanConf},
+    is_task_running,
+};
 use datafusion::{
     common::Result,
     execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
@@ -44,6 +48,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{
     common::{column_pruning::ExecuteWithColumnPruning, timer_helper::TimerHelper},
+    cudf::plan::convert_datafusion_plan_to_cudf,
     memmgr::metrics::SpillMetrics,
 };
 
@@ -238,6 +243,49 @@ impl ExecutionContext {
         projection: &[usize],
     ) -> Result<SendableRecordBatchStream> {
         input.execute_projected(self.partition_id, self.task_ctx.clone(), projection)
+    }
+
+    pub fn execute_with_cudf(
+        self: &Arc<Self>,
+        plan: &dyn ExecutionPlan,
+    ) -> Result<SendableRecordBatchStream> {
+        if !conf::ENABLE_CUDA.value().unwrap_or(false) {
+            return df_execution_err!("blaze CUDA support is not enabled");
+        }
+        let exec_ctx = self.clone();
+        let cudf_elapsed_compute = exec_ctx.register_timer_metric("cudf_elapsed_compute");
+        let cudf_plan = convert_datafusion_plan_to_cudf(plan).inspect_err(|err| {
+            log::info!("convert plan to cudf-bridge error: {err}");
+        })?;
+
+        Ok(exec_ctx
+            .clone()
+            .output_with_sender("CudfStream", move |sender| async move {
+                let _cudf_timer = cudf_elapsed_compute.timer();
+                sender.exclude_time(&cudf_elapsed_compute);
+
+                log::info!("****** executing with Blaze + CUDA (libcudf) ******");
+
+                let cudf_plan: Arc<dyn CudfPlan> =
+                    Arc::new(CudfSplitTablePlan::new(cudf_plan, batch_size()));
+                let mut cudf_table_stream = Box::pin(cudf_plan.execute().inspect_err(|err| {
+                    log::info!("executing cudf-bridge plan error: {err}");
+                })?);
+
+                while let Some(batch) = {
+                    let output_schema = exec_ctx.output_schema();
+                    tokio::task::block_in_place(|| -> Result<Option<RecordBatch>> {
+                        if let Some(cudf_table) = cudf_table_stream.as_mut().next().transpose()? {
+                            return Ok(Some(cudf_table.to_arrow_record_batch(output_schema)?));
+                        }
+                        Ok(None)
+                    })?
+                } {
+                    exec_ctx.baseline_metrics().record_output(batch.num_rows());
+                    sender.send(batch).await;
+                }
+                Ok(())
+            }))
     }
 
     pub fn stat_input(

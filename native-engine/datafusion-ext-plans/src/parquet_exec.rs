@@ -41,7 +41,7 @@ use datafusion::{
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet, Time},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
@@ -60,9 +60,10 @@ use crate::{
 };
 
 /// Execution plan for scanning one or more Parquet partitions
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ParquetExec {
     fs_resource_id: String,
+    fs_provider: OnceCell<Arc<FsProvider>>,
     base_config: FileScanConfig,
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
@@ -71,6 +72,22 @@ pub struct ParquetExec {
     pruning_predicate: Option<Arc<PruningPredicate>>,
     page_pruning_predicate: Option<Arc<PagePruningAccessPlanFilter>>,
     props: OnceCell<PlanProperties>,
+}
+
+impl std::fmt::Debug for ParquetExec {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParquetExec")
+            .field("fs_resource_id", &self.fs_resource_id)
+            .field("base_config", &self.base_config)
+            .field("projected_statistics", &self.projected_statistics)
+            .field("projected_schema", &self.projected_schema)
+            .field("metrics", &self.metrics)
+            .field("predicate", &self.predicate)
+            .field("pruning_predicate", &self.pruning_predicate)
+            .field("page_pruning_predicate", &self.page_pruning_predicate)
+            .field("props", &self.props)
+            .finish()
+    }
 }
 
 impl ParquetExec {
@@ -118,6 +135,7 @@ impl ParquetExec {
 
         Self {
             fs_resource_id,
+            fs_provider: OnceCell::new(),
             base_config,
             projected_schema,
             projected_statistics,
@@ -127,6 +145,25 @@ impl ParquetExec {
             page_pruning_predicate,
             props: OnceCell::new(),
         }
+    }
+
+    pub fn get_fs_provider(&self, io_time: &Time) -> Result<Arc<FsProvider>> {
+        // get fs object from jni bridge resource
+        let fs_provider = self.fs_provider.get_or_try_init(|| {
+            let resource_id = jni_new_string!(&self.fs_resource_id)?;
+            let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
+            let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, io_time));
+            Ok::<_, DataFusionError>(fs_provider)
+        })?;
+        Ok(fs_provider.clone())
+    }
+
+    pub fn file_scan_config(&self) -> &FileScanConfig {
+        &self.base_config
+    }
+
+    pub fn predicate_expr(&self) -> Option<Arc<dyn PhysicalExpr>> {
+        self.predicate.clone()
     }
 }
 
@@ -194,14 +231,13 @@ impl ExecutionPlan for ParquetExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        if let Ok(stream) = exec_ctx.execute_with_cudf(self) {
+            return Ok(stream);
+        }
+
         let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
         let _timer = elapsed_compute.timer();
         let io_time = exec_ctx.register_timer_metric("io_time");
-
-        // get fs object from jni bridge resource
-        let resource_id = jni_new_string!(&self.fs_resource_id)?;
-        let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
-        let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
 
         let schema_adapter_factory = Arc::new(BlazeSchemaAdapterFactory);
         let projection = match self.base_config.file_column_projection_indices() {
@@ -223,7 +259,9 @@ impl ExecutionPlan for ParquetExec {
             table_schema: self.base_config.file_schema.clone(),
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
-            parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
+            parquet_file_reader_factory: Arc::new(FsReaderFactory::new(
+                self.get_fs_provider(&io_time)?,
+            )),
             pushdown_filters: page_filtering_enabled,
             reorder_filters: page_filtering_enabled,
             enable_page_index: page_filtering_enabled,

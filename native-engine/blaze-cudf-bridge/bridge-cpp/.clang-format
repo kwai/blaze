@@ -1,0 +1,20 @@
+BasedOnStyle: Chromium
+
+## custom style
+AccessModifierOffset: 0
+AlignAfterOpenBracket: AlwaysBreak
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: false
+AllowShortFunctionsOnASingleLine: false
+BinPackArguments: true
+BinPackParameters: OnePerLine
+BreakConstructorInitializers: AfterColon
+BreakTemplateDeclarations: true
+ColumnLimit: 100
+ContinuationIndentWidth: 4
+IncludeBlocks: Merge
+IndentAccessModifiers: false
+IndentCaseBlocks: false
+IndentWidth: 4
+InsertBraces: true
+InsertNewlineAtEOF: true
