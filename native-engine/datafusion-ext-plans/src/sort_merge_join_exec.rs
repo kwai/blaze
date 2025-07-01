@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, fmt::Formatter, pin::Pin, sync::Arc};
+use std::{any::Any, fmt::Formatter, pin::Pin, sync::Arc, sync::atomic::{AtomicUsize, Ordering}};
 
 use arrow::{compute::SortOptions, datatypes::SchemaRef};
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::{
     common::{DataFusionError, JoinSide},
@@ -28,9 +29,9 @@ use datafusion::{
         PlanProperties, SendableRecordBatchStream, Statistics,
     },
 };
+use futures_util::task::SpawnExt;
 use datafusion_ext_commons::{batch_size, df_execution_err};
 use once_cell::sync::OnceCell;
-
 use crate::{
     common::{
         column_pruning::ExecuteWithColumnPruning,
@@ -48,7 +49,24 @@ use crate::{
         stream_cursor::StreamCursor,
         JoinParams, JoinProjection, StreamCursors,
     },
+    sort_exec::KeyRowsOutput,
 };
+use crate::sort_exec::SortExec;
+
+pub static SORT_MERGE_JOIN_EXEC_KEY_ROWS_CONVERT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+trait RowConverterExt {
+    fn convert_columns_with_metrics(&self, columns: &[arrow::array::ArrayRef], caller: &'static str) -> arrow::error::Result<arrow::row::Rows>;
+}
+
+impl RowConverterExt for arrow::row::RowConverter {
+    fn convert_columns_with_metrics(&self, columns: &[arrow::array::ArrayRef], caller: &'static str) -> arrow::error::Result<arrow::row::Rows> {
+        if caller == "SortMergeJoinExec" {
+            SORT_MERGE_JOIN_EXEC_KEY_ROWS_CONVERT_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        self.convert_columns(columns)
+    }
+}
 
 #[derive(Debug)]
 pub struct SortMergeJoinExec {
@@ -61,6 +79,7 @@ pub struct SortMergeJoinExec {
     schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
+    interleaver_time_metric: OnceCell<Time>,
 }
 
 impl SortMergeJoinExec {
@@ -82,6 +101,7 @@ impl SortMergeJoinExec {
             join_params: OnceCell::new(),
             metrics: ExecutionPlanMetricsSet::new(),
             props: OnceCell::new(),
+            interleaver_time_metric: OnceCell::new(),
         })
     }
 
@@ -107,6 +127,7 @@ impl SortMergeJoinExec {
             join_params: OnceCell::with_value(join_params),
             metrics: ExecutionPlanMetricsSet::new(),
             props: OnceCell::new(),
+            interleaver_time_metric: OnceCell::new(),
         })
     }
 
@@ -153,6 +174,10 @@ impl SortMergeJoinExec {
         })
     }
 
+    pub fn interleaver_time_metric(&self) -> &OnceCell<Time> {
+        &self.interleaver_time_metric
+    }
+
     fn execute_with_projection(
         &self,
         partition: usize,
@@ -170,12 +195,79 @@ impl SortMergeJoinExec {
             &self.metrics,
         );
         let exec_ctx_cloned = exec_ctx.clone();
-        let left = exec_ctx.execute(&self.left)?;
-        let right = exec_ctx.execute(&self.right)?;
+        // First determine whether left/right implements KeyRowsOutput and key_exprs is consistent with join key
+        let left_key_rows = self.left.as_any().downcast_ref::<SortExec>();
+        let right_key_rows = self.right.as_any().downcast_ref::<SortExec>();
+        let left_keys_match = left_key_rows
+            .map(|kro| {
+                let kro_exprs = kro.key_exprs();
+                kro_exprs.len() == join_params.left_keys.len()
+                    && kro_exprs.iter().zip(&join_params.left_keys).all(|(a, b)| a.eq(b))
+            })
+            .unwrap_or(false);
+        let right_keys_match = right_key_rows
+            .map(|kro| {
+                let kro_exprs = kro.key_exprs();
+                kro_exprs.len() == join_params.right_keys.len()
+                    && kro_exprs.iter().zip(&join_params.right_keys).all(|(a, b)| a.eq(b))
+            })
+            .unwrap_or(false);
+
+        let left_stream = if left_key_rows.is_some() && left_keys_match {
+            // Use output with key rows
+            let kro = left_key_rows.unwrap();
+            let stream = kro.execute_with_key_rows_output(partition, exec_ctx.task_ctx());
+            Some(stream)
+        } else {
+            None
+        };
+        let right_stream = if right_key_rows.is_some() && right_keys_match {
+            let kro = right_key_rows.unwrap();
+            let stream = kro.execute_with_key_rows_output(partition, exec_ctx.task_ctx());
+            Some(stream)
+        } else {
+            None
+        };
+
+        let (left_key_rows_batches, left_stream) = if let Some(mut s) = left_stream {
+            // Collect All (RecordBatch, Rows)
+            use futures::StreamExt;
+            let mut batches = vec![];
+            let mut s = s;
+            while let Some(Ok((batch, rows))) = futures::executor::block_on(s.next()) {
+                batches.push((batch, rows));
+            }
+            // Use an empty stream instead, the actual key rows are passed as parameters
+            (Some(batches), exec_ctx.execute(&self.left)?)
+        } else {
+            (None, exec_ctx.execute(&self.left)?)
+        };
+        let (right_key_rows_batches, right_stream) = if let Some(mut s) = right_stream {
+            use futures::StreamExt;
+            let mut batches = vec![];
+            let mut s = s;
+            while let Some(Ok((batch, rows))) = futures::executor::block_on(s.next()) {
+                batches.push((batch, rows));
+            }
+            (Some(batches), exec_ctx.execute(&self.right)?)
+        } else {
+            (None, exec_ctx.execute(&self.right)?)
+        };
+
+        let (left_key_rows_batches, left_stream) = (left_key_rows_batches, left_stream);
+        let (right_key_rows_batches, right_stream) = (right_key_rows_batches, right_stream);
         let output = exec_ctx_cloned
             .clone()
             .output_with_sender("SortMergeJoin", move |sender| {
-                execute_join(left, right, join_params, exec_ctx_cloned, sender)
+                execute_join(
+                    left_stream,
+                    right_stream,
+                    join_params,
+                    exec_ctx_cloned,
+                    sender,
+                    left_key_rows_batches,
+                    right_key_rows_batches,
+                )
             });
         Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
@@ -267,25 +359,46 @@ pub async fn execute_join(
     join_params: JoinParams,
     exec_ctx: Arc<ExecutionContext>,
     sender: Arc<WrappedRecordBatchSender>,
+    left_key_rows_batches: Option<Vec<(RecordBatch, arrow::row::Rows)>>,
+    right_key_rows_batches: Option<Vec<(RecordBatch, arrow::row::Rows)>>,
 ) -> Result<()> {
     let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
     let poll_time = Time::new();
+    let interleaver_time = exec_ctx.register_timer_metric("interleaver_time");
 
     let mut curs = (
-        StreamCursor::try_new(
-            lstream,
-            poll_time.clone(),
-            &join_params,
-            JoinSide::Left,
-            &join_params.projection.left,
-        )?,
-        StreamCursor::try_new(
-            rstream,
-            poll_time.clone(),
-            &join_params,
-            JoinSide::Right,
-            &join_params.projection.right,
-        )?,
+        if let Some(batches) = left_key_rows_batches {
+            StreamCursor::from_key_rows_batches(
+                batches,
+                join_params.left_keys.clone(),
+                join_params.projection.left.clone(),
+                join_params.left_schema.clone(),
+            )
+        } else {
+            StreamCursor::try_new(
+                lstream,
+                poll_time.clone(),
+                &join_params,
+                JoinSide::Left,
+                &join_params.projection.left,
+            )?
+        },
+        if let Some(batches) = right_key_rows_batches {
+            StreamCursor::from_key_rows_batches(
+                batches,
+                join_params.right_keys.clone(),
+                join_params.projection.right.clone(),
+                join_params.right_schema.clone(),
+            )
+        } else {
+            StreamCursor::try_new(
+                rstream,
+                poll_time.clone(),
+                &join_params,
+                JoinSide::Right,
+                &join_params.projection.right,
+            )?
+        },
     );
 
     // start first batches of both side asynchronously
@@ -296,15 +409,15 @@ pub async fn execute_join(
 
     let join_type = join_params.join_type;
     let mut joiner: Pin<Box<dyn Joiner + Send>> = match join_type {
-        Inner => Box::pin(InnerJoiner::new(join_params, sender)),
-        Left => Box::pin(LeftOuterJoiner::new(join_params, sender)),
-        Right => Box::pin(RightOuterJoiner::new(join_params, sender)),
-        Full => Box::pin(FullOuterJoiner::new(join_params, sender)),
-        LeftSemi => Box::pin(LeftSemiJoiner::new(join_params, sender)),
-        RightSemi => Box::pin(RightSemiJoiner::new(join_params, sender)),
-        LeftAnti => Box::pin(LeftAntiJoiner::new(join_params, sender)),
-        RightAnti => Box::pin(RightAntiJoiner::new(join_params, sender)),
-        Existence => Box::pin(ExistenceJoiner::new(join_params, sender)),
+        Inner => Box::pin(InnerJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        Left => Box::pin(LeftOuterJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        Right => Box::pin(RightOuterJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        Full => Box::pin(FullOuterJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        LeftSemi => Box::pin(LeftSemiJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        RightSemi => Box::pin(RightSemiJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        LeftAnti => Box::pin(LeftAntiJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        RightAnti => Box::pin(RightAntiJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
+        Existence => Box::pin(ExistenceJoiner::new_with_metric(join_params, sender.clone(), interleaver_time.clone())),
     };
     joiner.as_mut().join(&mut curs).await?;
     exec_ctx
@@ -316,6 +429,10 @@ pub async fn execute_join(
         .baseline_metrics()
         .elapsed_compute()
         .sub_duration(poll_time.duration());
+
+    // After join execution is completed, metrics are printed
+    println!("[METRICS] SortExec key rows convert count: {}", crate::sort_exec::SORT_EXEC_KEY_ROWS_CONVERT_COUNT.load(Ordering::Relaxed));
+    println!("[METRICS] SortMergeJoinExec key rows convert count: {}", SORT_MERGE_JOIN_EXEC_KEY_ROWS_CONVERT_COUNT.load(Ordering::Relaxed));
     Ok(())
 }
 
@@ -334,4 +451,126 @@ macro_rules! compare_cursor {
 pub trait Joiner {
     async fn join(self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()>;
     fn num_output_rows(&self) -> usize;
+}
+
+#[cfg(test)]
+mod test_interleaver_metric {
+    use super::*;
+    use std::sync::Arc;
+    use arrow::{array::Int32Array, datatypes::{Field, DataType, Schema}, record_batch::RecordBatch};
+    use datafusion::{physical_plan::{memory::MemoryExec, common}, prelude::SessionContext};
+    use std::time::Instant;
+    use arrow::array::{ArrayRef};
+
+    fn build_table(a: (&str, &Vec<i32>), b: (&str, &Vec<i32>), c: (&str, &Vec<i32>)) -> Arc<dyn ExecutionPlan> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(a.0, DataType::Int32, false),
+            Field::new(b.0, DataType::Int32, false),
+            Field::new(c.0, DataType::Int32, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(a.1.clone())),
+                Arc::new(Int32Array::from(b.1.clone())),
+                Arc::new(Int32Array::from(c.1.clone())),
+            ],
+        ).unwrap();
+        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_interleaver_time_metric() {
+        let left = build_table(
+            ("a1", &(0..10000).collect()),
+            ("b1", &(0..10000).collect()),
+            ("c1", &(0..10000).collect()),
+        );
+        let right = build_table(
+            ("a2", &(0..10000).collect()),
+            ("b2", &(0..10000).collect()),
+            ("c2", &(0..10000).collect()),
+        );
+        let on: JoinOn = vec![
+            (
+                Arc::new(datafusion::physical_expr::expressions::Column::new("a1", 0)),
+                Arc::new(datafusion::physical_expr::expressions::Column::new("a2", 0)),
+            ),
+            (
+                Arc::new(datafusion::physical_expr::expressions::Column::new("b1", 1)),
+                Arc::new(datafusion::physical_expr::expressions::Column::new("b2", 1)),
+            )
+        ];
+        let sort_options = vec![SortOptions::default(); on.len()];
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a1", DataType::Int32, false),
+            Field::new("b1", DataType::Int32, false),
+            Field::new("c1", DataType::Int32, false),
+            Field::new("a2", DataType::Int32, false),
+            Field::new("b2", DataType::Int32, false),
+            Field::new("c2", DataType::Int32, false),
+        ]));
+        let smj = SortMergeJoinExec::try_new(
+            schema,
+            left,
+            right,
+            on,
+            JoinType::Inner,
+            sort_options,
+        ).unwrap();
+        let session_ctx = SessionContext::new();
+        let task_ctx = session_ctx.task_ctx();
+        let stream = smj.execute(0, task_ctx).unwrap();
+        let _ = common::collect(stream).await.unwrap();
+        let metrics = smj.metrics();
+        let (elapsed_compute, interleaver_time) = metrics.map(|mset| {
+            let elapsed_compute = mset.iter()
+                .find(|m| m.value().name() == "elapsed_compute")
+                .map(|m| m.value().as_usize());
+            let interleaver_time = mset.iter()
+                .find(|m| m.value().name() == "interleaver_time")
+                .map(|m| m.value().as_usize());
+            (elapsed_compute, interleaver_time)
+        }).unwrap_or((None, None));
+
+        println!("elapsed_compute(ns): {:?}", elapsed_compute);
+        println!("interleaver_time(ns): {:?}", interleaver_time);
+        if let (Some(ec), Some(it)) = (elapsed_compute, interleaver_time) {
+            println!("interleaver_time 占比: {:.2}%", (it as f64) / (ec as f64) * 100.0);
+        }
+        assert!(interleaver_time.is_some(), "interleaver_time metric should be present");
+    }
+
+    #[test]
+    fn benchmark_interleaver() {
+        let row_counts = [10_000, 100_000, 1_000_000];
+        let col_counts = [2, 4, 8, 16, 32];
+        for &rows in &row_counts {
+            for &cols in &col_counts {
+                let schema = Schema::new((0..cols).map(|i| Field::new(&format!("col{}", i), DataType::Int32, false)).collect::<Vec<_>>());
+                let columns: Vec<ArrayRef> = (0..cols)
+                    .map(|i| Arc::new(Int32Array::from_iter_values((0..rows).map(|v| v + i))) as ArrayRef)
+                    .collect();
+                let batch = RecordBatch::try_new(Arc::new(schema), columns).unwrap();
+                // 计时
+                let start = Instant::now();
+                let _ = interleave(&batch);
+                let elapsed = start.elapsed();
+                println!("interleaver: rows={rows}, cols={cols}, elapsed={:?}", elapsed);
+            }
+        }
+    }
+
+    fn interleave(batch: &RecordBatch) -> Vec<Vec<i32>> {
+        let num_rows = batch.num_rows();
+        let num_columns = batch.num_columns();
+        let mut result = vec![vec![0; num_columns]; num_rows];
+        for col_idx in 0..num_columns {
+            let array = batch.column(col_idx).as_any().downcast_ref::<Int32Array>().unwrap();
+            for row_idx in 0..num_rows {
+                result[row_idx][col_idx] = array.value(row_idx);
+            }
+        }
+        result
+    }
 }

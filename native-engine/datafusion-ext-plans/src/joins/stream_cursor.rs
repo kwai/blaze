@@ -26,6 +26,7 @@ use datafusion::{
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
+use datafusion::physical_plan::EmptyRecordBatchStream;
 use datafusion_ext_commons::arrow::selection::take_batch;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
@@ -50,6 +51,7 @@ pub struct StreamCursor {
     keys: Vec<Arc<Rows>>,
     key_has_nulls: Vec<Option<NullBuffer>>,
     pub finished: bool,
+    pub key_rows_batches: Option<Vec<(RecordBatch, Rows)>>,
 }
 
 impl StreamCursor {
@@ -106,10 +108,40 @@ impl StreamCursor {
             keys: vec![empty_keys],
             key_has_nulls: vec![Some(null_nb)],
             finished: false,
+            key_rows_batches: None,
         })
     }
 
-    pub fn next(&mut self) -> Option<impl Future<Output = Result<()>> + '_> {
+    pub fn from_key_rows_batches(
+        key_rows_batches: Vec<(RecordBatch, Rows)>,
+        key_exprs: Vec<PhysicalExprRef>,
+        projection: Vec<usize>,
+        schema: SchemaRef,
+    ) -> Self {
+        let mut projected_batches = Vec::with_capacity(key_rows_batches.len());
+        let mut keys = Vec::with_capacity(key_rows_batches.len());
+        for (batch, rows) in key_rows_batches.into_iter() {
+            projected_batches.push(batch);
+            keys.push(Arc::new(rows));
+        }
+        let projected_batches_len = projected_batches.len();
+        Self {
+            stream: Box::pin(EmptyRecordBatchStream::new(schema.clone())),
+            key_converter: Arc::new(Mutex::new(RowConverter::new(vec![]).unwrap())),
+            key_exprs,
+            poll_time: Time::new(),
+            projection,
+            projected_batch_schema: schema,
+            projected_batches,
+            cur_idx: (0, 0),
+            keys,
+            key_has_nulls: vec![None; projected_batches_len],
+            finished: false,
+            key_rows_batches: None,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<impl Future<Output=Result<()>> + '_> {
         self.cur_idx.1 += 1;
         if self.cur_idx.1 >= self.projected_batches[self.cur_idx.0].num_rows() {
             self.cur_idx.0 += 1;

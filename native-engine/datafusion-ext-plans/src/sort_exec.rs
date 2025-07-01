@@ -23,6 +23,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
     },
+    pin::Pin,
 };
 
 use arrow::{
@@ -58,6 +59,7 @@ use futures::StreamExt;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
+use futures::stream::BoxStream;
 
 use crate::{
     common::{
@@ -77,6 +79,32 @@ const SPILL_OFFHEAP_MEM_COST: usize = 200000;
 
 // max number of sorted batches to merge
 const NUM_MAX_MERGING_BATCHES: usize = 32;
+
+pub static SORT_EXEC_KEY_ROWS_CONVERT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+trait RowConverterExt {
+    fn convert_columns_with_metrics(&self, columns: &[arrow::array::ArrayRef], caller: &'static str) -> arrow::error::Result<arrow::row::Rows>;
+}
+
+impl RowConverterExt for arrow::row::RowConverter {
+    fn convert_columns_with_metrics(&self, columns: &[arrow::array::ArrayRef], caller: &'static str) -> arrow::error::Result<arrow::row::Rows> {
+        if caller == "SortExec" {
+            SORT_EXEC_KEY_ROWS_CONVERT_COUNT.fetch_add(1, SeqCst);
+        }
+        self.convert_columns(columns)
+    }
+}
+
+/// Trait for outputting key rows along with RecordBatch
+pub trait KeyRowsOutput {
+    fn key_exprs(&self) -> Vec<PhysicalExprRef>;
+    fn execute_with_key_rows_output(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> BoxStream<'static, Result<(RecordBatch, Rows)>>;
+    fn as_any(&self) -> &dyn Any;
+}
 
 #[derive(Debug)]
 pub struct SortExec {
@@ -103,6 +131,10 @@ impl SortExec {
             record_output: true,
             props: OnceCell::new(),
         }
+    }
+
+    pub fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -195,6 +227,47 @@ impl ExecutionPlan for SortExec {
 
     fn statistics(&self) -> Result<Statistics> {
         Statistics::with_fetch(self.input.statistics()?, self.schema(), self.fetch, 0, 1)
+    }
+}
+
+impl KeyRowsOutput for SortExec {
+    fn key_exprs(&self) -> Vec<PhysicalExprRef> {
+        self.exprs.iter().map(|e| e.expr.clone()).collect()
+    }
+
+    fn execute_with_key_rows_output(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> BoxStream<'static, Result<(RecordBatch, Rows)>> {
+        use std::sync::Arc;
+        use futures::stream;
+
+        let projection: Vec<usize> = (0..self.schema().fields().len()).collect();
+        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
+        let input = exec_ctx.execute_projected(&self.input, &projection).unwrap();
+        let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
+            self.input.schema(),
+            &projection,
+            &self.exprs,
+        ).unwrap());
+
+        let stream = input;
+        let s = stream::unfold((stream, prune_sort_keys_from_batch), |(mut stream, pruner)| async move {
+            match stream.next().await {
+                Some(Ok(batch)) => {
+                    let (key_rows, pruned_batch) = pruner.prune(batch).unwrap();
+                    Some((Ok((pruned_batch, key_rows)), (stream, pruner)))
+                }
+                Some(Err(e)) => Some((Err(e), (stream, pruner))),
+                None => None,
+            }
+        });
+        Box::pin(s)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -298,8 +371,8 @@ impl MemConsumer for ExternalSorter {
             }
             Ok::<_, DataFusionError>(())
         })
-        .await
-        .expect("tokio error")?;
+            .await
+            .expect("tokio error")?;
 
         self.update_mem_used(0).await?;
         Ok(())
@@ -833,11 +906,11 @@ impl<B: SortedBlock> Merger<B> {
     fn cursors_mem_used(&self) -> usize {
         self.cursors.len() * SPILL_OFFHEAP_MEM_COST
             + self
-                .cursors
-                .values()
-                .iter()
-                .map(|cursor| cursor.cur_mem_used)
-                .sum::<usize>()
+            .cursors
+            .values()
+            .iter()
+            .map(|cursor| cursor.cur_mem_used)
+            .sum::<usize>()
     }
 
     fn next<KC: KeyCollector>(&mut self, batch_size: usize) -> Result<Option<(KC, RecordBatch)>> {
@@ -874,10 +947,10 @@ impl<B: SortedBlock> Merger<B> {
         let pruned_batch = if !self.sorter.prune_sort_keys_from_batch.is_all_pruned() {
             if !self.single_batch_mode
                 && self
-                    .cursors
-                    .values()
-                    .iter()
-                    .any(|cursor| cursor.cur_batches_changed)
+                .cursors
+                .values()
+                .iter()
+                .any(|cursor| cursor.cur_batches_changed)
             {
                 let mut batches_base_indices = vec![];
                 let mut batches = vec![];
@@ -948,7 +1021,7 @@ fn create_zero_column_batch(num_rows: usize) -> RecordBatch {
         vec![],
         &RecordBatchOptions::new().with_row_count(Some(num_rows)),
     )
-    .unwrap()
+        .unwrap()
 }
 
 struct PruneSortKeysFromBatch {
@@ -1055,7 +1128,7 @@ impl PruneSortKeysFromBatch {
                     .and_then(|cv| cv.into_array(batch.num_rows()))
             })
             .collect::<Result<_>>()?;
-        let key_rows = self.sort_row_converter.lock().convert_columns(&key_cols)?;
+        let key_rows = self.sort_row_converter.lock().convert_columns_with_metrics(&key_cols, "SortExec")?;
 
         let retained_cols = batch
             .project(&self.input_projection)?
@@ -1328,7 +1401,7 @@ mod test {
                 Arc::new(Int32Array::from(c.1.clone())),
             ],
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn build_table(

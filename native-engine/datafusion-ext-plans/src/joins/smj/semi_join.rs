@@ -17,6 +17,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
+use datafusion::physical_plan::metrics::Time;
 use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
 
 use crate::{
@@ -51,6 +52,7 @@ pub struct SemiJoiner<const P: JoinerParams> {
     output_sender: Arc<WrappedRecordBatchSender>,
     indices: Vec<Idx>,
     output_rows: usize,
+    interleaver_time: Option<Time>,
 }
 
 const LEFT_SEMI: JoinerParams = JoinerParams::new(L, true);
@@ -70,6 +72,17 @@ impl<const P: JoinerParams> SemiJoiner<P> {
             output_sender,
             indices: vec![],
             output_rows: 0,
+            interleaver_time: None,
+        }
+    }
+
+    pub fn new_with_metric(join_params: JoinParams, output_sender: Arc<WrappedRecordBatchSender>, interleaver_time: Time) -> Self {
+        Self {
+            join_params,
+            output_sender,
+            indices: vec![],
+            output_rows: 0,
+            interleaver_time: Some(interleaver_time),
         }
     }
 
@@ -84,11 +97,21 @@ impl<const P: JoinerParams> SemiJoiner<P> {
         let cols = match P.join_side {
             L => {
                 let batch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
-                batch_interleaver(&indices)?
+                if let Some(ref interleaver_time) = self.interleaver_time {
+                    let _timer = interleaver_time.timer();
+                    batch_interleaver(&indices)?
+                } else {
+                    batch_interleaver(&indices)?
+                }
             }
             R => {
                 let batch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
-                batch_interleaver(&indices)?
+                if let Some(ref interleaver_time) = self.interleaver_time {
+                    let _timer = interleaver_time.timer();
+                    batch_interleaver(&indices)?
+                } else {
+                    batch_interleaver(&indices)?
+                }
             }
         };
         let output_batch = RecordBatch::try_new_with_options(

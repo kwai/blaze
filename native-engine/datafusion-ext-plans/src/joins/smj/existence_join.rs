@@ -17,6 +17,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
+use datafusion::physical_plan::metrics::Time;
 use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
 
 use crate::{
@@ -32,6 +33,7 @@ pub struct ExistenceJoiner {
     indices: Vec<Idx>,
     exists: Vec<bool>,
     output_rows: usize,
+    interleaver_time: Option<Time>,
 }
 
 impl ExistenceJoiner {
@@ -42,6 +44,18 @@ impl ExistenceJoiner {
             indices: vec![],
             exists: vec![],
             output_rows: 0,
+            interleaver_time: None,
+        }
+    }
+
+    pub fn new_with_metric(join_params: JoinParams, output_sender: Arc<WrappedRecordBatchSender>, interleaver_time: Time) -> Self {
+        Self {
+            join_params,
+            output_sender,
+            indices: vec![],
+            exists: vec![],
+            output_rows: 0,
+            interleaver_time: Some(interleaver_time),
         }
     }
 
@@ -53,7 +67,12 @@ impl ExistenceJoiner {
         let indices = std::mem::take(&mut self.indices);
         let num_rows = indices.len();
         let batch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
-        let cols = batch_interleaver(&indices)?;
+        let cols = if let Some(ref interleaver_time) = self.interleaver_time {
+            let _timer = interleaver_time.timer();
+            batch_interleaver(&indices)?
+        } else {
+            batch_interleaver(&indices)?
+        };
 
         let exists = std::mem::take(&mut self.exists);
         let exists_col: ArrayRef = Arc::new(arrow::array::BooleanArray::from(exists));

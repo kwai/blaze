@@ -17,6 +17,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
 use datafusion::common::Result;
+use datafusion::physical_plan::metrics::Time;
 use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
 use itertools::Itertools;
 
@@ -33,6 +34,7 @@ pub struct FullJoiner<const L_OUTER: bool, const R_OUTER: bool> {
     lindices: Vec<Idx>,
     rindices: Vec<Idx>,
     output_rows: usize,
+    interleaver_time: Option<Time>,
 }
 
 pub type InnerJoiner = FullJoiner<false, false>;
@@ -48,6 +50,18 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
             lindices: vec![],
             rindices: vec![],
             output_rows: 0,
+            interleaver_time: None,
+        }
+    }
+
+    pub fn new_with_metric(join_params: JoinParams, output_sender: Arc<WrappedRecordBatchSender>, interleaver_time: Time) -> Self {
+        Self {
+            join_params,
+            output_sender,
+            lindices: vec![],
+            rindices: vec![],
+            output_rows: 0,
+            interleaver_time: Some(interleaver_time),
         }
     }
 
@@ -63,8 +77,16 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
 
         let lbatch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
         let rbatch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
-        let lcols = lbatch_interleaver(&lindices)?;
-        let rcols = rbatch_interleaver(&rindices)?;
+        let lcols;
+        let rcols;
+        if let Some(ref interleaver_time) = self.interleaver_time {
+            let _timer = interleaver_time.timer();
+            lcols = lbatch_interleaver(&lindices)?;
+            rcols = rbatch_interleaver(&rindices)?;
+        } else {
+            lcols = lbatch_interleaver(&lindices)?;
+            rcols = rbatch_interleaver(&rindices)?;
+        }
 
         let output_batch = RecordBatch::try_new_with_options(
             self.join_params.projection.schema.clone(),

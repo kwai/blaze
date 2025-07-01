@@ -57,3 +57,5 @@ pub mod joins;
 mod scan;
 pub mod shuffle;
 pub mod window;
+
+pub use sort_exec::KeyRowsOutput;
