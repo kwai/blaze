@@ -83,7 +83,7 @@ mod test {
         for n in 0..1000 {
             let mut array = vec![];
             for _ in 0..n {
-                array.push(rand::thread_rng().gen::<u16>());
+                array.push(rand::rng().random::<u16>());
             }
 
             let mut array1 = array.clone();
@@ -100,7 +100,7 @@ mod test {
     fn fuzzytest_u16_1m() {
         let mut array = vec![];
         for _ in 0..1000000 {
-            array.push(rand::thread_rng().gen::<u16>());
+            array.push(rand::rng().random::<u16>());
         }
 
         let mut array1 = array.clone();

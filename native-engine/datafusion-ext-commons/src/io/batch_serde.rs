@@ -21,9 +21,8 @@ use arrow::{array::*, buffer::Buffer, datatypes::*};
 use datafusion::common::Result;
 
 use crate::{
-    df_unimplemented_err,
+    SliceAsRawBytes, UninitializedInit, df_unimplemented_err,
     io::{read_bytes_slice, read_len, write_len},
-    SliceAsRawBytes, UninitializedInit,
 };
 
 pub enum TransposeOpt {
@@ -151,9 +150,7 @@ pub fn read_array<R: Read>(
     transpose_opt: &mut TransposeOpt,
 ) -> Result<ArrayRef> {
     macro_rules! read_primitive {
-        ($ty:ident) => {{
-            read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input, transpose_opt)?
-        }};
+        ($ty:ident) => {{ read_primitive_array::<_, paste::paste! {[<$ty Type>]}>(num_rows, input, transpose_opt)? }};
     }
     Ok(match data_type {
         DataType::Null => Arc::new(NullArray::new(num_rows)),

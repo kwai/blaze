@@ -35,10 +35,10 @@ use crate::{
         timer_helper::TimerHelper,
     },
     memmgr::{
-        spill::{try_new_spill, OwnedSpillBufReader, Spill},
         MemConsumer, MemConsumerInfo, MemManager,
+        spill::{OwnedSpillBufReader, Spill, try_new_spill},
     },
-    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner},
+    shuffle::{Partitioning, ShuffleRepartitioner, buffered_data::BufferedData},
 };
 
 pub struct SortShuffleRepartitioner {

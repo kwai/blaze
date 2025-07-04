@@ -75,15 +75,15 @@ impl From<io::Error> for PlanSerDeError {
 impl Display for PlanSerDeError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            PlanSerDeError::NotImplemented(ref desc) => {
+            PlanSerDeError::NotImplemented(desc) => {
                 write!(f, "Not implemented: {}", desc)
             }
-            PlanSerDeError::General(ref desc) => write!(f, "General error: {}", desc),
-            PlanSerDeError::ArrowError(ref desc) => write!(f, "Arrow error: {}", desc),
-            PlanSerDeError::DataFusionError(ref desc) => {
+            PlanSerDeError::General(desc) => write!(f, "General error: {}", desc),
+            PlanSerDeError::ArrowError(desc) => write!(f, "Arrow error: {}", desc),
+            PlanSerDeError::DataFusionError(desc) => {
                 write!(f, "DataFusion error: {:?}", desc)
             }
-            PlanSerDeError::IoError(ref desc) => write!(f, "IO error: {}", desc),
+            PlanSerDeError::IoError(desc) => write!(f, "IO error: {}", desc),
             PlanSerDeError::Internal(desc) => {
                 write!(f, "Internal error: {}", desc)
             }

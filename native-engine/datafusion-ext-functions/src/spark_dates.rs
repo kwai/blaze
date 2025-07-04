@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use arrow::{
-    compute::{date_part, DatePart},
+    compute::{DatePart, date_part},
     datatypes::DataType,
 };
 use datafusion::{common::Result, physical_plan::ColumnarValue};

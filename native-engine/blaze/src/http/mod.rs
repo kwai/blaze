@@ -20,7 +20,7 @@ mod pprof;
 use std::sync::Mutex;
 
 use once_cell::sync::OnceCell;
-use poem::{listener::TcpListener, Route, RouteMethod, Server};
+use poem::{Route, RouteMethod, Server, listener::TcpListener};
 
 pub static HTTP_SERVICE: OnceCell<HttpService> = OnceCell::new();
 

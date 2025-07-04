@@ -23,7 +23,7 @@ use crate::{
         acc::AccColumnRef,
         agg::{Agg, IdxSelection},
     },
-    window::{window_context::WindowContext, WindowFunctionProcessor},
+    window::{WindowFunctionProcessor, window_context::WindowContext},
 };
 
 pub struct AggProcessor {

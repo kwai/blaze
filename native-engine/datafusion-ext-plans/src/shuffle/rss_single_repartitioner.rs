@@ -22,7 +22,7 @@ use parking_lot::Mutex;
 
 use crate::{
     common::ipc_compression::IpcCompressionWriter,
-    shuffle::{rss::RssWriter, ShuffleRepartitioner},
+    shuffle::{ShuffleRepartitioner, rss::RssWriter},
 };
 
 pub struct RssSingleShuffleRepartitioner {

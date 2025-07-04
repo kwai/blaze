@@ -23,8 +23,8 @@ use std::{
 use arrow::{array::*, compute::*, datatypes::*, record_batch::RecordBatch};
 use datafusion::{
     common::{
-        cast::{as_list_array, as_struct_array},
         Result, ScalarValue,
+        cast::{as_list_array, as_struct_array},
     },
     logical_expr::ColumnarValue,
     physical_expr::PhysicalExpr,
@@ -197,7 +197,7 @@ mod test {
     use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
     use datafusion::{
         assert_batches_eq,
-        physical_plan::{expressions::Column, PhysicalExpr},
+        physical_plan::{PhysicalExpr, expressions::Column},
         scalar::ScalarValue,
     };
 

@@ -24,12 +24,11 @@ use arrow::{
 };
 use bitvec::{bitvec, vec::BitVec};
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use datafusion::common::{utils::proxy::VecAllocExt, Result, ScalarValue};
+use datafusion::common::{Result, ScalarValue, utils::proxy::VecAllocExt};
 use datafusion_ext_commons::{
-    df_execution_err, downcast_any,
+    SliceAsRawBytes, UninitializedInit, df_execution_err, downcast_any,
     io::{read_len, read_scalar, write_len, write_scalar},
     scalar_value::scalar_value_heap_mem_size,
-    SliceAsRawBytes, UninitializedInit,
 };
 use smallvec::SmallVec;
 

@@ -23,9 +23,9 @@ use datafusion::{
     execution::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::downcast_any;
@@ -36,7 +36,7 @@ use once_cell::sync::OnceCell;
 use crate::{
     common::{
         cached_exprs_evaluator::CachedExprsEvaluator,
-        column_pruning::{prune_columns, ExecuteWithColumnPruning},
+        column_pruning::{ExecuteWithColumnPruning, prune_columns},
         execution_context::ExecutionContext,
         timer_helper::TimerHelper,
     },

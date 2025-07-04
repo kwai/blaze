@@ -22,10 +22,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        joins::utils::JoinOn,
-        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        joins::utils::JoinOn,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
     },
 };
 use datafusion_ext_commons::{batch_size, df_execution_err};
@@ -39,6 +39,7 @@ use crate::{
     },
     cur_forward,
     joins::{
+        JoinParams, JoinProjection, StreamCursors,
         join_utils::{JoinType, JoinType::*},
         smj::{
             existence_join::ExistenceJoiner,
@@ -46,7 +47,6 @@ use crate::{
             semi_join::{LeftAntiJoiner, LeftSemiJoiner, RightAntiJoiner, RightSemiJoiner},
         },
         stream_cursor::StreamCursor,
-        JoinParams, JoinProjection, StreamCursors,
     },
 };
 

@@ -25,9 +25,9 @@ use arrow::{
     datatypes::{DataType, Field, FieldRef, SchemaRef},
     row::{RowConverter, SortField},
 };
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use datafusion::{
-    common::{stats::Precision, Result, ScalarValue},
+    common::{Result, ScalarValue, stats::Precision},
     datasource::{
         listing::{FileRange, PartitionedFile},
         object_store::ObjectStoreUrl,
@@ -35,16 +35,15 @@ use datafusion::{
     },
     logical_expr::{ColumnarValue, Operator, ScalarUDF, Volatility},
     physical_expr::{
-        expressions::{in_list, LikeExpr, SCAndExpr, SCOrExpr},
         ScalarFunctionExpr,
+        expressions::{LikeExpr, SCAndExpr, SCOrExpr, in_list},
     },
     physical_plan::{
-        expressions as phys_expr,
+        ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics, expressions as phys_expr,
         expressions::{
             BinaryExpr, CaseExpr, CastExpr, Column, IsNotNullExpr, IsNullExpr, Literal,
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
-        ColumnStatistics, ExecutionPlan, PhysicalExpr, Statistics,
     },
     prelude::create_udf,
 };
@@ -59,8 +58,8 @@ use datafusion_ext_exprs::{
 };
 use datafusion_ext_plans::{
     agg::{
-        agg::{create_agg, create_udaf_agg},
         AggExecMode, AggExpr, AggFunction, AggMode, GroupingExpr,
+        agg::{create_agg, create_udaf_agg},
     },
     agg_exec::AggExec,
     broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,
@@ -89,18 +88,17 @@ use datafusion_ext_plans::{
     window::{WindowExpr, WindowFunction, WindowRankType},
     window_exec::WindowExec,
 };
-use object_store::{path::Path, ObjectMeta};
+use object_store::{ObjectMeta, path::Path};
 use parking_lot::Mutex as SyncMutex;
 
 use crate::{
-    convert_box_required, convert_required,
+    Schema, convert_box_required, convert_required,
     error::PlanSerDeError,
     from_proto_binary_op, proto_error, protobuf,
     protobuf::{
-        physical_expr_node::ExprType, physical_plan_node::PhysicalPlanType,
-        physical_repartition::RepartitionType, GenerateFunction, PhysicalRepartition, SortExecNode,
+        GenerateFunction, PhysicalRepartition, SortExecNode, physical_expr_node::ExprType,
+        physical_plan_node::PhysicalPlanType, physical_repartition::RepartitionType,
     },
-    Schema,
 };
 
 impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {

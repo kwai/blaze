@@ -4,8 +4,8 @@
 use std::{
     alloc::{GlobalAlloc, Layout},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Mutex,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -53,26 +53,34 @@ impl<T: GlobalAlloc> DebugAlloc<T> {
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for DebugAlloc<T> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.current.fetch_add(layout.size(), SeqCst);
-        self.update();
-        self.inner.alloc(layout)
+        unsafe {
+            self.current.fetch_add(layout.size(), SeqCst);
+            self.update();
+            self.inner.alloc(layout)
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.current.fetch_sub(layout.size(), SeqCst);
-        self.update();
-        self.inner.dealloc(ptr, layout)
+        unsafe {
+            self.current.fetch_sub(layout.size(), SeqCst);
+            self.update();
+            self.inner.dealloc(ptr, layout)
+        }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        self.current.fetch_add(layout.size(), SeqCst);
-        self.update();
-        self.inner.alloc_zeroed(layout)
+        unsafe {
+            self.current.fetch_add(layout.size(), SeqCst);
+            self.update();
+            self.inner.alloc_zeroed(layout)
+        }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        self.current.fetch_add(new_size - layout.size(), SeqCst);
-        self.update();
-        self.inner.realloc(ptr, layout, new_size)
+        unsafe {
+            self.current.fetch_add(new_size - layout.size(), SeqCst);
+            self.update();
+            self.inner.realloc(ptr, layout, new_size)
+        }
     }
 }

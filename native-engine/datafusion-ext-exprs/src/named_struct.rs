@@ -28,7 +28,7 @@ use datafusion::{
     },
     common::Result,
     logical_expr::ColumnarValue,
-    physical_expr::{physical_exprs_bag_equal, PhysicalExpr},
+    physical_expr::{PhysicalExpr, physical_exprs_bag_equal},
 };
 use datafusion_ext_commons::{df_execution_err, io::recover_named_batch};
 
@@ -132,7 +132,7 @@ mod test {
     use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
     use datafusion::{
         assert_batches_eq,
-        physical_plan::{expressions::Column, PhysicalExpr},
+        physical_plan::{PhysicalExpr, expressions::Column},
     };
 
     use crate::named_struct::NamedStructExpr;

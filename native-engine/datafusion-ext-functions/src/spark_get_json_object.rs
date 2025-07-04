@@ -15,7 +15,7 @@
 use std::{any::Any, borrow::Cow, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, StringArray},
+    array::{Array, ArrayRef, StringArray, new_null_array},
     datatypes::DataType,
 };
 use datafusion::{
@@ -44,7 +44,7 @@ pub fn spark_get_json_object(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                 return Ok(ColumnarValue::Array(new_null_array(
                     &DataType::Utf8,
                     json_strings.len(),
-                )))
+                )));
             }
         },
         _ => unreachable!("path should be ScalarValue"),
@@ -119,7 +119,7 @@ pub fn spark_get_parsed_json_object(args: &[ColumnarValue]) -> Result<ColumnarVa
                 return Ok(ColumnarValue::Array(new_null_array(
                     &DataType::Utf8,
                     json_array.len(),
-                )))
+                )));
             }
         },
         _ => unreachable!("path should be ScalarValue"),
@@ -342,7 +342,7 @@ impl HiveGetJsonObjectMatcher {
 
                 if chars.peek().cloned() == Some('[') {
                     return Self::parse(chars); // handle special case like
-                                               // $.aaa.[0].xxx
+                    // $.aaa.[0].xxx
                 }
                 let mut child_name = String::new();
                 loop {
@@ -515,7 +515,7 @@ mod test {
     use datafusion::{common::ScalarValue, logical_expr::ColumnarValue};
 
     use crate::spark_get_json_object::{
-        spark_get_parsed_json_object, spark_parse_json, HiveGetJsonObjectEvaluator,
+        HiveGetJsonObjectEvaluator, spark_get_parsed_json_object, spark_parse_json,
     };
 
     #[test]

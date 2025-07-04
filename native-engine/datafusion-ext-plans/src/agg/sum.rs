@@ -24,11 +24,11 @@ use datafusion_ext_commons::{df_unimplemented_err, downcast_any};
 
 use crate::{
     agg::{
+        Agg,
         acc::{
-            acc_generic_column_to_array, create_acc_generic_column, AccColumnRef, AccPrimColumn,
+            AccColumnRef, AccPrimColumn, acc_generic_column_to_array, create_acc_generic_column,
         },
         agg::IdxSelection,
-        Agg,
     },
     idx_for_zipped,
 };

@@ -20,9 +20,9 @@ use std::{
 };
 
 use arrow::{
-    array::{as_struct_array, make_array, new_empty_array, Array, ArrayRef, StructArray},
+    array::{Array, ArrayRef, StructArray, as_struct_array, make_array, new_empty_array},
     datatypes::{DataType, Field, Schema, SchemaRef},
-    ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
+    ffi::{FFI_ArrowArray, FFI_ArrowSchema, from_ffi},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use blaze_jni_bridge::{

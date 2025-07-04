@@ -15,10 +15,10 @@
 use std::num::NonZeroI32;
 
 use log::error;
-use poem::{handler, http::StatusCode, Request, RouteMethod};
-use pprof::{protos::Message, ProfilerGuard};
+use poem::{Request, RouteMethod, handler, http::StatusCode};
+use pprof::{ProfilerGuard, protos::Message};
 use serde::{Deserialize, Serialize};
-use tokio::time::{sleep as delay_for, Duration};
+use tokio::time::{Duration, sleep as delay_for};
 
 use crate::http::Handler;
 
@@ -87,9 +87,9 @@ impl Handler for PProfHandler {
 
 #[cfg(test)]
 mod tests {
-    use poem::{test::TestClient, Route};
+    use poem::{Route, test::TestClient};
 
-    use crate::http::{pprof::PProfHandler, Handler};
+    use crate::http::{Handler, pprof::PProfHandler};
 
     #[tokio::test]
     async fn test_router() {

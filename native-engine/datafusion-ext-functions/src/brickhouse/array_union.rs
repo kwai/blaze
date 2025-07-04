@@ -68,7 +68,8 @@ pub fn array_union(args: &[ColumnarValue]) -> Result<ColumnarValue> {
                     ListArray::new_null(Arc::new(Field::new_list_field(DataType::Null, true)), 1)
                 }
                 ColumnarValue::Scalar(scalar) => {
-                    downcast_any!(scalar.to_array()?, ListArray)?.clone()
+                    let array = scalar.to_array()?;
+                    downcast_any!(&array, ListArray)?.clone()
                 }
             })
         })

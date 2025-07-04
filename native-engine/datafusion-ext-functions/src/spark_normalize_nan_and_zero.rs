@@ -20,8 +20,8 @@ use arrow::{
 };
 use datafusion::{
     common::{
-        cast::{as_float32_array, as_float64_array},
         Result, ScalarValue,
+        cast::{as_float32_array, as_float64_array},
     },
     logical_expr::ColumnarValue,
 };
@@ -30,28 +30,27 @@ use num::Float;
 
 pub fn spark_normalize_nan_and_zero(args: &[ColumnarValue]) -> Result<ColumnarValue> {
     match &args[0] {
-        ColumnarValue::Scalar(ScalarValue::Float32(Some(v))) =>
-            Ok(ColumnarValue::Scalar(ScalarValue::Float32(Some(normalize_float(*v))))),
-        ColumnarValue::Scalar(ScalarValue::Float64(Some(v))) =>
-            Ok(ColumnarValue::Scalar(ScalarValue::Float64(Some(normalize_float(*v))))),
-        ColumnarValue::Array(array) => {
-            match array.as_ref().data_type() {
-                DataType::Float32 => {
-                    Ok(ColumnarValue::Array(Arc::new(Float32Array::from_iter(
-                        as_float32_array(array)?
-                            .into_iter()
-                            .map(|s| s.map(normalize_float)),
-                    ))))
-                },
-                DataType::Float64 => {
-                    Ok(ColumnarValue::Array(Arc::new(Float64Array::from_iter(
-                        as_float64_array(array)?
-                            .into_iter()
-                            .map(|s| s.map(normalize_float)),
-                    ))))
-                },
-                other_dt => df_execution_err!("spark_normalize_nan_and_zero for Array type only supports Float32/Float64, not {}", other_dt),
-            }
+        ColumnarValue::Scalar(ScalarValue::Float32(Some(v))) => Ok(ColumnarValue::Scalar(
+            ScalarValue::Float32(Some(normalize_float(*v))),
+        )),
+        ColumnarValue::Scalar(ScalarValue::Float64(Some(v))) => Ok(ColumnarValue::Scalar(
+            ScalarValue::Float64(Some(normalize_float(*v))),
+        )),
+        ColumnarValue::Array(array) => match array.as_ref().data_type() {
+            DataType::Float32 => Ok(ColumnarValue::Array(Arc::new(Float32Array::from_iter(
+                as_float32_array(array)?
+                    .into_iter()
+                    .map(|s| s.map(normalize_float)),
+            )))),
+            DataType::Float64 => Ok(ColumnarValue::Array(Arc::new(Float64Array::from_iter(
+                as_float64_array(array)?
+                    .into_iter()
+                    .map(|s| s.map(normalize_float)),
+            )))),
+            other_dt => df_execution_err!(
+                "spark_normalize_nan_and_zero for Array type only supports Float32/Float64, not {}",
+                other_dt
+            ),
         },
         other_dt => df_execution_err!(
             "spark_normalize_nan_and_zero only supports non-null Float32/Float64 scalars or Float32/Float64 arrays, not: {:?}",

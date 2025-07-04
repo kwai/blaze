@@ -24,13 +24,13 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
     },
 };
-use futures::{stream::once, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, stream::once};
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
 

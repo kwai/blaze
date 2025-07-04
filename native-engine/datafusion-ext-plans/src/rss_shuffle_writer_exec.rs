@@ -22,12 +22,12 @@ use datafusion::{
     arrow::datatypes::SchemaRef,
     error::{DataFusionError, Result},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef, expressions::Column},
     physical_plan,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
         SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use once_cell::sync::OnceCell;
@@ -36,8 +36,9 @@ use crate::{
     common::execution_context::ExecutionContext,
     memmgr::MemManager,
     shuffle::{
+        Partitioning, ShuffleRepartitioner,
         rss_single_repartitioner::RssSingleShuffleRepartitioner,
-        rss_sort_repartitioner::RssSortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
+        rss_sort_repartitioner::RssSortShuffleRepartitioner,
     },
     sort_exec::create_default_ascending_sort_exec,
 };

@@ -15,8 +15,8 @@
 use std::{
     pin::Pin,
     sync::{
-        atomic::{AtomicUsize, Ordering::Relaxed},
         Arc,
+        atomic::{AtomicUsize, Ordering::Relaxed},
     },
 };
 
@@ -36,15 +36,15 @@ use crate::{
     broadcast_join_exec::Joiner,
     common::{execution_context::WrappedRecordBatchSender, timer_helper::TimerHelper},
     joins::{
+        JoinParams,
         bhj::{
+            ProbeSide,
             semi_join::{
                 ProbeSide::{L, R},
                 SemiMode::{Anti, Existence, Semi},
             },
-            ProbeSide,
         },
-        join_hash_map::{join_create_hashes, JoinHashMap},
-        JoinParams,
+        join_hash_map::{JoinHashMap, join_create_hashes},
     },
 };
 

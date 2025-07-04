@@ -24,9 +24,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalSortExpr},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PhysicalExpr, PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::{arrow::cast::cast, downcast_any};
@@ -35,7 +35,7 @@ use once_cell::sync::OnceCell;
 
 use crate::{
     common::execution_context::ExecutionContext,
-    window::{window_context::WindowContext, WindowExpr},
+    window::{WindowExpr, window_context::WindowContext},
 };
 
 #[derive(Debug)]
@@ -269,8 +269,8 @@ mod test {
     use arrow::{array::*, datatypes::*, record_batch::RecordBatch};
     use datafusion::{
         assert_batches_eq,
-        physical_expr::{expressions::Column, PhysicalSortExpr},
-        physical_plan::{memory::MemoryExec, ExecutionPlan},
+        physical_expr::{PhysicalSortExpr, expressions::Column},
+        physical_plan::{ExecutionPlan, memory::MemoryExec},
         prelude::SessionContext,
     };
 

@@ -25,7 +25,7 @@ use arrow::{
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
 use crate::{
-    agg::{acc::AccColumnRef, agg::IdxSelection, collect::AggCollectSet, Agg},
+    agg::{Agg, acc::AccColumnRef, agg::IdxSelection, collect::AggCollectSet},
     idx_for_zipped,
 };
 

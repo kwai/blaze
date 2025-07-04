@@ -15,7 +15,7 @@
 use std::{
     error::Error,
     panic::AssertUnwindSafe,
-    sync::{mpsc::Receiver, Arc},
+    sync::{Arc, mpsc::Receiver},
 };
 
 use arrow::{
@@ -36,12 +36,12 @@ use datafusion::{
     error::DataFusionError,
     execution::context::TaskContext,
     physical_plan::{
-        displayable, empty::EmptyExec, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
+        ExecutionPlan, displayable, empty::EmptyExec, metrics::ExecutionPlanMetricsSet,
     },
 };
 use datafusion_ext_commons::{df_execution_err, downcast_any};
 use datafusion_ext_plans::{
-    common::execution_context::{cancel_all_tasks, ExecutionContext},
+    common::execution_context::{ExecutionContext, cancel_all_tasks},
     ipc_writer_exec::IpcWriterExec,
     parquet_sink_exec::ParquetSinkExec,
     shuffle_writer_exec::ShuffleWriterExec,

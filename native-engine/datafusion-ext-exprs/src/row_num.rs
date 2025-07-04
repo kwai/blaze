@@ -17,8 +17,8 @@ use std::{
     fmt::{Debug, Display, Formatter},
     hash::Hasher,
     sync::{
-        atomic::{AtomicI64, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicI64, Ordering::SeqCst},
     },
 };
 

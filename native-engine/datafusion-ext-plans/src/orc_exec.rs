@@ -31,24 +31,24 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
     },
 };
 use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use orc_rust::{
     arrow_reader::ArrowReaderBuilder,
     projection::ProjectionMask,
-    reader::{metadata::FileMetadata, AsyncChunkReader},
+    reader::{AsyncChunkReader, metadata::FileMetadata},
 };
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{internal_file_reader::InternalFileReader, BlazeSchemaMapping},
+    scan::{BlazeSchemaMapping, internal_file_reader::InternalFileReader},
 };
 
 /// Execution plan for scanning one or more Orc partitions

@@ -20,9 +20,9 @@ use std::{
 };
 
 use arrow::{
-    array::{as_struct_array, make_array, Array, ArrayRef, StructArray},
+    array::{Array, ArrayRef, StructArray, as_struct_array, make_array},
     datatypes::{DataType, Field, Schema, SchemaRef},
-    ffi::{from_ffi, FFI_ArrowArray, FFI_ArrowSchema},
+    ffi::{FFI_ArrowArray, FFI_ArrowSchema, from_ffi},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use blaze_jni_bridge::{
@@ -34,9 +34,8 @@ use datafusion::{
     physical_expr::PhysicalExpr,
 };
 use datafusion_ext_commons::{
-    downcast_any,
+    UninitializedInit, downcast_any,
     io::{read_len, write_len},
-    UninitializedInit,
 };
 use jni::objects::{GlobalRef, JObject};
 use once_cell::sync::OnceCell;
@@ -129,7 +128,8 @@ impl SparkUDAFWrapper {
             Ok::<_, DataFusionError>(jni_new_prim_array!(long, &zipped_indices[..])?)
         })?;
 
-        jni_call!(SparkUDAFWrapperContext(self.jcontext()?.as_obj()).update(
+        let jcontext = self.jcontext()?;
+        jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).update(
             accs.obj.as_obj(),
             &mut export_ffi_batch_array as *mut FFI_ArrowArray as i64,
             zipped_indices_array.as_obj(),
@@ -159,7 +159,8 @@ impl SparkUDAFWrapper {
             Ok::<_, DataFusionError>(jni_new_prim_array!(long, &zipped_indices[..])?)
         })?;
 
-        jni_call!(SparkUDAFWrapperContext(self.jcontext()?.as_obj()).merge(
+        let jcontext = self.jcontext()?;
+        jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).merge(
             accs.obj.as_obj(),
             merging_accs.obj.as_obj(),
             zipped_indices_array.as_obj(),
@@ -179,7 +180,8 @@ impl SparkUDAFWrapper {
         })?;
         let mut import_ffi_array = FFI_ArrowArray::empty();
 
-        jni_call!(SparkUDAFWrapperContext(self.jcontext()?.as_obj()).eval(
+        let jcontext = self.jcontext()?;
+        jni_call!(SparkUDAFWrapperContext(jcontext.as_obj()).eval(
             accs.obj.as_obj(),
             acc_indices_array.as_obj(),
             &mut import_ffi_array as *mut FFI_ArrowArray as i64,

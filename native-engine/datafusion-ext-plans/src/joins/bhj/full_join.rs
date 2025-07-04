@@ -15,13 +15,13 @@
 use std::{
     pin::Pin,
     sync::{
-        atomic::{AtomicUsize, Ordering::Relaxed},
         Arc,
+        atomic::{AtomicUsize, Ordering::Relaxed},
     },
 };
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, RecordBatch, RecordBatchOptions, UInt32Array},
+    array::{Array, ArrayRef, RecordBatch, RecordBatchOptions, UInt32Array, new_null_array},
     buffer::NullBuffer,
 };
 use async_trait::async_trait;
@@ -36,12 +36,12 @@ use crate::{
     broadcast_join_exec::Joiner,
     common::{execution_context::WrappedRecordBatchSender, timer_helper::TimerHelper},
     joins::{
-        bhj::{
-            full_join::ProbeSide::{L, R},
-            ProbeSide,
-        },
-        join_hash_map::{join_create_hashes, JoinHashMap},
         JoinParams,
+        bhj::{
+            ProbeSide,
+            full_join::ProbeSide::{L, R},
+        },
+        join_hash_map::{JoinHashMap, join_create_hashes},
     },
 };
 

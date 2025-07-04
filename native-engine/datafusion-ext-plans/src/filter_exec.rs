@@ -18,11 +18,11 @@ use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef, expressions::Column},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::df_execution_err;

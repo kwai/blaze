@@ -10,9 +10,8 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::ExecutionPlanMetricsSet, DisplayAs, DisplayFormatType, ExecutionMode,
-        ExecutionPlan, ExecutionPlanProperties, PlanProperties, SendableRecordBatchStream,
-        Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream, Statistics, metrics::ExecutionPlanMetricsSet,
     },
 };
 use futures::StreamExt;
@@ -136,8 +135,8 @@ mod test {
     };
     use datafusion::{
         assert_batches_eq,
-        common::{stats::Precision, Result},
-        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        common::{Result, stats::Precision},
+        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
         prelude::SessionContext,
     };
 

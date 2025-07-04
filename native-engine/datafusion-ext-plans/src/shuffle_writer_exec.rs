@@ -21,12 +21,12 @@ use async_trait::async_trait;
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExprRef},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef, expressions::Column},
     physical_plan,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
         SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::df_execution_err;
@@ -36,8 +36,8 @@ use crate::{
     common::execution_context::ExecutionContext,
     memmgr::MemManager,
     shuffle::{
-        single_repartitioner::SingleShuffleRepartitioner,
-        sort_repartitioner::SortShuffleRepartitioner, Partitioning, ShuffleRepartitioner,
+        Partitioning, ShuffleRepartitioner, single_repartitioner::SingleShuffleRepartitioner,
+        sort_repartitioner::SortShuffleRepartitioner,
     },
     sort_exec::create_default_ascending_sort_exec,
 };

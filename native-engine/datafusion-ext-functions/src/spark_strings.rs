@@ -20,8 +20,8 @@ use arrow::{
 };
 use datafusion::{
     common::{
-        cast::{as_int32_array, as_list_array, as_string_array},
         Result, ScalarValue,
+        cast::{as_int32_array, as_list_array, as_string_array},
     },
     physical_plan::ColumnarValue,
 };
@@ -318,8 +318,8 @@ mod test {
     use arrow::array::{Int32Array, ListBuilder, StringArray, StringBuilder};
     use datafusion::{
         common::{
-            cast::{as_list_array, as_string_array},
             Result, ScalarValue,
+            cast::{as_list_array, as_string_array},
         },
         physical_plan::ColumnarValue,
     };

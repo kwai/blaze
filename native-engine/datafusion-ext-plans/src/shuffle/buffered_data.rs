@@ -23,7 +23,7 @@ use datafusion_ext_commons::{
     algorithm::rdx_sort::radix_sort_by_key,
     arrow::{
         array_size::BatchSize,
-        selection::{create_batch_interleaver, BatchInterleaver},
+        selection::{BatchInterleaver, create_batch_interleaver},
     },
     compute_suggested_batch_size_for_output, df_execution_err,
 };
@@ -39,8 +39,8 @@ use crate::{
         timer_helper::TimerHelper,
     },
     shuffle::{
-        evaluate_hashes, evaluate_partition_ids, evaluate_range_partition_ids,
-        evaluate_robin_partition_ids, rss::RssWriter, Partitioning,
+        Partitioning, evaluate_hashes, evaluate_partition_ids, evaluate_range_partition_ids,
+        evaluate_robin_partition_ids, rss::RssWriter,
     },
 };
 
@@ -363,7 +363,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         common::Result,
-        physical_expr::{expressions::Column, PhysicalSortExpr},
+        physical_expr::{PhysicalSortExpr, expressions::Column},
     };
 
     use super::*;

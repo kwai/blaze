@@ -29,9 +29,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::{batch_size, downcast_any};
@@ -40,11 +40,11 @@ use once_cell::sync::OnceCell;
 
 use crate::{
     agg::{
+        AggExecMode, AggExpr, GroupingExpr,
         agg::IdxSelection,
         agg_ctx::AggContext,
         agg_table::{AggTable, OwnedKey},
         spark_udaf_wrapper::SparkUDAFWrapper,
-        AggExecMode, AggExpr, GroupingExpr,
     },
     common::{execution_context::ExecutionContext, timer_helper::TimerHelper},
     expand_exec::ExpandExec,
@@ -419,17 +419,17 @@ mod test {
         assert_batches_sorted_eq,
         common::{Result, ScalarValue},
         physical_expr::{expressions as phys_expr, expressions::Column},
-        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
         prelude::SessionContext,
     };
 
     use crate::{
         agg::{
-            agg::create_agg,
             AggExecMode::HashAgg,
             AggExpr, AggFunction,
             AggMode::{Final, Partial},
             GroupingExpr,
+            agg::create_agg,
         },
         agg_exec::AggExec,
         memmgr::MemManager,
@@ -697,12 +697,12 @@ mod fuzztest {
 
     use crate::{
         agg::{
-            count::AggCount,
-            sum::AggSum,
             AggExecMode::HashAgg,
             AggExpr,
             AggMode::{Final, Partial},
             GroupingExpr,
+            count::AggCount,
+            sum::AggSum,
         },
         agg_exec::AggExec,
         memmgr::MemManager,

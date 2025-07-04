@@ -24,12 +24,12 @@ use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_
 
 use crate::{
     agg::{
+        Agg,
         acc::{
-            acc_generic_column_to_array, create_acc_generic_column, AccBooleanColumn, AccBytes,
-            AccBytesColumn, AccColumnRef, AccPrimColumn, AccScalarValueColumn,
+            AccBooleanColumn, AccBytes, AccBytesColumn, AccColumnRef, AccPrimColumn,
+            AccScalarValueColumn, acc_generic_column_to_array, create_acc_generic_column,
         },
         agg::IdxSelection,
-        Agg,
     },
     idx_for_zipped,
 };

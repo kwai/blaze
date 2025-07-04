@@ -17,8 +17,8 @@
 use arrow::{
     array::*,
     datatypes::{
-        ArrowDictionaryKeyType, ArrowNativeType, DataType, Int16Type, Int32Type, Int64Type,
-        Int8Type, TimeUnit,
+        ArrowDictionaryKeyType, ArrowNativeType, DataType, Int8Type, Int16Type, Int32Type,
+        Int64Type, TimeUnit,
     },
 };
 
@@ -74,13 +74,7 @@ fn hash_array<T: num::PrimInt>(
     assert_eq!(array.len(), hashes_buffer.len());
 
     macro_rules! initial_seed_or {
-        ($h:expr) => {{
-            if is_initial {
-                initial_seed
-            } else {
-                $h
-            }
-        }};
+        ($h:expr) => {{ if is_initial { initial_seed } else { $h } }};
     }
 
     macro_rules! hash_array {
@@ -418,8 +412,8 @@ mod tests {
 
     use arrow::{
         array::{
-            make_array, Array, ArrayData, ArrayRef, Int32Array, Int64Array, Int8Array, MapArray,
-            StringArray, StructArray, UInt32Array,
+            Array, ArrayData, ArrayRef, Int8Array, Int32Array, Int64Array, MapArray, StringArray,
+            StructArray, UInt32Array, make_array,
         },
         buffer::Buffer,
         datatypes::{DataType, Field, ToByteSlice},

@@ -14,7 +14,7 @@
 
 use std::io::{Read, Write};
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use datafusion::common::Result;
 
 use crate::assume;

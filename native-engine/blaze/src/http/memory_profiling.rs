@@ -15,14 +15,14 @@
 use std::io::{Error, ErrorKind};
 
 use log::error;
-use poem::{http::StatusCode, IntoResponse, Request, RouteMethod};
+use poem::{IntoResponse, Request, RouteMethod, http::StatusCode};
 
 use super::Handler;
 
 #[cfg(feature = "jemalloc-pprof")]
 #[cfg(not(target_env = "msvc"))]
 #[allow(non_upper_case_globals)]
-#[export_name = "malloc_conf"]
+#[unsafe(export_name = "malloc_conf")]
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 #[poem::handler]
