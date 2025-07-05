@@ -27,11 +27,16 @@ use futures::{FutureExt, future::BoxFuture};
 
 pub trait TimerHelper {
     fn with_timer<T>(&self, f: impl FnOnce() -> T) -> T;
-    fn with_timer_async<'a, T>(&'a self, f: impl Future<Output = T> + Send + 'a) -> BoxFuture<T>;
+    fn with_timer_async<'a, T>(
+        &'a self,
+        f: impl Future<Output = T> + Send + 'a,
+    ) -> BoxFuture<'a, T>;
 
     fn exclude_timer<T>(&self, f: impl FnOnce() -> T) -> T;
-    fn exclude_timer_async<'a, T>(&'a self, f: impl Future<Output = T> + Send + 'a)
-    -> BoxFuture<T>;
+    fn exclude_timer_async<'a, T>(
+        &'a self,
+        f: impl Future<Output = T> + Send + 'a,
+    ) -> BoxFuture<'a, T>;
 
     fn duration(&self) -> Duration;
     fn sub_duration(&self, duration: Duration);
@@ -45,7 +50,10 @@ impl TimerHelper for Time {
         f()
     }
 
-    fn with_timer_async<'a, T>(&'a self, f: impl Future<Output = T> + Send + 'a) -> BoxFuture<T> {
+    fn with_timer_async<'a, T>(
+        &'a self,
+        f: impl Future<Output = T> + Send + 'a,
+    ) -> BoxFuture<'a, T> {
         let time = self.clone();
         let start_time = Instant::now();
         f.inspect(move |_| time.add_duration(start_time.elapsed()))
@@ -62,7 +70,7 @@ impl TimerHelper for Time {
     fn exclude_timer_async<'a, T>(
         &'a self,
         f: impl Future<Output = T> + Send + 'a,
-    ) -> BoxFuture<T> {
+    ) -> BoxFuture<'a, T> {
         let time = self.clone();
         let start_time = Instant::now();
         f.inspect(move |_| time.sub_duration(start_time.elapsed()))

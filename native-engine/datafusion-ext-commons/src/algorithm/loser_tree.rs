@@ -58,7 +58,7 @@ impl<T: ComparableForLoserTree> LoserTree<T> {
         &self.values[0]
     }
 
-    pub fn peek_mut(&mut self) -> LoserTreePeekMut<T> {
+    pub fn peek_mut(&mut self) -> LoserTreePeekMut<'_, T> {
         LoserTreePeekMut {
             tree: self,
             dirty: false,

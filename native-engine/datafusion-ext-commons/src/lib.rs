@@ -16,7 +16,6 @@
 #![feature(core_intrinsics)]
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
-#![feature(let_chains)]
 
 use blaze_jni_bridge::conf::{
     BATCH_SIZE, IntConf, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
