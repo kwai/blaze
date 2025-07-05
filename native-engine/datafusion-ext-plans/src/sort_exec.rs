@@ -364,9 +364,9 @@ impl SortedBlock for InMemSortedBlock {
 
 struct SpillSortedBlock {
     pruned_schema: SchemaRef,
-    spill: Box<dyn Spill>,
     spill_reader: SpillCompressedReader<'static>,
     cur_key_reader: SortedKeysReader,
+    _spill: Box<dyn Spill>,
 }
 
 impl SortedBlock for SpillSortedBlock {
@@ -479,9 +479,9 @@ impl SortedBlockBuilder<SpillSortedBlock, SqueezeKeyCollector> for SpillSortedBl
         };
         Ok(SpillSortedBlock {
             pruned_schema: self.pruned_schema,
-            spill,
             spill_reader,
             cur_key_reader: SortedKeysReader::default(),
+            _spill: spill,
         })
     }
 }

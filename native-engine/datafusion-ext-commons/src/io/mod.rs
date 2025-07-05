@@ -15,7 +15,7 @@
 use std::io::{Read, Write};
 
 use arrow::{
-    array::{Array, ArrayRef, RecordBatchOptions},
+    array::{ArrayRef, RecordBatchOptions},
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };

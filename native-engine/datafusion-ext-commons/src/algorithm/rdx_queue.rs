@@ -67,7 +67,7 @@ impl<T: KeyForRadixQueue> RadixQueue<T> {
         &self.values[self.entries.get(self.cur_rdx).cloned().unwrap_or_default()]
     }
 
-    pub fn peek_mut(&mut self) -> RadixTournamentTreePeekMut<T> {
+    pub fn peek_mut(&mut self) -> RadixTournamentTreePeekMut<'_, T> {
         RadixTournamentTreePeekMut {
             tree: self,
             dirty: false,
