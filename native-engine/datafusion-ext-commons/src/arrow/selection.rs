@@ -16,8 +16,8 @@ use std::{ptr::NonNull, sync::Arc};
 
 use arrow::{
     array::{
-        downcast_primitive, Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanBufferBuilder,
-        GenericByteArray, PrimitiveArray, StringArray,
+        Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanBufferBuilder, GenericByteArray,
+        PrimitiveArray, StringArray, downcast_primitive,
     },
     buffer::{MutableBuffer, NullBuffer, OffsetBuffer, ScalarBuffer},
     datatypes::{ArrowNativeType, ByteArrayType},

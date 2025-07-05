@@ -438,7 +438,7 @@ fn get_proc_memory_limited() -> usize {
 fn get_proc_memory_used() -> usize {
     #[cfg(target_os = "linux")]
     fn get_vmrss_used() -> usize {
-        use procfs::{process::Process, ProcResult};
+        use procfs::{ProcResult, process::Process};
 
         fn get_vmrss_used_impl() -> ProcResult<usize> {
             let self_proc = Process::myself()?;

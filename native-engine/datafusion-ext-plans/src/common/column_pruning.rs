@@ -23,12 +23,12 @@ use std::{
 use arrow::record_batch::RecordBatch;
 use datafusion::{
     common::{
-        tree_node::{Transformed, TreeNode},
         Result,
+        tree_node::{Transformed, TreeNode},
     },
     execution::{SendableRecordBatchStream, TaskContext},
-    physical_expr::{expressions::Column, utils::collect_columns, PhysicalExprRef},
-    physical_plan::{stream::RecordBatchStreamAdapter, ExecutionPlan},
+    physical_expr::{PhysicalExprRef, expressions::Column, utils::collect_columns},
+    physical_plan::{ExecutionPlan, stream::RecordBatchStreamAdapter},
 };
 use futures::StreamExt;
 use itertools::Itertools;

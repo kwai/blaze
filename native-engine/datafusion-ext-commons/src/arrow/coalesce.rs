@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        downcast_primitive, make_array, new_empty_array, Array, ArrayRef, ArrowPrimitiveType,
-        AsArray, BooleanBufferBuilder, BufferBuilder, Capacities, GenericByteArray,
-        MutableArrayData, PrimitiveArray, RecordBatch, RecordBatchOptions,
+        Array, ArrayRef, ArrowPrimitiveType, AsArray, BooleanBufferBuilder, BufferBuilder,
+        Capacities, GenericByteArray, MutableArrayData, PrimitiveArray, RecordBatch,
+        RecordBatchOptions, downcast_primitive, make_array, new_empty_array,
     },
     buffer::{NullBuffer, OffsetBuffer, ScalarBuffer},
     datatypes::{

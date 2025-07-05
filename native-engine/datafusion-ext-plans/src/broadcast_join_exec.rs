@@ -33,11 +33,11 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+        PlanProperties, SendableRecordBatchStream,
         joins::utils::JoinOn,
         metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
     },
 };
 use datafusion_ext_commons::{batch_size, df_execution_err};
@@ -56,6 +56,7 @@ use crate::{
         timer_helper::TimerHelper,
     },
     joins::{
+        JoinParams, JoinProjection,
         bhj::{
             full_join::{
                 LProbedFullOuterJoiner, LProbedInnerJoiner, LProbedLeftJoiner, LProbedRightJoiner,
@@ -68,9 +69,8 @@ use crate::{
                 RProbedRightSemiJoiner,
             },
         },
-        join_hash_map::{join_data_schema, join_hash_map_schema, JoinHashMap},
+        join_hash_map::{JoinHashMap, join_data_schema, join_hash_map_schema},
         join_utils::{JoinType, JoinType::*},
-        JoinParams, JoinProjection,
     },
     sort_exec::create_default_ascending_sort_exec,
     sort_merge_join_exec::SortMergeJoinExec,

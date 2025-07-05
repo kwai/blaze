@@ -16,7 +16,7 @@ use std::{fmt::Write, sync::Arc};
 
 use arrow::array::StringArray;
 use datafusion::{
-    common::{cast::as_binary_array, Result, ScalarValue},
+    common::{Result, ScalarValue, cast::as_binary_array},
     functions::crypto::{sha224, sha256, sha384, sha512},
     logical_expr::ScalarUDF,
     physical_plan::ColumnarValue,
@@ -70,7 +70,7 @@ fn wrap_digest_result_as_hex_string(
             return df_execution_err!(
                 "digest function should return binary value, but got: {:?}",
                 value.data_type()
-            )
+            );
         }
     })
 }

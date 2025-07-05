@@ -16,12 +16,11 @@ use std::error::Error;
 
 pub use datafusion;
 pub use jni::{
-    self,
+    self, JNIEnv, JavaVM,
     errors::Result as JniResult,
     objects::{JClass, JMethodID, JObject, JStaticMethodID, JValue},
     signature::{Primitive, ReturnType},
     sys::jvalue,
-    JNIEnv, JavaVM,
 };
 use once_cell::sync::OnceCell;
 pub use paste::paste;
@@ -68,17 +67,17 @@ impl Drop for LocalRef<'_> {
 
 #[macro_export]
 macro_rules! jvalues {
-    ($($args:expr,)* $(,)?) => {{
+    ($($args:expr,)* $(,)?) => {(
         &[$($crate::jni_bridge::JValue::from($args)),*] as &[$crate::jni_bridge::JValue]
-    }}
+    )}
 }
 
 #[macro_export]
 macro_rules! jvalues_sys {
-    ($($args:expr,)* $(,)?) => {{
+    ($($args:expr,)* $(,)?) => {(
         &[$($crate::jni_bridge::jvalue::from($crate::jni_bridge::JValue::from($args))),*]
             as &[$crate::jni_bridge::jvalue]
-    }}
+    )}
 }
 
 #[macro_export]
@@ -139,9 +138,7 @@ macro_rules! jni_map_error_with_env {
 
 #[macro_export]
 macro_rules! jni_map_error {
-    ($result:expr) => {{
-        $crate::jni_bridge::THREAD_JNIENV.with(|env| $crate::jni_map_error_with_env!(env, $result))
-    }};
+    ($result:expr) => {{ $crate::jni_bridge::THREAD_JNIENV.with(|env| $crate::jni_map_error_with_env!(env, $result)) }};
 }
 
 #[macro_export]

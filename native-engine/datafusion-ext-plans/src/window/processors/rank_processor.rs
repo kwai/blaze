@@ -20,7 +20,7 @@ use arrow::{
 };
 use datafusion::common::Result;
 
-use crate::window::{window_context::WindowContext, WindowFunctionProcessor};
+use crate::window::{WindowFunctionProcessor, window_context::WindowContext};
 
 pub struct RankProcessor {
     cur_partition: Vec<u8>,

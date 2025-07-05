@@ -19,7 +19,7 @@ use arrow_schema::DataType;
 use datafusion::{common::Result, physical_expr::PhysicalExpr};
 
 use crate::{
-    agg::{agg::create_agg, AggFunction},
+    agg::{AggFunction, agg::create_agg},
     window::{
         processors::{
             agg_processor::AggProcessor, rank_processor::RankProcessor,

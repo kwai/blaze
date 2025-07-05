@@ -23,6 +23,7 @@ use datafusion_ext_commons::df_execution_err;
 use datafusion_ext_exprs::cast::TryCastExpr;
 
 use crate::agg::{
+    AggFunction,
     acc::AccColumnRef,
     avg::AggAvg,
     bloom_filter::AggBloomFilter,
@@ -34,7 +35,6 @@ use crate::agg::{
     maxmin::{AggMax, AggMin},
     spark_udaf_wrapper::SparkUDAFWrapper,
     sum::AggSum,
-    AggFunction,
 };
 
 pub trait Agg: Send + Sync + Debug {

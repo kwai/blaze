@@ -26,16 +26,16 @@ use datafusion::{
     common::{Result, ScalarValue, Statistics},
     execution::context::TaskContext,
     parquet::{
-        arrow::{parquet_to_arrow_schema, ArrowWriter},
+        arrow::{ArrowWriter, parquet_to_arrow_schema},
         basic::{BrotliLevel, Compression, GzipLevel, ZstdLevel},
         file::properties::{EnabledStatistics, WriterProperties, WriterVersion},
         schema::{parser::parse_message_type, types::SchemaDescriptor},
     },
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{Count, ExecutionPlanMetricsSet, MetricsSet, Time},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{Count, ExecutionPlanMetricsSet, MetricsSet, Time},
     },
 };
 use datafusion_ext_commons::{

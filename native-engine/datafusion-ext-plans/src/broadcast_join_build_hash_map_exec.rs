@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{new_null_array, RecordBatch},
+    array::{RecordBatch, new_null_array},
     datatypes::SchemaRef,
 };
 use arrow_schema::DataType;
@@ -32,10 +32,10 @@ use datafusion::{
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
-        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
+        stream::RecordBatchStreamAdapter,
     },
 };
 use datafusion_ext_commons::arrow::{array_size::BatchSize, coalesce::coalesce_batches_unchecked};
@@ -47,7 +47,7 @@ use crate::{
         execution_context::ExecutionContext, stream_exec::create_record_batch_stream_exec,
         timer_helper::TimerHelper,
     },
-    joins::join_hash_map::{join_hash_map_schema, JoinHashMap},
+    joins::join_hash_map::{JoinHashMap, join_hash_map_schema},
     sort_exec::create_default_ascending_sort_exec,
 };
 

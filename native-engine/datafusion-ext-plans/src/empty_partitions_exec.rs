@@ -21,9 +21,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        memory::MemoryStream, metrics::MetricsSet, DisplayAs, DisplayFormatType, ExecutionMode,
-        ExecutionPlan, Partitioning::UnknownPartitioning, PlanProperties,
-        SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
+        Partitioning::UnknownPartitioning, PlanProperties, SendableRecordBatchStream, Statistics,
+        memory::MemoryStream, metrics::MetricsSet,
     },
 };
 use once_cell::sync::OnceCell;

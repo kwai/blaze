@@ -30,13 +30,13 @@ use arrow::{
 };
 use datafusion::{
     common::{
+        Result, ScalarValue,
         cast::as_boolean_array,
         tree_node::{Transformed, TreeNode},
-        Result, ScalarValue,
     },
     physical_expr::{
-        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
         PhysicalExpr, PhysicalExprRef,
+        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
     },
     physical_expr_common::utils::scatter,
     physical_plan::ColumnarValue,

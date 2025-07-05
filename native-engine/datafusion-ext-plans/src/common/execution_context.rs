@@ -17,7 +17,7 @@ use std::{
     panic::AssertUnwindSafe,
     pin::Pin,
     sync::{Arc, Weak},
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
     time::Instant,
 };
 
@@ -27,9 +27,9 @@ use datafusion::{
     common::Result,
     execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
     physical_plan::{
+        ExecutionPlan,
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, Time},
         stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter},
-        ExecutionPlan,
     },
 };
 use datafusion_ext_commons::{

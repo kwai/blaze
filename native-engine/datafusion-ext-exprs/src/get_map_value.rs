@@ -122,7 +122,9 @@ impl PhysicalExpr for GetMapValueExpr {
                 Ok(ColumnarValue::Array(make_array(mutable.freeze())))
             }
             (dt, key) => {
-                df_execution_err!("get map value (Map) is only possible on map with no-null key. Tried {dt:?} with {key:?} key")
+                df_execution_err!(
+                    "get map value (Map) is only possible on map with no-null key. Tried {dt:?} with {key:?} key"
+                )
             }
         }
     }
@@ -170,7 +172,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         common::ScalarValue,
-        physical_plan::{expressions::Column, PhysicalExpr},
+        physical_plan::{PhysicalExpr, expressions::Column},
     };
 
     use super::GetMapValueExpr;

@@ -15,7 +15,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{new_null_array, Array, ArrayRef, AsArray, ListArray, RecordBatch, RecordBatchOptions},
+    array::{Array, ArrayRef, AsArray, ListArray, RecordBatch, RecordBatchOptions, new_null_array},
     datatypes::{DataType, Schema, SchemaRef},
 };
 use datafusion::{

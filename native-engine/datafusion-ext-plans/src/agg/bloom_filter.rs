@@ -31,9 +31,9 @@ use datafusion_ext_commons::{
 
 use crate::{
     agg::{
+        Agg,
         acc::{AccColumn, AccColumnRef},
         agg::IdxSelection,
-        Agg,
     },
     idx_for, idx_for_zipped,
     memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},

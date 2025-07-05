@@ -24,10 +24,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
-        stream::RecordBatchStreamAdapter,
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
+        stream::RecordBatchStreamAdapter,
     },
 };
 use futures::StreamExt;

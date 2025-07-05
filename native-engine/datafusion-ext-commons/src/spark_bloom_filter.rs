@@ -18,7 +18,7 @@ use std::{
 };
 
 use arrow::array::{BooleanArray, BooleanBufferBuilder};
-use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use datafusion::common::Result;
 
 use crate::{

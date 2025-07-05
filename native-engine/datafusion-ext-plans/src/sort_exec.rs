@@ -16,12 +16,12 @@
 
 use std::{
     any::Any,
-    collections::{vec_deque::VecDeque, HashSet},
+    collections::{HashSet, vec_deque::VecDeque},
     fmt::Formatter,
     io::{Cursor, Read, Write},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -34,22 +34,22 @@ use arrow::{
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use datafusion::{
-    common::{utils::proxy::VecAllocExt, DataFusionError, Result, Statistics},
+    common::{DataFusionError, Result, Statistics, utils::proxy::VecAllocExt},
     execution::context::TaskContext,
     physical_expr::{
-        expressions::Column, EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr,
+        EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr, expressions::Column,
     },
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::{
     algorithm::loser_tree::{ComparableForLoserTree, LoserTree},
     arrow::{
         array_size::BatchSize,
-        selection::{create_batch_interleaver, take_batch, BatchInterleaver},
+        selection::{BatchInterleaver, create_batch_interleaver, take_batch},
     },
     compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
     io::{read_len, read_one_batch, write_len, write_one_batch},
@@ -66,8 +66,8 @@ use crate::{
         timer_helper::TimerHelper,
     },
     memmgr::{
-        spill::{try_new_spill, Spill, SpillCompressedReader, SpillCompressedWriter},
         MemConsumer, MemConsumerInfo, MemManager,
+        spill::{Spill, SpillCompressedReader, SpillCompressedWriter, try_new_spill},
     },
 };
 
@@ -1302,8 +1302,8 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         common::Result,
-        physical_expr::{expressions::Column, PhysicalSortExpr},
-        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        physical_expr::{PhysicalSortExpr, expressions::Column},
+        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
         prelude::SessionContext,
     };
 
@@ -1383,13 +1383,13 @@ mod fuzztest {
 
     use arrow::{
         array::{ArrayRef, StringArray, UInt32Array},
-        compute::{concat_batches, SortOptions},
+        compute::{SortOptions, concat_batches},
         record_batch::RecordBatch,
     };
     use datafusion::{
-        common::{stats::Precision, Result},
-        physical_expr::{expressions::Column, PhysicalSortExpr},
-        physical_plan::{memory::MemoryExec, ExecutionPlan},
+        common::{Result, stats::Precision},
+        physical_expr::{PhysicalSortExpr, expressions::Column},
+        physical_plan::{ExecutionPlan, memory::MemoryExec},
         prelude::{SessionConfig, SessionContext},
     };
 

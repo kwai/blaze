@@ -15,8 +15,8 @@
 use std::{
     fmt,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 

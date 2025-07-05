@@ -16,14 +16,14 @@ use std::{
     future::Future,
     io::Write,
     sync::{
-        atomic::{AtomicUsize, Ordering::Relaxed},
         Arc,
+        atomic::{AtomicUsize, Ordering::Relaxed},
     },
     time::{Duration, Instant},
 };
 
 use datafusion::physical_plan::metrics::Time;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 
 pub trait TimerHelper {
     fn with_timer<T>(&self, f: impl FnOnce() -> T) -> T;
@@ -31,7 +31,7 @@ pub trait TimerHelper {
 
     fn exclude_timer<T>(&self, f: impl FnOnce() -> T) -> T;
     fn exclude_timer_async<'a, T>(&'a self, f: impl Future<Output = T> + Send + 'a)
-        -> BoxFuture<T>;
+    -> BoxFuture<T>;
 
     fn duration(&self) -> Duration;
     fn sub_duration(&self, duration: Duration);

@@ -14,7 +14,7 @@
 
 use std::{
     hash::BuildHasher,
-    simd::{cmp::SimdPartialEq, Simd},
+    simd::{Simd, cmp::SimdPartialEq},
 };
 
 use datafusion_ext_commons::{likely, prefetch_write_data, unchecked};
@@ -78,9 +78,7 @@ impl Table {
         const PREFETCH_AHEAD: usize = 4;
 
         macro_rules! entries {
-            ($i:expr) => {{
-                (hashes[$i] % (1 << self.map_mod_bits))
-            }};
+            ($i:expr) => {{ (hashes[$i] % (1 << self.map_mod_bits)) }};
         }
 
         macro_rules! prefetch_at {

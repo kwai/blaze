@@ -44,9 +44,7 @@ macro_rules! new_builder {
     (LargeStringBuilder, $len:expr) => {
         LargeStringBuilder::new()
     };
-    ($el:ident, $len:expr) => {{
-        <$el>::with_capacity($len)
-    }};
+    ($el:ident, $len:expr) => {{ <$el>::with_capacity($len) }};
 }
 
 macro_rules! array {

@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{
-    array::{new_null_array, Array, ArrayBuilder, ArrayRef, Int32Builder},
+    array::{Array, ArrayBuilder, ArrayRef, Int32Builder, new_null_array},
     datatypes::{Field, Schema, SchemaRef},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
@@ -27,11 +27,11 @@ use arrow_schema::DataType;
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{expressions::Column, EquivalenceProperties, PhysicalExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExpr, expressions::Column},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::arrow::{cast::cast, selection::take_cols};
@@ -356,12 +356,12 @@ mod test {
         assert_batches_eq,
         common::Result,
         physical_expr::expressions::Column,
-        physical_plan::{common, memory::MemoryExec, ExecutionPlan},
+        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
         prelude::SessionContext,
     };
 
     use crate::{
-        generate::{create_generator, GenerateFunc},
+        generate::{GenerateFunc, create_generator},
         generate_exec::GenerateExec,
     };
 

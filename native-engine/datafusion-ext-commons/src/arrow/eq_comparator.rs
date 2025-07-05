@@ -383,7 +383,7 @@ pub mod tests {
     use arrow::{
         array::builder::{Int32Builder, ListBuilder},
         buffer::{NullBuffer, OffsetBuffer},
-        datatypes::{i256, DataType, Field, Fields},
+        datatypes::{DataType, Field, Fields, i256},
     };
 
     use super::*;

@@ -29,7 +29,7 @@ use blaze_jni_bridge::{
     conf::{BooleanConf, DoubleConf, IntConf},
 };
 use datafusion::{
-    common::{cast::as_binary_array, Result},
+    common::{Result, cast::as_binary_array},
     physical_expr::PhysicalExprRef,
 };
 use datafusion_ext_commons::{downcast_any, suggested_batch_mem_size};
@@ -38,11 +38,11 @@ use parking_lot::Mutex;
 
 use crate::{
     agg::{
+        AGG_BUF_COLUMN_NAME, AggExecMode, AggExpr, AggMode, GroupingExpr,
         acc::AccTable,
         agg::{Agg, IdxSelection},
         agg_hash_map::AggHashMapKey,
         spark_udaf_wrapper::{AccUDAFBufferRowsColumn, SparkUDAFMemTracker, SparkUDAFWrapper},
-        AggExecMode, AggExpr, AggMode, GroupingExpr, AGG_BUF_COLUMN_NAME,
     },
     common::{
         cached_exprs_evaluator::CachedExprsEvaluator,

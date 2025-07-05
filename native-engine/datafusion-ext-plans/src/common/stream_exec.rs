@@ -19,8 +19,8 @@ use datafusion::{
     common::Result,
     execution::TaskContext,
     physical_plan::{
-        streaming::{PartitionStream, StreamingTableExec},
         EmptyRecordBatchStream, ExecutionPlan, SendableRecordBatchStream,
+        streaming::{PartitionStream, StreamingTableExec},
     },
 };
 use parking_lot::Mutex;

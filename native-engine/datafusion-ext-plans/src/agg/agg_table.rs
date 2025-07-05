@@ -26,6 +26,7 @@ use datafusion::{
     physical_plan::metrics::Time,
 };
 use datafusion_ext_commons::{
+    SliceAsRawBytes,
     algorithm::{
         rdx_queue::{KeyForRadixQueue, RadixQueue},
         rdx_sort::radix_sort_by_key,
@@ -33,7 +34,6 @@ use datafusion_ext_commons::{
     batch_size, compute_suggested_batch_size_for_kway_merge,
     compute_suggested_batch_size_for_output, df_execution_err, downcast_any,
     io::{read_bytes_slice, read_len, write_len},
-    SliceAsRawBytes,
 };
 use futures::lock::Mutex;
 use once_cell::sync::OnceCell;
@@ -52,8 +52,8 @@ use crate::{
         timer_helper::TimerHelper,
     },
     memmgr::{
-        spill::{try_new_spill, Spill, SpillCompressedReader, SpillCompressedWriter},
         MemConsumer, MemConsumerInfo, MemManager,
+        spill::{Spill, SpillCompressedReader, SpillCompressedWriter, try_new_spill},
     },
 };
 

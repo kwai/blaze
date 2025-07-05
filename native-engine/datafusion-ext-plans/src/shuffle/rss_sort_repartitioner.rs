@@ -23,7 +23,7 @@ use jni::objects::GlobalRef;
 
 use crate::{
     memmgr::{MemConsumer, MemConsumerInfo, MemManager},
-    shuffle::{buffered_data::BufferedData, Partitioning, ShuffleRepartitioner},
+    shuffle::{Partitioning, ShuffleRepartitioner, buffered_data::BufferedData},
 };
 
 pub struct RssSortShuffleRepartitioner {

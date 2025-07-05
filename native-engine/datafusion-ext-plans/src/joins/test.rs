@@ -16,6 +16,7 @@
 mod tests {
     use std::sync::Arc;
 
+    use TestType::*;
     use arrow::{
         self,
         array::*,
@@ -28,10 +29,9 @@ mod tests {
         common::JoinSide,
         error::Result,
         physical_expr::expressions::Column,
-        physical_plan::{common, joins::utils::*, memory::MemoryExec, ExecutionPlan},
+        physical_plan::{ExecutionPlan, common, joins::utils::*, memory::MemoryExec},
         prelude::SessionContext,
     };
-    use TestType::*;
 
     use crate::{
         broadcast_join_build_hash_map_exec::BroadcastJoinBuildHashMapExec,

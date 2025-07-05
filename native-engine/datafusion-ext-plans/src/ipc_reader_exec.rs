@@ -18,8 +18,8 @@ use std::{
     fs::File,
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -38,10 +38,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::{

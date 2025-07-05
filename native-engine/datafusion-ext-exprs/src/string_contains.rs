@@ -127,7 +127,7 @@ mod test {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    use datafusion::physical_expr::{expressions as phys_expr, PhysicalExpr};
+    use datafusion::physical_expr::{PhysicalExpr, expressions as phys_expr};
 
     use crate::string_contains::StringContainsExpr;
 

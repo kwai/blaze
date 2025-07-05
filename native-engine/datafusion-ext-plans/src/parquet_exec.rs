@@ -27,28 +27,28 @@ use blaze_jni_bridge::{
 use bytes::Bytes;
 use datafusion::{
     datasource::physical_plan::{
-        parquet::{page_filter::PagePruningAccessPlanFilter, ParquetOpener},
         FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
         ParquetFileReaderFactory,
+        parquet::{ParquetOpener, page_filter::PagePruningAccessPlanFilter},
     },
     error::{DataFusionError, Result},
     execution::context::TaskContext,
     parquet::{
-        arrow::async_reader::{fetch_parquet_metadata, AsyncFileReader},
+        arrow::async_reader::{AsyncFileReader, fetch_parquet_metadata},
         errors::ParquetError,
         file::metadata::ParquetMetaData,
     },
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
     },
 };
 use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
 use fmt::Debug;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use itertools::Itertools;
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
@@ -56,7 +56,7 @@ use parking_lot::Mutex;
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{internal_file_reader::InternalFileReader, BlazeSchemaAdapterFactory},
+    scan::{BlazeSchemaAdapterFactory, internal_file_reader::InternalFileReader},
 };
 
 /// Execution plan for scanning one or more Parquet partitions

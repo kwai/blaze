@@ -16,7 +16,7 @@ use std::{
     fmt::{Debug, Formatter},
     hash::{BuildHasher, Hasher},
     io::{Cursor, Read, Write},
-    simd::{cmp::SimdPartialEq, Simd},
+    simd::{Simd, cmp::SimdPartialEq},
     sync::Arc,
 };
 
@@ -26,10 +26,11 @@ use arrow::{
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
+    SliceAsRawBytes, UninitializedInit,
     io::{read_len, write_len},
     prefetch_read_data,
     spark_hash::create_hashes,
-    unchecked, SliceAsRawBytes, UninitializedInit,
+    unchecked,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;

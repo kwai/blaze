@@ -22,8 +22,8 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{
-        cast::{as_decimal128_array, as_int64_array},
         Result,
+        cast::{as_decimal128_array, as_int64_array},
     },
     physical_expr::PhysicalExpr,
 };
@@ -31,11 +31,11 @@ use datafusion_ext_commons::downcast_any;
 
 use crate::{
     agg::{
+        Agg,
         acc::{AccColumn, AccColumnRef},
         agg::IdxSelection,
         count::AggCount,
         sum::AggSum,
-        Agg,
     },
     memmgr::spill::{SpillCompressedReader, SpillCompressedWriter},
 };

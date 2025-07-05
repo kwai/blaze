@@ -21,7 +21,7 @@ use std::{
 use arrow::{
     array::{Array, RecordBatch, RecordBatchOptions, StructArray},
     datatypes::{DataType, SchemaRef},
-    ffi::{from_ffi_and_data_type, FFI_ArrowArray},
+    ffi::{FFI_ArrowArray, from_ffi_and_data_type},
 };
 use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::{
@@ -29,10 +29,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::arrow::array_size::BatchSize;

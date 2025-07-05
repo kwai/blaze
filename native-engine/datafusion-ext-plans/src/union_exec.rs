@@ -24,9 +24,9 @@ use datafusion::{
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::{EquivalenceProperties, Partitioning::UnknownPartitioning},
     physical_plan::{
-        metrics::{ExecutionPlanMetricsSet, MetricsSet},
         DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionMode, ExecutionPlan,
         PlanProperties,
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
 use datafusion_ext_commons::arrow::cast::cast;

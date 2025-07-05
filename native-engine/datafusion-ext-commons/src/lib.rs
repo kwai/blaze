@@ -19,7 +19,7 @@
 #![feature(let_chains)]
 
 use blaze_jni_bridge::conf::{
-    IntConf, BATCH_SIZE, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
+    BATCH_SIZE, IntConf, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
 };
 use once_cell::sync::OnceCell;
 use smallvec::SmallVec;
@@ -162,16 +162,12 @@ macro_rules! prefetch_write_data {
 
 #[macro_export]
 macro_rules! likely {
-    ($e:expr) => {{
-        std::intrinsics::likely($e)
-    }};
+    ($e:expr) => {{ std::intrinsics::likely($e) }};
 }
 
 #[macro_export]
 macro_rules! unlikely {
-    ($e:expr) => {{
-        std::intrinsics::unlikely($e)
-    }};
+    ($e:expr) => {{ std::intrinsics::unlikely($e) }};
 }
 
 pub trait UncheckedIndexIntoInner<T> {

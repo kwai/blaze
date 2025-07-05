@@ -20,11 +20,11 @@ use std::{
 
 use arrow::{
     array::{
-        make_array, Array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions,
-        StructArray,
+        Array, ArrayRef, AsArray, Int32Array, RecordBatch, RecordBatchOptions, StructArray,
+        make_array,
     },
     datatypes::{DataType, Field, Schema, SchemaRef},
-    ffi::{from_ffi_and_data_type, FFI_ArrowArray},
+    ffi::{FFI_ArrowArray, from_ffi_and_data_type},
 };
 use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
@@ -141,7 +141,8 @@ impl Generator for SparkUDTFWrapper {
         // invoke UDAFWrapper.evalStart()
         let struct_array = StructArray::from(params_batch);
         let mut export_ffi_array = FFI_ArrowArray::new(&struct_array.to_data());
-        jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+        let jcontext = self.jcontext()?;
+        jni_call!(SparkUDTFWrapperContext(jcontext.as_obj())
             .evalStart(&mut export_ffi_array as *mut FFI_ArrowArray as i64) -> ())?;
         Ok(Box::new(UDTFGenerateState { cur_row_id: 0 }))
     }
@@ -151,7 +152,8 @@ impl Generator for SparkUDTFWrapper {
 
         // invoke UDAFWrapper.evalLoop()
         let mut import_ffi_array = FFI_ArrowArray::empty();
-        state.cur_row_id = jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+        let jcontext = self.jcontext()?;
+        state.cur_row_id = jni_call!(SparkUDTFWrapperContext(jcontext.as_obj())
             .evalLoop(&mut import_ffi_array as *mut FFI_ArrowArray as i64) -> i32)?
             as usize;
 
@@ -177,7 +179,8 @@ impl Generator for SparkUDTFWrapper {
     fn terminate_loop(&self) -> Result<Option<GeneratedRows>> {
         // invoke UDAFWrapper.evalLoop()
         let mut import_ffi_array = FFI_ArrowArray::empty();
-        jni_call!(SparkUDTFWrapperContext(self.jcontext()?.as_obj())
+        let jcontext = self.jcontext()?;
+        jni_call!(SparkUDTFWrapperContext(jcontext.as_obj())
             .terminateLoop(&mut import_ffi_array as *mut FFI_ArrowArray as i64) -> ())?;
 
         // safety: use arrow-ffi

@@ -30,15 +30,15 @@ use datafusion::{
 };
 use datafusion_ext_plans::memmgr::MemManager;
 use jni::{
-    objects::{JClass, JObject},
     JNIEnv,
+    objects::{JClass, JObject},
 };
 use once_cell::sync::OnceCell;
 
 use crate::{handle_unwinded_scope, logging::init_logging, rt::NativeExecutionRuntime};
 
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
@@ -51,7 +51,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 
         #[cfg(feature = "http-service")]
         {
-            use crate::http::{HttpService, HTTP_SERVICE};
+            use crate::http::{HTTP_SERVICE, HttpService};
             let _ = HTTP_SERVICE.get_or_try_init(|| {
                 eprintln!("initializing http service...");
                 Ok::<HttpService, DataFusionError>(HttpService::init())
@@ -98,7 +98,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
 }
 
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_nextBatch(
     _: JNIEnv,
     _: JClass,
@@ -109,7 +109,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_nextBatch(
 }
 
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_finalizeNative(
     _: JNIEnv,
     _: JClass,
@@ -120,7 +120,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_finalizeNative(
 }
 
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_onExit(_: JNIEnv, _: JClass) {
     log::info!("exiting native environment");
     if MemManager::initialized() {

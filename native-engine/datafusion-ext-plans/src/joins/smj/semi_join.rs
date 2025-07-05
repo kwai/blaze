@@ -23,8 +23,8 @@ use crate::{
     common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
     joins::{
-        smj::semi_join::SemiJoinSide::{L, R},
         Idx, JoinParams, StreamCursors,
+        smj::semi_join::SemiJoinSide::{L, R},
     },
     sort_merge_join_exec::Joiner,
 };

@@ -17,13 +17,12 @@
 
 use std::{ops::Range, sync::Arc};
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use datafusion::common::Result;
 use datafusion_ext_commons::{
-    df_execution_err,
+    UninitializedInit, df_execution_err,
     hadoop_fs::{Fs, FsDataInputWrapper, FsProvider},
-    UninitializedInit,
 };
 use object_store::ObjectMeta;
 use once_cell::sync::OnceCell;
