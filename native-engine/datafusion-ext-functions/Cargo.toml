@@ -15,4 +15,4 @@ log = "0.4.27"
 num = "0.4.2"
 paste = "1.0.15"
 serde_json = { workspace = true }
-sonic-rs = "0.5.1"
+sonic-rs = "0.5.2"
