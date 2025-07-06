@@ -444,7 +444,7 @@ impl SparkUDAFMemTracker {
         Ok(jni_call!(SparkUDAFMemTracker(self.obj.as_obj()).updateUsed()-> bool)?)
     }
 
-    pub fn as_obj(&self) -> JObject {
+    pub fn as_obj(&self) -> JObject<'_> {
         self.obj.as_obj()
     }
 }

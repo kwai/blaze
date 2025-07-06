@@ -242,6 +242,7 @@ fn execute_generate(
                                 }
                             }
                             $from_row_id = $to_row_id;
+                            let _ = $from_row_id; // suppress unused warning
                         }};
                     }
 
