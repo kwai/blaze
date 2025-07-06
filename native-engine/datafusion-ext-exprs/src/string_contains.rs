@@ -27,6 +27,7 @@ use arrow::{
 use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
+    physical_expr::PhysicalExprRef,
     physical_plan::PhysicalExpr,
 };
 use datafusion_ext_commons::df_execution_err;
@@ -35,7 +36,7 @@ use crate::down_cast_any_ref;
 
 #[derive(Debug, Hash)]
 pub struct StringContainsExpr {
-    expr: Arc<dyn PhysicalExpr>,
+    expr: PhysicalExprRef,
     infix: String,
 }
 
@@ -49,7 +50,7 @@ impl PartialEq<dyn Any> for StringContainsExpr {
 }
 
 impl StringContainsExpr {
-    pub fn new(expr: Arc<dyn PhysicalExpr>, infix: String) -> Self {
+    pub fn new(expr: PhysicalExprRef, infix: String) -> Self {
         Self { expr, infix }
     }
 
@@ -57,7 +58,7 @@ impl StringContainsExpr {
         &self.infix
     }
 
-    pub fn expr(&self) -> &Arc<dyn PhysicalExpr> {
+    pub fn expr(&self) -> &PhysicalExprRef {
         &self.expr
     }
 }
@@ -101,14 +102,14 @@ impl PhysicalExpr for StringContainsExpr {
         }
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![&self.expr]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::new(children[0].clone(), self.infix.clone())))
     }
 

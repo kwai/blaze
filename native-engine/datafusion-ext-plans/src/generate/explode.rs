@@ -15,7 +15,7 @@
 use std::{any::Any, sync::Arc};
 
 use arrow::{array::*, record_batch::RecordBatch};
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
     arrow::coalesce::coalesce_arrays_unchecked, batch_size, downcast_any,
 };
@@ -24,22 +24,22 @@ use crate::generate::{GenerateState, GeneratedRows, Generator};
 
 #[derive(Debug)]
 pub struct ExplodeArray {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     position: bool,
 }
 
 impl ExplodeArray {
-    pub fn new(child: Arc<dyn PhysicalExpr>, position: bool) -> Self {
+    pub fn new(child: PhysicalExprRef, position: bool) -> Self {
         Self { child, position }
     }
 }
 
 impl Generator for ExplodeArray {
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self {
             child: exprs[0].clone(),
             position: self.position,
@@ -108,22 +108,22 @@ impl GenerateState for ExplodeArrayGenerateState {
 
 #[derive(Debug)]
 pub struct ExplodeMap {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     position: bool,
 }
 
 impl ExplodeMap {
-    pub fn new(child: Arc<dyn PhysicalExpr>, position: bool) -> Self {
+    pub fn new(child: PhysicalExprRef, position: bool) -> Self {
         Self { child, position }
     }
 }
 
 impl Generator for ExplodeMap {
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self {
             child: exprs[0].clone(),
             position: self.position,

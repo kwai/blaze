@@ -21,7 +21,7 @@ use arrow::{
 };
 use datafusion::{
     common::Result,
-    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
 };
 
 use crate::window::WindowExpr;
@@ -29,7 +29,7 @@ use crate::window::WindowExpr;
 #[derive(Debug)]
 pub struct WindowContext {
     pub window_exprs: Vec<WindowExpr>,
-    pub partition_spec: Vec<Arc<dyn PhysicalExpr>>,
+    pub partition_spec: Vec<PhysicalExprRef>,
     pub order_spec: Vec<PhysicalSortExpr>,
     pub group_limit: Option<usize>,
     pub output_window_cols: bool,
@@ -47,7 +47,7 @@ impl WindowContext {
     pub fn try_new(
         input_schema: SchemaRef,
         window_exprs: Vec<WindowExpr>,
-        partition_spec: Vec<Arc<dyn PhysicalExpr>>,
+        partition_spec: Vec<PhysicalExprRef>,
         order_spec: Vec<PhysicalSortExpr>,
         group_limit: Option<usize>,
         output_window_cols: bool,
@@ -70,7 +70,7 @@ impl WindowContext {
         let partition_schema = Arc::new(Schema::new(
             partition_spec
                 .iter()
-                .map(|expr: &Arc<dyn PhysicalExpr>| {
+                .map(|expr: &PhysicalExprRef| {
                     Ok(Field::new(
                         "__partition_col__",
                         expr.data_type(&input_schema)?,
@@ -141,7 +141,7 @@ impl WindowContext {
                 &self
                     .partition_spec
                     .iter()
-                    .map(|expr: &Arc<dyn PhysicalExpr>| {
+                    .map(|expr: &PhysicalExprRef| {
                         expr.evaluate(batch)
                             .and_then(|v| v.into_array(batch.num_rows()))
                     })

@@ -28,7 +28,7 @@ use arrow::{
 use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
-    physical_expr::PhysicalExpr,
+    physical_expr::{PhysicalExpr, PhysicalExprRef},
 };
 use datafusion_ext_commons::{
     arrow::cast::cast, df_execution_err, df_unimplemented_err, spark_bloom_filter::SparkBloomFilter,
@@ -38,16 +38,16 @@ use parking_lot::Mutex;
 
 pub struct BloomFilterMightContainExpr {
     uuid: String,
-    bloom_filter_expr: Arc<dyn PhysicalExpr>,
-    value_expr: Arc<dyn PhysicalExpr>,
+    bloom_filter_expr: PhysicalExprRef,
+    value_expr: PhysicalExprRef,
     bloom_filter: OnceCell<Arc<Option<SparkBloomFilter>>>,
 }
 
 impl BloomFilterMightContainExpr {
     pub fn new(
         uuid: String,
-        bloom_filter_expr: Arc<dyn PhysicalExpr>,
-        value_expr: Arc<dyn PhysicalExpr>,
+        bloom_filter_expr: PhysicalExprRef,
+        value_expr: PhysicalExprRef,
     ) -> Self {
         Self {
             uuid,
@@ -152,14 +152,14 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         })
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![&self.bloom_filter_expr, &self.value_expr]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::new(
             self.uuid.clone(),
             children[0].clone(),

@@ -31,7 +31,7 @@ use bytesize::ByteSize;
 use datafusion::{
     common::Result,
     error::DataFusionError,
-    physical_expr::{PhysicalExpr, PhysicalSortExpr},
+    physical_expr::{PhysicalExprRef, PhysicalSortExpr},
     physical_plan::SendableRecordBatchStream,
 };
 use datafusion_ext_commons::{arrow::array_size::BatchSize, spark_hash::create_murmur3_hashes};
@@ -111,7 +111,7 @@ pub enum Partitioning {
     RoundRobinPartitioning(usize),
     /// Allocate rows based on a hash of one of more expressions and the
     /// specified number of partitions
-    HashPartitioning(Vec<Arc<dyn PhysicalExpr>>, usize),
+    HashPartitioning(Vec<PhysicalExprRef>, usize),
     /// Single partitioning scheme with a known number of partitions
     SinglePartitioning(),
     /// Range partitioning

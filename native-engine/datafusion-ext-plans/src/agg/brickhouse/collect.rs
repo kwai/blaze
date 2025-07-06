@@ -22,7 +22,7 @@ use arrow::{
     array::{Array, ArrayRef, AsArray},
     datatypes::DataType,
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 
 use crate::{
     agg::{Agg, acc::AccColumnRef, agg::IdxSelection, collect::AggCollectSet},
@@ -34,7 +34,7 @@ pub struct AggCollect {
 }
 
 impl AggCollect {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, arg_list_inner_type: DataType) -> Result<Self> {
+    pub fn try_new(child: PhysicalExprRef, arg_list_inner_type: DataType) -> Result<Self> {
         let return_type = DataType::new_list(arg_list_inner_type.clone(), true);
         Ok(Self {
             innert_collect_list: AggCollectSet::try_new(child, return_type, arg_list_inner_type)?,
@@ -57,11 +57,11 @@ impl Agg for AggCollect {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         self.innert_collect_list.exprs()
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
             self.innert_collect_list.arg_type().clone(),

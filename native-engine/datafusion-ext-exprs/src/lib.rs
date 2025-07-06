@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, sync::Arc};
+use std::any::Any;
 
-use datafusion::physical_expr::PhysicalExpr;
+use datafusion::physical_expr::{PhysicalExpr, PhysicalExprRef};
 
 pub mod bloom_filter_might_contain;
 pub mod cast;
@@ -29,10 +29,8 @@ pub mod string_ends_with;
 pub mod string_starts_with;
 
 fn down_cast_any_ref(any: &dyn Any) -> &dyn Any {
-    if any.is::<Arc<dyn PhysicalExpr>>() {
-        any.downcast_ref::<Arc<dyn PhysicalExpr>>()
-            .unwrap()
-            .as_any()
+    if any.is::<PhysicalExprRef>() {
+        any.downcast_ref::<PhysicalExprRef>().unwrap().as_any()
     } else if any.is::<Box<dyn PhysicalExpr>>() {
         any.downcast_ref::<Box<dyn PhysicalExpr>>()
             .unwrap()

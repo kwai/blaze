@@ -28,7 +28,7 @@ use datafusion::{
     },
     common::Result,
     logical_expr::ColumnarValue,
-    physical_expr::{PhysicalExpr, physical_exprs_bag_equal},
+    physical_expr::{PhysicalExpr, PhysicalExprRef, physical_exprs_bag_equal},
 };
 use datafusion_ext_commons::{df_execution_err, io::recover_named_batch};
 
@@ -37,13 +37,13 @@ use crate::down_cast_any_ref;
 /// expression to get a field of from NameStruct.
 #[derive(Debug, Hash)]
 pub struct NamedStructExpr {
-    values: Vec<Arc<dyn PhysicalExpr>>,
+    values: Vec<PhysicalExprRef>,
     return_type: DataType,
     return_schema: SchemaRef,
 }
 
 impl NamedStructExpr {
-    pub fn try_new(values: Vec<Arc<dyn PhysicalExpr>>, return_type: DataType) -> Result<Self> {
+    pub fn try_new(values: Vec<PhysicalExprRef>, return_type: DataType) -> Result<Self> {
         let return_schema = match &return_type {
             DataType::Struct(fields) => Arc::new(Schema::new(fields.clone())),
             other => {
@@ -105,14 +105,14 @@ impl PhysicalExpr for NamedStructExpr {
         Ok(ColumnarValue::Array(named_struct))
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         self.values.iter().collect()
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::try_new(
             children.clone(),
             self.return_type.clone(),

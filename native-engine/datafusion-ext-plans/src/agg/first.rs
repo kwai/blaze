@@ -22,7 +22,7 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{Result, ScalarValue},
-    physical_expr::PhysicalExpr,
+    physical_expr::PhysicalExprRef,
 };
 use datafusion_ext_commons::{downcast_any, scalar_value::compacted_scalar_value_from_array};
 
@@ -40,12 +40,12 @@ use crate::{
 };
 
 pub struct AggFirst {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     data_type: DataType,
 }
 
 impl AggFirst {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
+    pub fn try_new(child: PhysicalExprRef, data_type: DataType) -> Result<Self> {
         Ok(Self { child, data_type })
     }
 }
@@ -61,11 +61,11 @@ impl Agg for AggFirst {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
             self.data_type.clone(),

@@ -364,14 +364,14 @@ impl PhysicalExpr for CachedExpr {
         self.cache.get(self.id, || self.orig_expr.evaluate(batch))
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         self.orig_expr.children()
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self {
             cache: self.cache.clone(),
             id: self.id,

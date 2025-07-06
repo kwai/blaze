@@ -41,8 +41,8 @@ use datafusion::{
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
-        PlanProperties, SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        SendableRecordBatchStream, Statistics,
         metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
     },
 };
@@ -67,7 +67,7 @@ pub struct ParquetExec {
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
-    predicate: Option<Arc<dyn PhysicalExpr>>,
+    predicate: Option<PhysicalExprRef>,
     pruning_predicate: Option<Arc<PruningPredicate>>,
     page_pruning_predicate: Option<Arc<PagePruningAccessPlanFilter>>,
     props: OnceCell<PlanProperties>,
@@ -79,7 +79,7 @@ impl ParquetExec {
     pub fn new(
         base_config: FileScanConfig,
         fs_resource_id: String,
-        predicate: Option<Arc<dyn PhysicalExpr>>,
+        predicate: Option<PhysicalExprRef>,
     ) -> Self {
         let metrics = ExecutionPlanMetricsSet::new();
         let predicate_creation_errors =

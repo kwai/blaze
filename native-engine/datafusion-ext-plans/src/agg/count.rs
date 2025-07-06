@@ -20,7 +20,7 @@ use std::{
 };
 
 use arrow::{array::*, datatypes::*};
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
     downcast_any,
     io::{read_len, write_len},
@@ -36,12 +36,12 @@ use crate::{
 };
 
 pub struct AggCount {
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
     data_type: DataType,
 }
 
 impl AggCount {
-    pub fn try_new(children: Vec<Arc<dyn PhysicalExpr>>, data_type: DataType) -> Result<Self> {
+    pub fn try_new(children: Vec<PhysicalExprRef>, data_type: DataType) -> Result<Self> {
         assert_eq!(data_type, DataType::Int64);
         Ok(Self {
             children,
@@ -61,11 +61,11 @@ impl Agg for AggCount {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         self.children.clone()
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs.clone(),
             self.data_type.clone(),

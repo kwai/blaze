@@ -31,7 +31,7 @@ use blaze_jni_bridge::{
 };
 use datafusion::{
     common::{DataFusionError, Result},
-    physical_expr::PhysicalExpr,
+    physical_expr::PhysicalExprRef,
 };
 use datafusion_ext_commons::{
     UninitializedInit, downcast_any,
@@ -52,7 +52,7 @@ use crate::{
 pub struct SparkUDAFWrapper {
     serialized: Vec<u8>,
     pub return_type: DataType,
-    child: Vec<Arc<dyn PhysicalExpr>>,
+    child: Vec<PhysicalExprRef>,
     import_schema: SchemaRef,
     params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
@@ -62,7 +62,7 @@ impl SparkUDAFWrapper {
     pub fn try_new(
         serialized: Vec<u8>,
         return_type: DataType,
-        child: Vec<Arc<dyn PhysicalExpr>>,
+        child: Vec<PhysicalExprRef>,
     ) -> Result<Self> {
         Ok(Self {
             serialized,
@@ -213,7 +213,7 @@ impl Agg for SparkUDAFWrapper {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         self.child.clone()
     }
 
@@ -237,7 +237,7 @@ impl Agg for SparkUDAFWrapper {
         Box::new(AccUDAFBufferRowsColumn { obj, jcontext })
     }
 
-    fn with_new_exprs(&self, _exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, _exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.return_type.clone(),

@@ -24,7 +24,7 @@ use arrow::{
     datatypes::{DataType, Int64Type},
 };
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{
     arrow::cast::cast, df_unimplemented_err, downcast_any, spark_bloom_filter::SparkBloomFilter,
 };
@@ -40,7 +40,7 @@ use crate::{
 };
 
 pub struct AggBloomFilter {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     child_data_type: DataType,
     estimated_num_items: usize,
     num_bits: usize,
@@ -48,7 +48,7 @@ pub struct AggBloomFilter {
 
 impl AggBloomFilter {
     pub fn new(
-        child: Arc<dyn PhysicalExpr>,
+        child: PhysicalExprRef,
         child_data_type: DataType,
         estimated_num_items: usize,
         num_bits: usize,
@@ -78,7 +78,7 @@ impl Agg for AggBloomFilter {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
@@ -90,7 +90,7 @@ impl Agg for AggBloomFilter {
         true
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::new(
             exprs[0].clone(),
             self.child_data_type.clone(),

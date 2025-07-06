@@ -29,7 +29,7 @@ use arrow::{
 use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{arrow::cast::cast, df_execution_err, downcast_any};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
@@ -39,7 +39,7 @@ use crate::generate::{GenerateState, GeneratedRows, Generator};
 pub struct SparkUDTFWrapper {
     serialized: Vec<u8>,
     return_schema: SchemaRef,
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
     import_schema: SchemaRef,
     params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
@@ -49,7 +49,7 @@ impl SparkUDTFWrapper {
     pub fn try_new(
         serialized: Vec<u8>,
         return_schema: SchemaRef,
-        children: Vec<Arc<dyn PhysicalExpr>>,
+        children: Vec<PhysicalExprRef>,
     ) -> Result<Self> {
         let import_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
@@ -88,11 +88,11 @@ impl Debug for SparkUDTFWrapper {
 }
 
 impl Generator for SparkUDTFWrapper {
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         self.children.clone()
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.return_schema.clone(),

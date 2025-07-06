@@ -26,7 +26,11 @@ use arrow::{
     array::{Int64Array, RecordBatch},
     datatypes::{DataType, Schema},
 };
-use datafusion::{common::Result, logical_expr::ColumnarValue, physical_expr::PhysicalExpr};
+use datafusion::{
+    common::Result,
+    logical_expr::ColumnarValue,
+    physical_expr::{PhysicalExpr, PhysicalExprRef},
+};
 
 #[derive(Default)]
 pub struct RowNumExpr {
@@ -71,14 +75,14 @@ impl PhysicalExpr for RowNumExpr {
         Ok(ColumnarValue::Array(Arc::new(array)))
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        _children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        _children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::default()))
     }
 

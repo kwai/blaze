@@ -28,7 +28,7 @@ use arrow::{
 use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
-    physical_expr::PhysicalExpr,
+    physical_expr::{PhysicalExpr, PhysicalExprRef},
 };
 use datafusion_ext_commons::{df_execution_err, df_unimplemented_err};
 use itertools::Itertools;
@@ -38,12 +38,12 @@ use crate::down_cast_any_ref;
 /// expression to get value of a key in map array.
 #[derive(Debug, Hash)]
 pub struct GetMapValueExpr {
-    arg: Arc<dyn PhysicalExpr>,
+    arg: PhysicalExprRef,
     key: ScalarValue,
 }
 
 impl GetMapValueExpr {
-    pub fn new(arg: Arc<dyn PhysicalExpr>, key: ScalarValue) -> Self {
+    pub fn new(arg: PhysicalExprRef, key: ScalarValue) -> Self {
         Self { arg, key }
     }
 
@@ -51,7 +51,7 @@ impl GetMapValueExpr {
         &self.key
     }
 
-    pub fn arg(&self) -> &Arc<dyn PhysicalExpr> {
+    pub fn arg(&self) -> &PhysicalExprRef {
         &self.arg
     }
 }
@@ -129,14 +129,14 @@ impl PhysicalExpr for GetMapValueExpr {
         }
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![&self.arg]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::new(children[0].clone(), self.key.clone())))
     }
 
