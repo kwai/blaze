@@ -15,9 +15,14 @@
 use std::{any::Any, borrow::Cow, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayRef, StringArray, new_null_array},
-    datatypes::DataType,
+    array::{
+        Array, ArrayRef, AsArray, StringArray, StringBuilder, StructArray, make_array,
+        new_null_array,
+    },
+    datatypes::{DataType, Field, Fields},
+    ffi::{FFI_ArrowArray, from_ffi_and_data_type, to_ffi},
 };
+use blaze_jni_bridge::{conf, conf::BooleanConf, jni_call, jni_new_object, jni_new_string};
 use datafusion::{
     common::{Result, ScalarValue},
     physical_plan::ColumnarValue,
@@ -82,17 +87,24 @@ pub fn spark_parse_json(args: &[ColumnarValue]) -> Result<ColumnarValue> {
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
+    let fallback_enabled = conf::PARSE_JSON_ERROR_FALLBACK.value().unwrap_or(false);
 
     let json_values: Vec<Option<Arc<dyn Any + Send + Sync + 'static>>> = json_strings
         .iter()
         .map(|s| {
             s.and_then(|s| {
                 // first try parsing with sonic-rs and fail-backing to serde-json
-                if let Ok(v) = sonic_rs::from_str::<sonic_rs::Value>(s) {
+                if s.is_empty() {
+                    None
+                } else if let Ok(v) = sonic_rs::from_str::<sonic_rs::Value>(s) {
                     let v: Arc<dyn Any + Send + Sync> = Arc::new(ParsedJsonValue::Sonic(v));
                     Some(v)
                 } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
                     let v: Arc<dyn Any + Send + Sync> = Arc::new(ParsedJsonValue::SerdeJson(v));
+                    Some(v)
+                } else if fallback_enabled {
+                    let v: Arc<dyn Any + Send + Sync> =
+                        Arc::new(ParsedJsonValue::Fallback(s.to_owned()));
                     Some(v)
                 } else {
                     None
@@ -135,25 +147,29 @@ pub fn spark_get_parsed_json_object(args: &[ColumnarValue]) -> Result<ColumnarVa
         }
     };
 
-    let output = StringArray::from(
-        json_array
-            .iter()
-            .map(|value| {
-                value.as_ref().and_then(|value| {
-                    let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
-                    match json_value {
-                        ParsedJsonValue::SerdeJson(v) => evaluator
-                            .evaluate_with_value_serde_json(v)
-                            .ok()
-                            .unwrap_or(None),
-                        ParsedJsonValue::Sonic(v) => {
-                            evaluator.evaluate_with_value_sonic(v).ok().unwrap_or(None)
-                        }
-                    }
-                })
-            })
-            .collect::<Vec<_>>(),
-    );
+    let fallback_results = parse_fallback(&path_string, json_array)?;
+    let mut fallback_results_iter = fallback_results.iter();
+
+    let output = StringArray::from_iter(json_array.iter().map(|value| {
+        value.as_ref().and_then(|value| -> Option<Cow<str>> {
+            let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
+            match json_value {
+                ParsedJsonValue::SerdeJson(v) => evaluator
+                    .evaluate_with_value_serde_json(v)
+                    .ok()
+                    .unwrap_or(None)
+                    .map(Cow::from),
+                ParsedJsonValue::Sonic(v) => evaluator
+                    .evaluate_with_value_sonic(v)
+                    .ok()
+                    .unwrap_or(None)
+                    .map(Cow::from),
+                ParsedJsonValue::Fallback(_) => {
+                    fallback_results_iter.next().unwrap().map(Cow::from)
+                }
+            }
+        })
+    }));
     Ok(ColumnarValue::Array(Arc::new(output)))
 }
 
@@ -163,33 +179,84 @@ pub fn spark_get_parsed_json_simple_field(
     parsed_json_array: &ArrayRef,
     field: &String,
 ) -> Result<ArrayRef> {
-    let output = StringArray::from(
-        downcast_any!(parsed_json_array, UserDefinedArray)?
-            .iter()
-            .map(|value| {
-                value.as_ref().and_then(|value| {
-                    let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
-                    match json_value {
-                        ParsedJsonValue::SerdeJson(v) => v
-                            .as_object()
-                            .and_then(|object| object.get(field))
-                            .and_then(|v| serde_json_value_to_string(v).unwrap_or_default()),
-                        ParsedJsonValue::Sonic(v) => v
-                            .as_object()
-                            .and_then(|object| object.get(field))
-                            .and_then(|v| sonic_value_to_string(v).unwrap_or_default()),
-                    }
-                })
-            })
-            .collect::<Vec<_>>(),
-    );
+    let json_array = downcast_any!(parsed_json_array, UserDefinedArray)?;
+    let fallback_results = parse_fallback(&field, json_array)?;
+    let mut fallback_results_iter = fallback_results.iter();
+
+    let output = StringArray::from_iter(json_array.iter().map(|value| {
+        value.as_ref().and_then(|value| {
+            let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
+            match json_value {
+                ParsedJsonValue::SerdeJson(v) => v
+                    .as_object()
+                    .and_then(|object| object.get(field))
+                    .and_then(|v| serde_json_value_to_string(v).unwrap_or_default())
+                    .map(Cow::from),
+                ParsedJsonValue::Sonic(v) => v
+                    .as_object()
+                    .and_then(|object| object.get(field))
+                    .and_then(|v| sonic_value_to_string(v).unwrap_or_default())
+                    .map(Cow::from),
+                ParsedJsonValue::Fallback(_) => {
+                    fallback_results_iter.next().unwrap().map(Cow::from)
+                }
+            }
+        })
+    }));
     Ok(Arc::new(output))
+}
+
+fn parse_fallback(json_path: &str, json_array: &UserDefinedArray) -> Result<StringArray> {
+    let fallback_results = if !conf::PARSE_JSON_ERROR_FALLBACK.value().unwrap_or(false) {
+        StringArray::new_null(0)
+    } else {
+        let mut fallback_jsons_array = StringBuilder::new();
+        for json in json_array.iter().flat_map(|value| {
+            value.as_ref().and_then(|value| -> Option<&str> {
+                let json_value = value.downcast_ref::<ParsedJsonValue>().unwrap();
+                if let ParsedJsonValue::Fallback(json) = json_value {
+                    return Some(json.as_ref());
+                }
+                None
+            })
+        }) {
+            fallback_jsons_array.append_value(json);
+        }
+        let fallback_jsons_array = fallback_jsons_array.finish();
+
+        if fallback_jsons_array.is_empty() {
+            StringArray::new_null(0)
+        } else {
+            let single_field = Fields::from(vec![Field::new("", DataType::Utf8, false)]);
+            let json_path = jni_new_string!(json_path)?;
+            let fallback_wrapper = jni_new_object!(BlazeJsonFallbackWrapper(json_path.as_obj()))?;
+            let export_array = StructArray::new(
+                single_field.clone(),
+                vec![Arc::new(fallback_jsons_array)],
+                None,
+            );
+            let (mut ffi_export_array, _) = to_ffi(&export_array.to_data())?;
+            let mut ffi_import_array = FFI_ArrowArray::empty();
+            jni_call!(BlazeJsonFallbackWrapper(fallback_wrapper.as_obj()).parseJsons(
+                &mut ffi_export_array as *mut FFI_ArrowArray as i64,
+                &mut ffi_import_array as *mut FFI_ArrowArray as i64,
+            ) -> ())?;
+            let import_array = unsafe {
+                // safety: use arrow-ffi
+                from_ffi_and_data_type(ffi_import_array, DataType::Struct(single_field.clone()))?
+            };
+            let result_array = make_array(import_array.child_data()[0].clone());
+            result_array.as_string().clone()
+        }
+    };
+    Ok(fallback_results)
 }
 
 #[derive(Debug)]
 enum ParsedJsonValue {
     SerdeJson(serde_json::Value),
     Sonic(sonic_rs::Value),
+    Fallback(String),
 }
 
 #[derive(Debug)]

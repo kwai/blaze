@@ -451,6 +451,7 @@ pub struct JavaClasses<'a> {
     pub cBlazeArrowFFIExporter: BlazeArrowFFIExporter<'a>,
     pub cBlazeFSDataInputWrapper: BlazeFSDataInputWrapper<'a>,
     pub cBlazeFSDataOutputWrapper: BlazeFSDataOutputWrapper<'a>,
+    pub cBlazeJsonFallbackWrapper: BlazeJsonFallbackWrapper<'a>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -514,6 +515,7 @@ impl JavaClasses<'static> {
                 cBlazeArrowFFIExporter: BlazeArrowFFIExporter::new(env)?,
                 cBlazeFSDataInputWrapper: BlazeFSDataInputWrapper::new(env)?,
                 cBlazeFSDataOutputWrapper: BlazeFSDataOutputWrapper::new(env)?,
+                cBlazeJsonFallbackWrapper: BlazeJsonFallbackWrapper::new(env)?,
             };
             log::info!("Initializing JavaClasses finished");
             Ok(java_classes)
@@ -1612,6 +1614,28 @@ impl<'a> BlazeFSDataOutputWrapper<'a> {
                 "(Ljava/nio/ByteBuffer;)V",
             )?,
             method_writeFully_ret: ReturnType::Primitive(Primitive::Void),
+        })
+    }
+}
+
+#[allow(non_snake_case)]
+pub struct BlazeJsonFallbackWrapper<'a> {
+    pub class: JClass<'a>,
+    pub ctor: JMethodID,
+    pub method_parseJsons: JMethodID,
+    pub method_parseJsons_ret: ReturnType,
+}
+
+impl<'a> BlazeJsonFallbackWrapper<'a> {
+    pub const SIG_TYPE: &'static str = "org/apache/spark/sql/blaze/util/JsonFallbackWrapper";
+
+    pub fn new(env: &JNIEnv<'a>) -> JniResult<BlazeJsonFallbackWrapper<'a>> {
+        let class = get_global_jclass(env, Self::SIG_TYPE)?;
+        Ok(BlazeJsonFallbackWrapper {
+            class,
+            ctor: env.get_method_id(class, "<init>", "(Ljava/lang/String;)V")?,
+            method_parseJsons: env.get_method_id(class, "parseJsons", "(JJ)V")?,
+            method_parseJsons_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }
