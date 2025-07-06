@@ -18,7 +18,7 @@ use arrow::{
     array::{Array, ArrayRef},
     record_batch::RecordBatch,
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::downcast_any;
 use datafusion_ext_functions::spark_get_json_object::{
     spark_get_parsed_json_simple_field, spark_parse_json,
@@ -28,22 +28,22 @@ use crate::generate::{GenerateState, GeneratedRows, Generator};
 
 #[derive(Debug)]
 pub struct JsonTuple {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     json_paths: Vec<String>,
 }
 
 impl JsonTuple {
-    pub fn new(child: Arc<dyn PhysicalExpr>, json_paths: Vec<String>) -> Self {
+    pub fn new(child: PhysicalExprRef, json_paths: Vec<String>) -> Self {
         Self { child, json_paths }
     }
 }
 
 impl Generator for JsonTuple {
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Generator>> {
         Ok(Arc::new(Self::new(
             exprs[0].clone(),
             self.json_paths.clone(),

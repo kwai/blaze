@@ -29,10 +29,10 @@ use datafusion::{
     },
     error::Result,
     execution::context::TaskContext,
-    physical_expr::EquivalenceProperties,
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PhysicalExpr,
-        PlanProperties, SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        SendableRecordBatchStream, Statistics,
         metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
     },
 };
@@ -59,7 +59,7 @@ pub struct OrcExec {
     projected_statistics: Statistics,
     projected_schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
-    _predicate: Option<Arc<dyn PhysicalExpr>>,
+    _predicate: Option<PhysicalExprRef>,
     props: OnceCell<PlanProperties>,
 }
 
@@ -69,7 +69,7 @@ impl OrcExec {
     pub fn new(
         base_config: FileScanConfig,
         fs_resource_id: String,
-        _predicate: Option<Arc<dyn PhysicalExpr>>,
+        _predicate: Option<PhysicalExprRef>,
     ) -> Self {
         let metrics = ExecutionPlanMetricsSet::new();
 

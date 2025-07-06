@@ -27,7 +27,7 @@ use datafusion::{
         cast::{as_list_array, as_struct_array},
     },
     logical_expr::ColumnarValue,
-    physical_expr::PhysicalExpr,
+    physical_expr::{PhysicalExpr, PhysicalExprRef},
 };
 use datafusion_ext_commons::df_execution_err;
 
@@ -36,13 +36,13 @@ use crate::down_cast_any_ref;
 /// expression to get a field of a list array.
 #[derive(Debug, Hash)]
 pub struct GetIndexedFieldExpr {
-    arg: Arc<dyn PhysicalExpr>,
+    arg: PhysicalExprRef,
     key: ScalarValue,
 }
 
 impl GetIndexedFieldExpr {
     /// Create new get field expression
-    pub fn new(arg: Arc<dyn PhysicalExpr>, key: ScalarValue) -> Self {
+    pub fn new(arg: PhysicalExprRef, key: ScalarValue) -> Self {
         Self { arg, key }
     }
 
@@ -52,7 +52,7 @@ impl GetIndexedFieldExpr {
     }
 
     /// Get the input expression
-    pub fn arg(&self) -> &Arc<dyn PhysicalExpr> {
+    pub fn arg(&self) -> &PhysicalExprRef {
         &self.arg
     }
 }
@@ -140,14 +140,14 @@ impl PhysicalExpr for GetIndexedFieldExpr {
         }
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![&self.arg]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(GetIndexedFieldExpr::new(
             children[0].clone(),
             self.key.clone(),

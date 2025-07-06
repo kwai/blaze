@@ -19,7 +19,7 @@ use std::{
 };
 
 use arrow::{array::*, datatypes::*};
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::{df_unimplemented_err, downcast_any};
 
 use crate::{
@@ -34,12 +34,12 @@ use crate::{
 };
 
 pub struct AggSum {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     data_type: DataType,
 }
 
 impl AggSum {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
+    pub fn try_new(child: PhysicalExprRef, data_type: DataType) -> Result<Self> {
         Ok(Self { child, data_type })
     }
 }
@@ -55,11 +55,11 @@ impl Agg for AggSum {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
             self.data_type.clone(),

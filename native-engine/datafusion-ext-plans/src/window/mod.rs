@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use arrow::{array::ArrayRef, datatypes::FieldRef, record_batch::RecordBatch};
 use arrow_schema::DataType;
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 
 use crate::{
     agg::{AggFunction, agg::create_agg},
@@ -53,14 +53,14 @@ pub trait WindowFunctionProcessor: Send {
 pub struct WindowExpr {
     field: FieldRef,
     func: WindowFunction,
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
     return_type: DataType,
 }
 
 impl WindowExpr {
     pub fn new(
         func: WindowFunction,
-        children: Vec<Arc<dyn PhysicalExpr>>,
+        children: Vec<PhysicalExprRef>,
         field: FieldRef,
         return_type: DataType,
     ) -> Self {

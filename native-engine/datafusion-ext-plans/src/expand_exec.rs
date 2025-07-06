@@ -21,7 +21,7 @@ use arrow::{
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{EquivalenceProperties, PhysicalExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream,
@@ -37,7 +37,7 @@ use crate::common::execution_context::ExecutionContext;
 #[derive(Debug, Clone)]
 pub struct ExpandExec {
     schema: SchemaRef,
-    projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
+    projections: Vec<Vec<PhysicalExprRef>>,
     input: Arc<dyn ExecutionPlan>,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
@@ -46,7 +46,7 @@ pub struct ExpandExec {
 impl ExpandExec {
     pub fn try_new(
         schema: SchemaRef,
-        projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
+        projections: Vec<Vec<PhysicalExprRef>>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Result<Self> {
         let input_schema = input.schema();
@@ -143,7 +143,7 @@ impl ExecutionPlan for ExpandExec {
 
 fn execute_expand(
     mut input: SendableRecordBatchStream,
-    projections: Vec<Vec<Arc<dyn PhysicalExpr>>>,
+    projections: Vec<Vec<PhysicalExprRef>>,
     exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
     Ok(exec_ctx

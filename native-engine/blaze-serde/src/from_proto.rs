@@ -35,7 +35,7 @@ use datafusion::{
     },
     logical_expr::{ColumnarValue, Operator, ScalarUDF, Volatility},
     physical_expr::{
-        ScalarFunctionExpr,
+        PhysicalExprRef, ScalarFunctionExpr,
         expressions::{LikeExpr, SCAndExpr, SCOrExpr, in_list},
     },
     physical_plan::{
@@ -134,7 +134,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                         };
                         Ok((casted_expr, name.to_string()))
                     })
-                    .collect::<Result<Vec<(Arc<dyn PhysicalExpr>, String)>, Self::Error>>()?;
+                    .collect::<Result<Vec<(PhysicalExprRef, String)>, Self::Error>>()?;
 
                 Ok(Arc::new(ProjectExec::try_new(exprs, input)?))
             }
@@ -185,7 +185,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let schema = Arc::new(convert_required!(hash_join.schema)?);
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(hash_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(hash_join.right)?;
-                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = hash_join
+                let on: Vec<(PhysicalExprRef, PhysicalExprRef)> = hash_join
                     .on
                     .iter()
                     .map(|col| {
@@ -222,7 +222,7 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                 let schema = Arc::new(convert_required!(sort_merge_join.schema)?);
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(sort_merge_join.right)?;
-                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = sort_merge_join
+                let on: Vec<(PhysicalExprRef, PhysicalExprRef)> = sort_merge_join
                     .on
                     .iter()
                     .map(|col| {
@@ -322,14 +322,14 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
                     .keys
                     .iter()
                     .map(|expr| try_parse_physical_expr(expr, &input.schema()))
-                    .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, Self::Error>>()?;
+                    .collect::<Result<Vec<PhysicalExprRef>, Self::Error>>()?;
                 Ok(Arc::new(BroadcastJoinBuildHashMapExec::new(input, keys)))
             }
             PhysicalPlanType::BroadcastJoin(broadcast_join) => {
                 let schema = Arc::new(convert_required!(broadcast_join.schema)?);
                 let left: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.left)?;
                 let right: Arc<dyn ExecutionPlan> = convert_box_required!(broadcast_join.right)?;
-                let on: Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> = broadcast_join
+                let on: Vec<(PhysicalExprRef, PhysicalExprRef)> = broadcast_join
                     .on
                     .iter()
                     .map(|col| {
@@ -825,13 +825,13 @@ impl From<protobuf::ScalarFunction> for Arc<ScalarUDF> {
 fn try_parse_physical_expr(
     expr: &protobuf::PhysicalExprNode,
     input_schema: &SchemaRef,
-) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+) -> Result<PhysicalExprRef, PlanSerDeError> {
     let expr_type = expr
         .expr_type
         .as_ref()
         .ok_or_else(|| proto_error("Unexpected empty physical expression"))?;
 
-    let pexpr: Arc<dyn PhysicalExpr> =
+    let pexpr: PhysicalExprRef =
         match expr_type {
             ExprType::Column(c) => Arc::new(Column::new(&c.name, input_schema.index_of(&c.name)?)),
             ExprType::Literal(scalar) => Arc::new(Literal::new(scalar.try_into()?)),
@@ -1040,7 +1040,7 @@ fn try_parse_physical_expr(
 fn try_parse_physical_expr_required(
     proto: &Option<protobuf::PhysicalExprNode>,
     input_schema: &SchemaRef,
-) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+) -> Result<PhysicalExprRef, PlanSerDeError> {
     if let Some(field) = proto.as_ref() {
         try_parse_physical_expr(field, input_schema)
     } else {
@@ -1051,7 +1051,7 @@ fn try_parse_physical_expr_required(
 fn try_parse_physical_expr_box_required(
     proto: &Option<Box<protobuf::PhysicalExprNode>>,
     input_schema: &SchemaRef,
-) -> Result<Arc<dyn PhysicalExpr>, PlanSerDeError> {
+) -> Result<PhysicalExprRef, PlanSerDeError> {
     if let Some(field) = proto.as_ref() {
         try_parse_physical_expr(field, input_schema)
     } else {
@@ -1122,7 +1122,7 @@ pub fn parse_protobuf_partitioning(
                     .hash_expr
                     .iter()
                     .map(|e| try_parse_physical_expr(e, &input.schema()))
-                    .collect::<Result<Vec<Arc<dyn PhysicalExpr>>, _>>()?;
+                    .collect::<Result<Vec<PhysicalExprRef>, _>>()?;
                 Ok(Some(Partitioning::HashPartitioning(
                     expr,
                     hash_part.partition_count.try_into().unwrap(),

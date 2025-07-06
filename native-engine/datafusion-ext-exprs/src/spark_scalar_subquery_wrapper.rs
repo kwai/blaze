@@ -26,6 +26,7 @@ use arrow::{
 use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
+    physical_expr::PhysicalExprRef,
     physical_plan::PhysicalExpr,
 };
 use once_cell::sync::OnceCell;
@@ -114,14 +115,11 @@ impl PhysicalExpr for SparkScalarSubqueryWrapperExpr {
         result.cloned()
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![]
     }
 
-    fn with_new_children(
-        self: Arc<Self>,
-        _: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+    fn with_new_children(self: Arc<Self>, _: Vec<PhysicalExprRef>) -> Result<PhysicalExprRef> {
         Ok(self.clone())
     }
 

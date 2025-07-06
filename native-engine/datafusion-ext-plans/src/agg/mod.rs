@@ -31,7 +31,7 @@ pub mod sum;
 use std::{fmt::Debug, sync::Arc};
 
 use agg::Agg;
-use datafusion::physical_expr::PhysicalExpr;
+use datafusion::physical_expr::PhysicalExprRef;
 
 pub const AGG_BUF_COLUMN_NAME: &str = "#9223372036854775807";
 
@@ -81,7 +81,7 @@ pub enum AggFunction {
 #[derive(Debug, Clone)]
 pub struct GroupingExpr {
     pub field_name: String,
-    pub expr: Arc<dyn PhysicalExpr>,
+    pub expr: PhysicalExprRef,
 }
 
 #[derive(Debug, Clone)]

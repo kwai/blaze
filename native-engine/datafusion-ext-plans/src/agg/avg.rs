@@ -25,7 +25,7 @@ use datafusion::{
         Result,
         cast::{as_decimal128_array, as_int64_array},
     },
-    physical_expr::PhysicalExpr,
+    physical_expr::PhysicalExprRef,
 };
 use datafusion_ext_commons::downcast_any;
 
@@ -41,14 +41,14 @@ use crate::{
 };
 
 pub struct AggAvg {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     data_type: DataType,
     agg_sum: AggSum,
     agg_count: AggCount,
 }
 
 impl AggAvg {
-    pub fn try_new(child: Arc<dyn PhysicalExpr>, data_type: DataType) -> Result<Self> {
+    pub fn try_new(child: PhysicalExprRef, data_type: DataType) -> Result<Self> {
         let agg_sum = AggSum::try_new(child.clone(), data_type.clone())?;
         let agg_count = AggCount::try_new(vec![child.clone()], DataType::Int64)?;
         Ok(Self {
@@ -71,11 +71,11 @@ impl Agg for AggAvg {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
             self.data_type.clone(),

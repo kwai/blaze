@@ -22,10 +22,10 @@ use arrow::{
 use datafusion::{
     common::{Result, Statistics},
     execution::context::TaskContext,
-    physical_expr::{EquivalenceProperties, PhysicalSortExpr},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PhysicalExpr, PlanProperties, SendableRecordBatchStream,
+        PlanProperties, SendableRecordBatchStream,
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -63,7 +63,7 @@ impl WindowExec {
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
         window_exprs: Vec<WindowExpr>,
-        partition_spec: Vec<Arc<dyn PhysicalExpr>>,
+        partition_spec: Vec<PhysicalExprRef>,
         order_spec: Vec<PhysicalSortExpr>,
         group_limit: Option<usize>,
         output_window_cols: bool,

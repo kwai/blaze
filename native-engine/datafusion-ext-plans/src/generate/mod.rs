@@ -25,8 +25,7 @@ use arrow::{
 };
 use datafusion::{
     common::{Result, ScalarValue},
-    physical_expr::expressions::Literal,
-    physical_plan::PhysicalExpr,
+    physical_expr::{PhysicalExprRef, expressions::Literal},
 };
 use datafusion_ext_commons::{df_execution_err, df_unimplemented_err, downcast_any};
 
@@ -37,9 +36,9 @@ use crate::generate::{
 };
 
 pub trait Generator: Debug + Send + Sync {
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
+    fn exprs(&self) -> Vec<PhysicalExprRef>;
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Generator>>;
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Generator>>;
 
     fn eval_start(&self, batch: &RecordBatch) -> Result<Box<dyn GenerateState>>;
 
@@ -72,7 +71,7 @@ pub enum GenerateFunc {
 pub fn create_generator(
     input_schema: &SchemaRef,
     func: GenerateFunc,
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
 ) -> Result<Arc<dyn Generator>> {
     match func {
         GenerateFunc::Explode => match children[0].data_type(input_schema)? {
@@ -107,7 +106,7 @@ pub fn create_generator(
 pub fn create_udtf_generator(
     serialized: Vec<u8>,
     return_schema: SchemaRef,
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
 ) -> Result<Arc<dyn Generator>> {
     Ok(Arc::new(SparkUDTFWrapper::try_new(
         serialized,

@@ -24,7 +24,7 @@ use std::{
 use arrow::{array::*, datatypes::*};
 use datafusion::{
     common::{Result, ScalarValue},
-    physical_expr::PhysicalExpr,
+    physical_expr::PhysicalExprRef,
 };
 use datafusion_ext_commons::{
     df_execution_err, downcast_any,
@@ -47,7 +47,7 @@ pub type AggCollectSet = AggGenericCollect<AccSetColumn>;
 pub type AggCollectList = AggGenericCollect<AccListColumn>;
 
 pub struct AggGenericCollect<C: AccCollectionColumn> {
-    child: Arc<dyn PhysicalExpr>,
+    child: PhysicalExprRef,
     data_type: DataType,
     arg_type: DataType,
     return_list_nullable: bool,
@@ -56,7 +56,7 @@ pub struct AggGenericCollect<C: AccCollectionColumn> {
 
 impl<C: AccCollectionColumn> AggGenericCollect<C> {
     pub fn try_new(
-        child: Arc<dyn PhysicalExpr>,
+        child: PhysicalExprRef,
         data_type: DataType,
         arg_type: DataType,
     ) -> Result<Self> {
@@ -89,11 +89,11 @@ impl<C: AccCollectionColumn> Agg for AggGenericCollect<C> {
         self
     }
 
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn exprs(&self) -> Vec<PhysicalExprRef> {
         vec![self.child.clone()]
     }
 
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>> {
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>> {
         Ok(Arc::new(Self::try_new(
             exprs[0].clone(),
             self.data_type.clone(),

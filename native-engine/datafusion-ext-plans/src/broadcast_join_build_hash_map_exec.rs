@@ -30,7 +30,7 @@ use blaze_jni_bridge::{
 use datafusion::{
     common::Result,
     execution::{SendableRecordBatchStream, TaskContext},
-    physical_expr::{EquivalenceProperties, Partitioning, PhysicalExpr},
+    physical_expr::{EquivalenceProperties, Partitioning, PhysicalExprRef},
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties,
@@ -53,13 +53,13 @@ use crate::{
 
 pub struct BroadcastJoinBuildHashMapExec {
     input: Arc<dyn ExecutionPlan>,
-    keys: Vec<Arc<dyn PhysicalExpr>>,
+    keys: Vec<PhysicalExprRef>,
     metrics: ExecutionPlanMetricsSet,
     props: OnceCell<PlanProperties>,
 }
 
 impl BroadcastJoinBuildHashMapExec {
-    pub fn new(input: Arc<dyn ExecutionPlan>, keys: Vec<Arc<dyn PhysicalExpr>>) -> Self {
+    pub fn new(input: Arc<dyn ExecutionPlan>, keys: Vec<PhysicalExprRef>) -> Self {
         Self {
             input,
             keys,
@@ -135,7 +135,7 @@ impl ExecutionPlan for BroadcastJoinBuildHashMapExec {
 
 pub fn execute_build_hash_map(
     mut input: SendableRecordBatchStream,
-    keys: Vec<Arc<dyn PhysicalExpr>>,
+    keys: Vec<PhysicalExprRef>,
     exec_ctx: Arc<ExecutionContext>,
     build_time: Time,
 ) -> Result<SendableRecordBatchStream> {

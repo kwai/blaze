@@ -21,7 +21,10 @@ use std::{
 
 use arrow::{datatypes::*, record_batch::RecordBatch};
 use datafusion::{
-    common::Result, logical_expr::ColumnarValue, physical_expr::PhysicalExpr, scalar::ScalarValue,
+    common::Result,
+    logical_expr::ColumnarValue,
+    physical_expr::{PhysicalExpr, PhysicalExprRef},
+    scalar::ScalarValue,
 };
 
 use crate::down_cast_any_ref;
@@ -29,7 +32,7 @@ use crate::down_cast_any_ref;
 /// cast expression compatible with spark
 #[derive(Debug, Hash)]
 pub struct TryCastExpr {
-    pub expr: Arc<dyn PhysicalExpr>,
+    pub expr: PhysicalExprRef,
     pub cast_type: DataType,
 }
 
@@ -43,7 +46,7 @@ impl PartialEq<dyn Any> for TryCastExpr {
 }
 
 impl TryCastExpr {
-    pub fn new(expr: Arc<dyn PhysicalExpr>, cast_type: DataType) -> Self {
+    pub fn new(expr: PhysicalExprRef, cast_type: DataType) -> Self {
         Self { expr, cast_type }
     }
 }
@@ -82,14 +85,14 @@ impl PhysicalExpr for TryCastExpr {
         })
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         vec![&self.expr]
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::new(
             children[0].clone(),
             self.cast_type.clone(),

@@ -18,7 +18,7 @@ use arrow::{
     array::{ArrayRef, AsArray, RecordBatch},
     datatypes::{DataType, Int64Type, Schema, SchemaRef},
 };
-use datafusion::{common::Result, physical_expr::PhysicalExpr};
+use datafusion::{common::Result, physical_expr::PhysicalExprRef};
 use datafusion_ext_commons::df_execution_err;
 use datafusion_ext_exprs::cast::TryCastExpr;
 
@@ -39,11 +39,11 @@ use crate::agg::{
 
 pub trait Agg: Send + Sync + Debug {
     fn as_any(&self) -> &dyn Any;
-    fn exprs(&self) -> Vec<Arc<dyn PhysicalExpr>>;
+    fn exprs(&self) -> Vec<PhysicalExprRef>;
     fn data_type(&self) -> &DataType;
     fn nullable(&self) -> bool;
     fn create_acc_column(&self, num_rows: usize) -> AccColumnRef;
-    fn with_new_exprs(&self, exprs: Vec<Arc<dyn PhysicalExpr>>) -> Result<Arc<dyn Agg>>;
+    fn with_new_exprs(&self, exprs: Vec<PhysicalExprRef>) -> Result<Arc<dyn Agg>>;
 
     fn prepare_partial_args(&self, partial_inputs: &[ArrayRef]) -> Result<Vec<ArrayRef>> {
         // default implementation: directly return the inputs
@@ -169,7 +169,7 @@ macro_rules! idx_for_zipped {
 
 pub fn create_agg(
     agg_function: AggFunction,
-    children: &[Arc<dyn PhysicalExpr>],
+    children: &[PhysicalExprRef],
     input_schema: &SchemaRef,
     return_type: DataType,
 ) -> Result<Arc<dyn Agg>> {
@@ -277,7 +277,7 @@ pub fn create_agg(
 pub fn create_udaf_agg(
     serialized: Vec<u8>,
     return_type: DataType,
-    children: Vec<Arc<dyn PhysicalExpr>>,
+    children: Vec<PhysicalExprRef>,
 ) -> Result<Arc<dyn Agg>> {
     Ok(Arc::new(SparkUDAFWrapper::try_new(
         serialized,

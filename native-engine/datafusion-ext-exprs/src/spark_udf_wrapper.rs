@@ -29,7 +29,9 @@ use blaze_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{
-    error::Result, logical_expr::ColumnarValue, physical_expr::physical_exprs_bag_equal,
+    error::Result,
+    logical_expr::ColumnarValue,
+    physical_expr::{PhysicalExprRef, physical_exprs_bag_equal},
     physical_plan::PhysicalExpr,
 };
 use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
@@ -42,7 +44,7 @@ pub struct SparkUDFWrapperExpr {
     pub serialized: Vec<u8>,
     pub return_type: DataType,
     pub return_nullable: bool,
-    pub params: Vec<Arc<dyn PhysicalExpr>>,
+    pub params: Vec<PhysicalExprRef>,
     pub import_schema: SchemaRef,
     pub params_schema: OnceCell<SchemaRef>,
     jcontext: OnceCell<GlobalRef>,
@@ -68,7 +70,7 @@ impl SparkUDFWrapperExpr {
         serialized: Vec<u8>,
         return_type: DataType,
         return_nullable: bool,
-        params: Vec<Arc<dyn PhysicalExpr>>,
+        params: Vec<PhysicalExprRef>,
         expr_string: String,
     ) -> Result<Self> {
         Ok(Self {
@@ -170,14 +172,14 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         )?))
     }
 
-    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&PhysicalExprRef> {
         self.params.iter().collect()
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn PhysicalExpr>> {
+        children: Vec<PhysicalExprRef>,
+    ) -> Result<PhysicalExprRef> {
         Ok(Arc::new(Self::try_new(
             self.serialized.clone(),
             self.return_type.clone(),
