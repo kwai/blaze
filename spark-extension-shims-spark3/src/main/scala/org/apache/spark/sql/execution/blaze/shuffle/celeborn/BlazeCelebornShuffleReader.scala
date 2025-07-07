@@ -25,7 +25,6 @@ import scala.reflect.ClassTag
 
 import org.apache.celeborn.client.read.CelebornInputStream
 import org.apache.celeborn.common.CelebornConf
-import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
@@ -52,6 +51,7 @@ class BlazeCelebornShuffleReader[K, C](
     with Logging {
 
   override protected def readBlocks(): Iterator[InputStream] = {
+    // force disable decompression because compression is skipped in shuffle writer
     val reader = new CelebornShuffleReader[K, C](
       handle,
       startPartition,
@@ -61,7 +61,8 @@ class BlazeCelebornShuffleReader[K, C](
       context,
       conf,
       BlazeCelebornShuffleReader.createBypassingIncRecordsReadMetrics(metrics),
-      shuffleIdTracker) {
+      shuffleIdTracker,
+      false) {
 
       override def newSerializerInstance(dep: ShuffleDependency[K, _, C]): SerializerInstance = {
         new SerializerInstance {
@@ -95,17 +96,7 @@ class BlazeCelebornShuffleReader[K, C](
       }
     }
 
-    reader.read().map { kv =>
-      val celebornInputStream = kv._2.asInstanceOf[CelebornInputStream]
-
-      // force disable decompression because compression is skipped in shuffle writer
-      FieldUtils.writeField(
-        celebornInputStream,
-        "shuffleCompressionEnabled",
-        Boolean.box(false).asInstanceOf[Object],
-        true)
-      celebornInputStream
-    }
+    reader.read().map { kv => kv._2.asInstanceOf[CelebornInputStream] }
   }
 }
 
