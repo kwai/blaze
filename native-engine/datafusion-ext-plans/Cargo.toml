@@ -17,37 +17,37 @@ datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }
 orc-rust = { workspace = true }
 
-async-trait = "0.1.88"
-base64 = "0.22.1"
-bitvec = "1.0.1"
-byteorder = "1.5.0"
-bytes = "1.10.1"
-bytesize = "2.0.1"
-count-write = "0.1.0"
-derivative = "2.2.0"
-foldhash = "0.1.5"
-futures = "0.3"
-futures-util = "0.3.31"
-hashbrown = "0.14.5"
-itertools = "0.14.0"
-jni = "0.20.0"
-log = "0.4.27"
-lz4_flex = "0.11.2"
-num = "0.4.2"
-object_store = "0.11.1"
-once_cell = "1.21.3"
-panic-message = "0.3.0"
-parking_lot = "0.12.4"
-paste = "1.0.15"
-smallvec = "2.0.0-alpha.11"
-tempfile = "3"
-tokio = "1.45.1"
-unchecked-index = "0.2.2"
-uuid = "1.17.0"
-zstd = "0.13.3"
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bitvec = { workspace = true }
+byteorder = { workspace = true }
+bytes = { workspace = true }
+bytesize = { workspace = true }
+count-write = { workspace = true }
+derivative = { workspace = true }
+foldhash = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+hashbrown = { workspace = true }
+itertools = { workspace = true }
+jni = { workspace = true }
+log = { workspace = true }
+lz4_flex = { workspace = true }
+num = { workspace = true }
+object_store = { workspace = true }
+once_cell = { workspace = true }
+panic-message = { workspace = true }
+parking_lot = { workspace = true }
+paste = { workspace = true }
+smallvec = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+unchecked-index = { workspace = true }
+uuid = { workspace = true }
+zstd = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = "0.17.0"
+procfs = { workspace = true }
 
 [dev-dependencies]
-rand = "0.9.1"
+rand = { workspace = true }

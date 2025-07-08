@@ -13,11 +13,6 @@
 // limitations under the License.
 
 use datafusion::common::Result;
-use jni::{
-    objects::GlobalRef,
-    sys::{JNI_FALSE, JNI_TRUE},
-};
-use once_cell::sync::OnceCell;
 
 pub mod conf;
 pub mod jni_bridge;
@@ -39,20 +34,4 @@ pub fn is_task_running() -> bool {
         return true;
     }
     is_task_running_impl().expect("calling JniBridge.isTaskRunning() error")
-}
-
-pub fn java_true() -> &'static GlobalRef {
-    static OBJ_TRUE: OnceCell<GlobalRef> = OnceCell::new();
-    OBJ_TRUE.get_or_init(|| {
-        let true_local = jni_new_object!(JavaBoolean(JNI_TRUE)).unwrap();
-        jni_new_global_ref!(true_local.as_obj()).unwrap()
-    })
-}
-
-pub fn java_false() -> &'static GlobalRef {
-    static OBJ_FALSE: OnceCell<GlobalRef> = OnceCell::new();
-    OBJ_FALSE.get_or_init(|| {
-        let false_local = jni_new_object!(JavaBoolean(JNI_FALSE)).unwrap();
-        jni_new_global_ref!(false_local.as_obj()).unwrap()
-    })
 }
