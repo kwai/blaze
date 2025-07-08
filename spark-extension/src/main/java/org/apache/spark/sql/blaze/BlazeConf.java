@@ -102,6 +102,9 @@ public enum BlazeConf {
     // suggested memory size for record batch
     SUGGESTED_BATCH_MEM_SIZE("spark.blaze.suggested.batch.memSize", 8388608),
 
+    // fallback to UDFJson when error parsing json in native implementation
+    PARSE_JSON_ERROR_FALLBACK("spark.blaze.parseJsonError.fallback", true),
+
     // suggested memory size for k-way merging
     // use smaller batch memory size for kway merging since there will be multiple
     // batches in memory at the same time
