@@ -21,7 +21,7 @@
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
     <paimonVersion>1.1.1</paimonVersion>
-    <celebornVersion>0.5.4</celebornVersion>
+    <celebornVersion>0.6.0</celebornVersion>
   </properties>
 
   <dependencyManagement>
