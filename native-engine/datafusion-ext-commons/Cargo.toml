@@ -14,7 +14,6 @@ blaze-jni-bridge = { workspace = true }
 datafusion = { workspace = true }
 
 async-trait = { workspace = true }
-bitvec = { workspace = true }
 bigdecimal = { workspace = true }
 byteorder = { workspace = true }
 bytes = { workspace = true }
@@ -26,11 +25,9 @@ log = { workspace = true }
 num = { workspace = true }
 once_cell = { workspace = true }
 paste = { workspace = true }
-radsort = { workspace = true }
 smallvec = { workspace = true }
 tempfile = { workspace = true }
 transpose = { workspace = true }
-thrift = { workspace = true }
 tokio = { workspace = true }
 unchecked-index = { workspace = true }
 

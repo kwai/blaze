@@ -24,7 +24,6 @@ byteorder = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
 count-write = { workspace = true }
-derivative = { workspace = true }
 foldhash = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
@@ -43,7 +42,6 @@ smallvec = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 unchecked-index = { workspace = true }
-uuid = { workspace = true }
 zstd = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
