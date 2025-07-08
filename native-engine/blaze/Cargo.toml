@@ -9,31 +9,26 @@ crate-type = ["cdylib"]
 
 [features]
 default = ["tokio/rt-multi-thread", "jemalloc"]
-
 jemalloc = ["dep:tikv-jemallocator"]
-
 jemalloc-pprof = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemalloc-sys", "dep:jemalloc_pprof", "dep:pprof", "http-service"]
-
 http-service = []
 
 [dependencies]
 arrow = { workspace = true }
 blaze-jni-bridge = { workspace = true }
 blaze-serde = { workspace = true }
-bytesize = "2.0.1"
 datafusion = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 datafusion-ext-plans = { workspace = true }
-futures = "0.3"
-jni = "0.20.0"
-log = "0.4.27"
-once_cell = "1.21.3"
-panic-message = "0.3.0"
-paste = "1.0.15"
-prost = "0.14.1"
-tokio = "1.45.1"
-poem = { version = "3.1.11", features = ["rustls", "test"] }
-serde = { version = "1", features = ["derive"] }
+
+bytesize = { workspace = true }
+futures = { workspace = true }
+jni = { workspace = true }
+log = { workspace = true }
+once_cell = { workspace = true }
+panic-message = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
 
 [dependencies.tikv-jemalloc-ctl]
 version = "0.6.0"
@@ -57,5 +52,15 @@ optional = true
 
 [dependencies.pprof]
 version = "0.15.0"
+optional = true
 features = ["flamegraph", "protobuf-codec", "protobuf"]
+
+[dependencies.poem]
+version = "3.1.11"
+optional = true
+features = ["rustls", "test"]
+
+
+[dependencies.serde]
+version = "1.0.219"
 optional = true
