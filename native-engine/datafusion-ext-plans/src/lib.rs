@@ -21,6 +21,7 @@
 #![feature(ptr_as_ref_unchecked)]
 
 // execution plan implementations
+pub mod agg;
 pub mod agg_exec;
 pub mod broadcast_join_build_hash_map_exec;
 pub mod broadcast_join_exec;
@@ -32,6 +33,7 @@ pub mod filter_exec;
 pub mod generate_exec;
 pub mod ipc_reader_exec;
 pub mod ipc_writer_exec;
+pub mod joins;
 pub mod limit_exec;
 pub mod orc_exec;
 pub mod parquet_exec;
@@ -49,10 +51,8 @@ pub mod window_exec;
 pub mod memmgr;
 
 // helper modules
-pub mod agg;
 pub mod common;
 pub mod generate;
-pub mod joins;
 mod scan;
 pub mod shuffle;
 pub mod window;

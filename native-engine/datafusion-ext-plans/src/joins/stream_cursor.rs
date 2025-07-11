@@ -12,40 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use arrow::{
-    array::{RecordBatch, RecordBatchOptions},
+    array::{ArrayRef, RecordBatch},
     buffer::NullBuffer,
     datatypes::{Schema, SchemaRef},
-    row::{Row, RowConverter, Rows, SortField},
+    row::{Row, RowConverter, Rows},
 };
 use datafusion::{
     common::{JoinSide, Result},
-    execution::SendableRecordBatchStream,
     physical_expr::PhysicalExprRef,
     physical_plan::metrics::Time,
 };
 use datafusion_ext_commons::arrow::selection::take_batch;
-use futures::{Future, StreamExt};
-use parking_lot::Mutex;
+use futures::StreamExt;
 
 use crate::{
-    common::timer_helper::TimerHelper,
+    common::{key_rows_output::SendableRecordBatchWithKeyRowsStream, timer_helper::TimerHelper},
     joins::{Idx, JoinParams},
 };
 
+/// Optimized StreamCursor that uses pre-computed key rows to avoid redundant
+/// key conversion
 pub struct StreamCursor {
-    stream: SendableRecordBatchStream,
-    key_converter: Arc<Mutex<RowConverter>>,
+    stream: SendableRecordBatchWithKeyRowsStream,
     key_exprs: Vec<PhysicalExprRef>,
     poll_time: Time,
 
     // IMPORTANT:
     // batches/rows/null_buffers always contains a `null batch` in the front
-    projection: Vec<usize>,
-    pub projected_batch_schema: SchemaRef,
-    pub projected_batches: Vec<RecordBatch>,
+    pub batch_schema: SchemaRef,
+    pub batches: Vec<RecordBatch>,
     pub cur_idx: Idx,
     keys: Vec<Arc<Rows>>,
     key_has_nulls: Vec<Option<NullBuffer>>,
@@ -54,26 +52,11 @@ pub struct StreamCursor {
 
 impl StreamCursor {
     pub fn try_new(
-        stream: SendableRecordBatchStream,
+        stream: SendableRecordBatchWithKeyRowsStream,
         poll_time: Time,
         join_params: &JoinParams,
         join_side: JoinSide,
-        projection: &[usize],
     ) -> Result<Self> {
-        let key_converter = Arc::new(Mutex::new(RowConverter::new(
-            join_params
-                .key_data_types
-                .iter()
-                .cloned()
-                .zip(&join_params.sort_options)
-                .map(|(dt, options)| SortField::new_with_options(dt, *options))
-                .collect(),
-        )?));
-        let key_exprs = match join_side {
-            JoinSide::Left => join_params.left_keys.clone(),
-            JoinSide::Right => join_params.right_keys.clone(),
-        };
-
         let empty_batch = RecordBatch::new_empty(Arc::new(Schema::new(
             stream
                 .schema()
@@ -82,51 +65,53 @@ impl StreamCursor {
                 .map(|f| f.as_ref().clone().with_nullable(true))
                 .collect::<Vec<_>>(),
         )));
-        let empty_keys = Arc::new(
-            key_converter.lock().convert_columns(
-                &key_exprs
-                    .iter()
-                    .map(|key| Ok(key.evaluate(&empty_batch)?.into_array(0)?))
-                    .collect::<Result<Vec<_>>>()?,
-            )?,
-        );
+
+        let key_exprs = match join_side {
+            JoinSide::Left => join_params.left_keys.clone(),
+            JoinSide::Right => join_params.right_keys.clone(),
+        };
+        let empty_keys = Arc::new(RowConverter::new(vec![])?.convert_columns(&[] as &[ArrayRef])?);
         let null_batch = take_batch(empty_batch, vec![Option::<u32>::None])?;
-        let projected_null_batch = null_batch.project(projection)?;
         let null_nb = NullBuffer::new_null(1);
 
         Ok(Self {
             stream,
             key_exprs,
-            key_converter,
             poll_time,
-            projection: projection.to_vec(),
-            projected_batch_schema: projected_null_batch.schema(),
-            projected_batches: vec![projected_null_batch],
+            batch_schema: null_batch.schema(),
+            batches: vec![null_batch],
             cur_idx: (0, 0),
             keys: vec![empty_keys],
             key_has_nulls: vec![Some(null_nb)],
             finished: false,
         })
     }
+}
 
-    pub fn next(&mut self) -> Option<impl Future<Output = Result<()>> + '_> {
+impl StreamCursor {
+    pub fn next(&mut self) -> Option<Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>> {
         self.cur_idx.1 += 1;
-        if self.cur_idx.1 >= self.projected_batches[self.cur_idx.0].num_rows() {
+        if self.cur_idx.1 >= self.batches[self.cur_idx.0].num_rows() {
             self.cur_idx.0 += 1;
             self.cur_idx.1 = 0;
         }
 
-        let should_load_next_batch = self.cur_idx.0 >= self.projected_batches.len();
+        let should_load_next_batch = self.cur_idx.0 >= self.batches.len();
         if should_load_next_batch {
-            Some(async move {
-                while let Some(batch) = self
+            Some(Box::pin(async move {
+                while let Some(batch_with_keys) = self
                     .poll_time
                     .with_timer_async(async { self.stream.next().await.transpose() })
                     .await?
                 {
-                    if batch.num_rows() == 0 {
+                    if batch_with_keys.batch.num_rows() == 0 {
                         continue;
                     }
+
+                    let keys = batch_with_keys.key_rows.clone();
+                    let batch = batch_with_keys.batch;
+
+                    // Use pre-computed key rows - extract null information from key rows
                     let key_columns = self
                         .key_exprs
                         .iter()
@@ -137,24 +122,15 @@ impl StreamCursor {
                         .map(|c| c.logical_nulls())
                         .reduce(|lhs, rhs| NullBuffer::union(lhs.as_ref(), rhs.as_ref()))
                         .unwrap_or(None);
-                    let keys = Arc::new(self.key_converter.lock().convert_columns(&key_columns)?);
 
-                    let projected_batch = RecordBatch::try_new_with_options(
-                        self.projected_batches[0].schema(),
-                        self.projection
-                            .iter()
-                            .map(|&i| batch.column(i).clone())
-                            .collect(),
-                        &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-                    )?;
-                    self.projected_batches.push(projected_batch);
+                    self.batches.push(batch);
                     self.key_has_nulls.push(key_has_nulls);
                     self.keys.push(keys);
                     return Ok(());
                 }
                 self.finished = true;
                 return Ok(());
-            })
+            }))
         } else {
             None
         }
@@ -180,19 +156,32 @@ impl StreamCursor {
     }
 
     #[inline]
+    pub fn cur_idx(&self) -> Idx {
+        self.cur_idx
+    }
+
+    #[inline]
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
+
+    #[inline]
     pub fn num_buffered_batches(&self) -> usize {
-        self.projected_batches.len() - 1
+        self.batches.len() - 1
     }
 
     pub fn clean_out_dated_batches(&mut self) {
         if self.cur_idx.0 > 1 {
-            self.projected_batches
-                .splice(1..self.cur_idx.0, std::iter::empty());
+            self.batches.splice(1..self.cur_idx.0, std::iter::empty());
             self.keys.splice(1..self.cur_idx.0, std::iter::empty());
             self.key_has_nulls
                 .splice(1..self.cur_idx.0, std::iter::empty());
             self.cur_idx.0 = 1;
         }
+    }
+
+    pub fn batches(&self) -> &[RecordBatch] {
+        &self.batches
     }
 }
 

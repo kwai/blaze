@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    any::Any,
     future::Future,
     panic::AssertUnwindSafe,
     pin::Pin,
@@ -21,20 +22,25 @@ use std::{
     time::Instant,
 };
 
-use arrow::{array::RecordBatch, datatypes::SchemaRef};
+use arrow::{
+    array::RecordBatch,
+    datatypes::SchemaRef,
+    row::{RowConverter, SortField},
+};
 use blaze_jni_bridge::{conf, conf::BooleanConf, is_task_running};
 use datafusion::{
-    common::Result,
+    common::{DataFusionError, Result},
     execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
+    physical_expr::PhysicalSortExpr,
     physical_plan::{
         ExecutionPlan,
         metrics::{BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, Time},
-        stream::{RecordBatchReceiverStream, RecordBatchStreamAdapter},
+        stream::RecordBatchStreamAdapter,
     },
 };
 use datafusion_ext_commons::{
     arrow::{array_size::BatchSize, coalesce::coalesce_batches_unchecked},
-    batch_size, df_execution_err, suggested_batch_mem_size,
+    batch_size, df_execution_err, downcast_any, suggested_batch_mem_size,
 };
 use futures::{Stream, StreamExt};
 use futures_util::FutureExt;
@@ -43,8 +49,16 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-    common::{column_pruning::ExecuteWithColumnPruning, timer_helper::TimerHelper},
+    common::{
+        column_pruning::{ExecuteWithColumnPruning, extend_projection_by_expr},
+        key_rows_output::{
+            RecordBatchWithKeyRows, RecordBatchWithKeyRowsStream,
+            SendableRecordBatchWithKeyRowsStream,
+        },
+        timer_helper::TimerHelper,
+    },
     memmgr::metrics::SpillMetrics,
+    sort_exec::SortExec,
 };
 
 pub struct ExecutionContext {
@@ -232,6 +246,123 @@ impl ExecutionContext {
         input.execute(self.partition_id, self.task_ctx.clone())
     }
 
+    pub fn execute_with_key_rows_output(
+        self: &Arc<Self>,
+        input: &Arc<dyn ExecutionPlan>,
+        keys: &[PhysicalSortExpr],
+    ) -> Result<SendableRecordBatchWithKeyRowsStream> {
+        if let Ok(sort) = downcast_any!(input, SortExec)
+            && keys == sort.sort_exprs()
+        {
+            return sort.execute_with_key_rows(self.partition_id, self.task_ctx.clone());
+        }
+
+        let output_schema = self.output_schema();
+        let key_converter = RowConverter::new(
+            keys.iter()
+                .map(|k| {
+                    Ok(SortField::new_with_options(
+                        k.expr.data_type(&output_schema)?,
+                        k.options,
+                    ))
+                })
+                .collect::<Result<_>>()?,
+        )?;
+        let key_exprs = keys.iter().map(|k| k.expr.clone()).collect::<Vec<_>>();
+
+        let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
+        let mut input = self.execute(input)?;
+        Ok(self.output_with_sender_with_key_rows(
+            "ExecuteWithKeyRowsOutput",
+            keys,
+            move |sender| async move {
+                sender.exclude_time(&elapsed_compute);
+                while let Some(batch) = input.next().await.transpose()? {
+                    let _timer = elapsed_compute.timer();
+                    let keys = key_exprs
+                        .iter()
+                        .map(|k| {
+                            k.evaluate(&batch)
+                                .and_then(|r| r.into_array(batch.num_rows()))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let key_rows = key_converter.convert_columns(&keys)?;
+                    sender
+                        .send(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
+                        .await;
+                }
+                Ok(())
+            },
+        ))
+    }
+
+    pub fn execute_projected_with_key_rows_output(
+        self: &Arc<Self>,
+        input: &Arc<dyn ExecutionPlan>,
+        keys: &[PhysicalSortExpr],
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchWithKeyRowsStream> {
+        if let Ok(sort) = downcast_any!(input, SortExec)
+            && keys == sort.sort_exprs()
+        {
+            return sort.execute_projected_with_key_rows(
+                self.partition_id,
+                self.task_ctx.clone(),
+                projection,
+            );
+        }
+
+        let output_schema = self.output_schema();
+        let key_converter = RowConverter::new(
+            keys.iter()
+                .map(|k| {
+                    Ok(SortField::new_with_options(
+                        k.expr.data_type(&output_schema)?,
+                        k.options,
+                    ))
+                })
+                .collect::<Result<_>>()?,
+        )?;
+
+        let projection = projection.to_vec();
+        let mut projection_with_keys = projection.clone();
+        let key_exprs = keys
+            .iter()
+            .map(|k| extend_projection_by_expr(&mut projection_with_keys, &k.expr))
+            .collect::<Vec<_>>();
+
+        let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
+        let mut input = self.execute_projected(input, &projection_with_keys)?;
+
+        Ok(self
+            .with_new_output_schema(Arc::new(output_schema.project(&projection)?))
+            .output_with_sender_with_key_rows(
+                "ExecuteWithKeyRowsOutput",
+                keys,
+                move |sender| async move {
+                    sender.exclude_time(&elapsed_compute);
+                    while let Some(mut batch) = input.next().await.transpose()? {
+                        let _timer = elapsed_compute.timer();
+                        let keys = key_exprs
+                            .iter()
+                            .map(|k| {
+                                k.evaluate(&batch)
+                                    .and_then(|r| r.into_array(batch.num_rows()))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        let key_rows = key_converter.convert_columns(&keys)?;
+                        if projection.len() < projection_with_keys.len() {
+                            batch = batch.project(&(0..projection.len()).collect::<Vec<_>>())?;
+                        }
+                        sender
+                            .send(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
+                            .await;
+                    }
+                    Ok(())
+                },
+            ))
+    }
+
     pub fn execute_projected(
         self: &Arc<Self>,
         input: &Arc<dyn ExecutionPlan>,
@@ -314,12 +445,67 @@ impl ExecutionContext {
         desc: &'static str,
         output: impl FnOnce(Arc<WrappedRecordBatchSender>) -> Fut + Send + 'static,
     ) -> SendableRecordBatchStream {
-        let mut stream_builder = RecordBatchReceiverStream::builder(self.output_schema(), 1);
-        let err_sender = stream_builder.tx().clone();
-        let wrapped_sender =
-            WrappedRecordBatchSender::new(self.clone(), stream_builder.tx().clone());
+        Box::pin(RecordBatchStreamAdapter::new(
+            self.output_schema.clone(),
+            self.output_with_sender_impl::<RecordBatch, _>(desc, output),
+        ))
+    }
 
-        stream_builder.spawn(async move {
+    pub fn output_with_sender_with_key_rows<Fut: Future<Output = Result<()>> + Send>(
+        self: &Arc<Self>,
+        desc: &'static str,
+        keys: &[PhysicalSortExpr],
+        output: impl FnOnce(Arc<WrappedRecordBatchWithKeyRowsSender>) -> Fut + Send + 'static,
+    ) -> SendableRecordBatchWithKeyRowsStream {
+        struct RecordBatchWithKeyRowsStreamAdapter {
+            stream: Pin<Box<dyn Stream<Item = Result<RecordBatchWithKeyRows>> + Send>>,
+            schema: SchemaRef,
+            keys: Vec<PhysicalSortExpr>,
+        }
+
+        impl Stream for RecordBatchWithKeyRowsStreamAdapter {
+            type Item = Result<RecordBatchWithKeyRows>;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                self.stream.poll_next_unpin(cx)
+            }
+        }
+
+        impl RecordBatchWithKeyRowsStream for RecordBatchWithKeyRowsStreamAdapter {
+            fn schema(&self) -> SchemaRef {
+                self.schema.clone()
+            }
+
+            fn keys(&self) -> &[PhysicalSortExpr] {
+                &self.keys
+            }
+        }
+
+        Box::pin(RecordBatchWithKeyRowsStreamAdapter {
+            stream: Box::pin({
+                self.output_with_sender_impl::<RecordBatchWithKeyRows, _>(desc, output)
+            }),
+            schema: self.output_schema.clone(),
+            keys: keys.to_vec(),
+        })
+    }
+
+    fn output_with_sender_impl<
+        T: RecordBatchWithPayload,
+        Fut: Future<Output = Result<()>> + Send,
+    >(
+        self: &Arc<Self>,
+        desc: &'static str,
+        output: impl FnOnce(Arc<WrappedSender<T>>) -> Fut + Send + 'static,
+    ) -> impl Stream<Item = Result<T>> + Send + 'static {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let err_sender = tx.clone();
+        let wrapped_sender = WrappedSender::<T>::new(self.clone(), tx.clone());
+
+        tokio::spawn(async move {
             let result = AssertUnwindSafe(async move {
                 if let Err(err) = output(wrapped_sender).await {
                     panic!("output_with_sender[{desc}]: output() returns error: {err}");
@@ -348,9 +534,14 @@ impl ExecutionContext {
                     panic!("output_with_sender[{desc}] error: {}", err.to_string());
                 }
             }
-            Ok(())
+            Ok::<_, DataFusionError>(())
         });
-        stream_builder.build()
+        Box::pin(
+            futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|item| (item, rx))
+            })
+            .fuse(),
+        )
     }
 }
 
@@ -389,26 +580,60 @@ impl InputBatchStatistics {
     }
 }
 
-fn working_senders() -> &'static Mutex<Vec<Weak<WrappedRecordBatchSender>>> {
-    static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<WrappedRecordBatchSender>>>> = OnceCell::new();
+fn working_senders() -> &'static Mutex<Vec<Weak<dyn WrappedSenderTrait>>> {
+    static WORKING_SENDERS: OnceCell<Mutex<Vec<Weak<dyn WrappedSenderTrait>>>> = OnceCell::new();
     WORKING_SENDERS.get_or_init(|| Mutex::default())
 }
 
-pub struct WrappedRecordBatchSender {
+pub trait RecordBatchWithPayload: Send + 'static {
+    fn is_empty(&self) -> bool;
+}
+
+impl RecordBatchWithPayload for RecordBatch {
+    fn is_empty(&self) -> bool {
+        self.num_rows() == 0
+    }
+}
+
+impl RecordBatchWithPayload for RecordBatchWithKeyRows {
+    fn is_empty(&self) -> bool {
+        self.batch.num_rows() == 0
+    }
+}
+
+pub type WrappedRecordBatchSender = WrappedSender<RecordBatch>;
+pub type WrappedRecordBatchWithKeyRowsSender = WrappedSender<RecordBatchWithKeyRows>;
+
+pub trait WrappedSenderTrait: Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn exec_ctx(&self) -> &Arc<ExecutionContext>;
+}
+
+impl<T: RecordBatchWithPayload> WrappedSenderTrait for WrappedSender<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn exec_ctx(&self) -> &Arc<ExecutionContext> {
+        &self.exec_ctx
+    }
+}
+
+pub struct WrappedSender<T: RecordBatchWithPayload> {
     exec_ctx: Arc<ExecutionContext>,
-    sender: Sender<Result<RecordBatch>>,
+    sender: Sender<Result<T>>,
     exclude_time: OnceCell<Time>,
 }
 
-impl WrappedRecordBatchSender {
-    pub fn new(exec_ctx: Arc<ExecutionContext>, sender: Sender<Result<RecordBatch>>) -> Arc<Self> {
+impl<T: RecordBatchWithPayload> WrappedSender<T> {
+    pub fn new(exec_ctx: Arc<ExecutionContext>, sender: Sender<Result<T>>) -> Arc<Self> {
         let wrapped = Arc::new(Self {
             exec_ctx,
             sender,
             exclude_time: OnceCell::new(),
         });
         let mut working_senders = working_senders().lock();
-        working_senders.push(Arc::downgrade(&wrapped));
+        working_senders.push(Arc::downgrade(&wrapped) as Weak<dyn WrappedSenderTrait>);
         wrapped
     }
 
@@ -420,8 +645,8 @@ impl WrappedRecordBatchSender {
         self.exclude_time.get_or_init(|| exclude_time.clone());
     }
 
-    pub async fn send(&self, batch: RecordBatch) {
-        if batch.num_rows() == 0 {
+    pub async fn send(&self, batch: T) {
+        if batch.is_empty() {
             return;
         }
         let exclude_time = self.exclude_time.get().cloned();
@@ -445,12 +670,22 @@ pub fn cancel_all_tasks(task_ctx: &Arc<TaskContext>) {
     *working_senders = std::mem::take(&mut *working_senders)
         .into_iter()
         .filter(|wrapped| match wrapped.upgrade() {
-            Some(wrapped) if Arc::ptr_eq(&wrapped.exec_ctx.task_ctx, task_ctx) => {
-                wrapped
-                    .sender
-                    .try_send(df_execution_err!("task completed/cancelled"))
-                    .unwrap_or_default();
-                false
+            Some(wrapped) if Arc::ptr_eq(&wrapped.exec_ctx().task_ctx, task_ctx) => {
+                if let Ok(wrapped) = downcast_any!(wrapped, WrappedRecordBatchSender) {
+                    wrapped
+                        .sender
+                        .try_send(df_execution_err!("task completed/cancelled"))
+                        .unwrap_or_default();
+                    return false;
+                }
+                if let Ok(wrapped) = downcast_any!(wrapped, WrappedRecordBatchWithKeyRowsSender) {
+                    wrapped
+                        .sender
+                        .try_send(df_execution_err!("task completed/cancelled"))
+                        .unwrap_or_default();
+                    return false;
+                }
+                true
             }
             Some(_) => true, // do not modify senders from other tasks
             None => false,   // already released

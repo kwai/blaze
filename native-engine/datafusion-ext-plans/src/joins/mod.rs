@@ -50,8 +50,6 @@ pub struct JoinParams {
 #[derive(Debug, Clone)]
 pub struct JoinProjection {
     pub schema: SchemaRef,
-    pub left_schema: SchemaRef,
-    pub right_schema: SchemaRef,
     pub left: Vec<usize>,
     pub right: Vec<usize>,
 }
@@ -94,8 +92,6 @@ impl JoinProjection {
         }
         Ok(Self {
             schema: projected_schema,
-            left_schema: Arc::new(left_schema.project(&left)?),
-            right_schema: Arc::new(right_schema.project(&right)?),
             left,
             right,
         })
@@ -112,3 +108,4 @@ impl JoinProjection {
 
 pub type Idx = (usize, usize);
 pub type StreamCursors = (StreamCursor, StreamCursor);
+pub type StreamCursorsWithKeyRows = (StreamCursor, StreamCursor);
