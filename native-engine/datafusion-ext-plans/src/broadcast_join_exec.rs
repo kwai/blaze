@@ -409,12 +409,11 @@ async fn execute_join_with_smj_fallback(
     };
 
     // create sorted streams, build side is already sorted
-    let probed = exec_ctx.stat_input(exec_ctx.execute(&probed_plan)?);
     let (left_exec, right_exec) = match broadcast_side {
         JoinSide::Left => (
             built_sorted,
             create_default_ascending_sort_exec(
-                create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
+                probed_plan,
                 &join_params.right_keys,
                 Some(exec_ctx.execution_plan_metrics().clone()),
                 false, // do not record output metric
@@ -422,7 +421,7 @@ async fn execute_join_with_smj_fallback(
         ),
         JoinSide::Right => (
             create_default_ascending_sort_exec(
-                create_record_batch_stream_exec(probed, exec_ctx.partition_id())?,
+                probed_plan,
                 &join_params.left_keys,
                 Some(exec_ctx.execution_plan_metrics().clone()),
                 false, // do not record output metric
@@ -432,13 +431,18 @@ async fn execute_join_with_smj_fallback(
     };
 
     // run sort merge join
-    let mut smj_join_params = join_params.clone();
-    smj_join_params.sort_options = vec![SortOptions::default(); join_params.left_keys.len()];
-
-    let smj_exec = Arc::new(SortMergeJoinExec::try_new_with_join_params(
+    let smj_exec = Arc::new(SortMergeJoinExec::try_new(
+        join_params.output_schema,
         left_exec.clone(),
         right_exec.clone(),
-        smj_join_params,
+        join_params
+            .left_keys
+            .to_vec()
+            .into_iter()
+            .zip(join_params.right_keys.to_vec())
+            .collect(),
+        join_params.join_type,
+        vec![SortOptions::default(); join_params.left_keys.len()],
     )?);
     let mut join_output = smj_exec.execute(exec_ctx.partition_id(), exec_ctx.task_ctx())?;
 

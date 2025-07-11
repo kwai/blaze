@@ -30,8 +30,10 @@ use datafusion::{
     physical_expr::{PhysicalExprRef, expressions::Column, utils::collect_columns},
     physical_plan::{ExecutionPlan, stream::RecordBatchStreamAdapter},
 };
+use datafusion_ext_commons::downcast_any;
 use futures::StreamExt;
 use itertools::Itertools;
+use parking_lot::Mutex;
 
 pub trait ExecuteWithColumnPruning {
     fn execute_projected(
@@ -78,24 +80,55 @@ pub fn prune_columns(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalExprRef>,
         .collect();
     let mapped_exprs: Vec<PhysicalExprRef> = exprs
         .iter()
-        .map(|expr| {
-            expr.clone()
-                .transform_down(&|node: PhysicalExprRef| {
-                    Ok(Transformed::yes(
-                        if let Some(column) = node.as_any().downcast_ref::<Column>() {
-                            let mapped_idx = required_columns_mapping[&column.index()];
-                            Arc::new(Column::new(column.name(), mapped_idx))
-                        } else {
-                            node
-                        },
-                    ))
-                })
-                .map(|r| r.data)
-        })
-        .collect::<Result<_>>()?;
+        .map(|expr| map_columns(expr, &required_columns_mapping))
+        .collect();
 
     Ok((
         mapped_exprs,
         required_columns.into_iter().map(|c| c.index()).collect(),
     ))
+}
+
+pub fn extend_projection_by_expr(
+    projection: &mut Vec<usize>,
+    expr: &PhysicalExprRef,
+) -> PhysicalExprRef {
+    let projection = Arc::new(Mutex::new(projection));
+    expr.clone()
+        .transform_down(&|node: PhysicalExprRef| {
+            Ok(Transformed::yes(
+                if let Ok(column) = downcast_any!(node, Column) {
+                    let mut projection = projection.lock();
+                    if let Some(existed_idx) =
+                        projection.iter().position(|&idx| idx == column.index())
+                    {
+                        Arc::new(Column::new(column.name(), existed_idx)) as PhysicalExprRef
+                    } else {
+                        let new_idx = projection.len();
+                        projection.push(column.index());
+                        Arc::new(Column::new(column.name(), new_idx)) as PhysicalExprRef
+                    }
+                } else {
+                    node
+                },
+            ))
+        })
+        .map(|r| r.data)
+        .unwrap()
+}
+
+pub fn map_columns(expr: &PhysicalExprRef, mapping: &HashMap<usize, usize>) -> PhysicalExprRef {
+    expr.clone()
+        .transform_down(&|node: PhysicalExprRef| {
+            Ok(Transformed::yes(
+                if let Ok(column) = downcast_any!(node, Column) {
+                    let mapped_idx = mapping[&column.index()];
+                    Arc::new(Column::new(column.name(), mapped_idx))
+                } else {
+                    node
+                },
+            ))
+        })
+        .map(|r| r.data)
+        .unwrap()
 }

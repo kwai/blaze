@@ -23,7 +23,7 @@ use itertools::Itertools;
 use crate::{
     common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
-    joins::{Idx, JoinParams, StreamCursors},
+    joins::{Idx, JoinParams, stream_cursor::StreamCursor},
     sort_merge_join_exec::Joiner,
 };
 
@@ -55,14 +55,18 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
         self.lindices.len() >= self.join_params.batch_size
     }
 
-    async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+    async fn flush(
+        mut self: Pin<&mut Self>,
+        cur1: &mut StreamCursor,
+        cur2: &mut StreamCursor,
+    ) -> Result<()> {
         let lindices = std::mem::take(&mut self.lindices);
         let rindices = std::mem::take(&mut self.rindices);
         let num_rows = lindices.len();
         assert_eq!(lindices.len(), rindices.len());
 
-        let lbatch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
-        let rbatch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
+        let lbatch_interleaver = create_batch_interleaver(cur1.batches(), false)?;
+        let rbatch_interleaver = create_batch_interleaver(cur2.batches(), false)?;
         let lcols = lbatch_interleaver(&lindices)?;
         let rcols = rbatch_interleaver(&rindices)?;
 
@@ -82,44 +86,48 @@ impl<const L_OUTER: bool, const R_OUTER: bool> FullJoiner<L_OUTER, R_OUTER> {
 
 #[async_trait]
 impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_OUTER> {
-    async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+    async fn join(
+        mut self: Pin<&mut Self>,
+        cur1: &mut StreamCursor,
+        cur2: &mut StreamCursor,
+    ) -> Result<()> {
         let mut equal_lindices = vec![];
         let mut equal_rindices = vec![];
 
-        while !curs.0.finished && !curs.1.finished {
+        while !cur1.finished() && !cur2.finished() {
             if self.should_flush()
-                || curs.0.num_buffered_batches() > 1
-                || curs.1.num_buffered_batches() > 1
+                || cur1.num_buffered_batches() > 1
+                || cur2.num_buffered_batches() > 1
             {
-                self.as_mut().flush(curs).await?;
-                curs.0.clean_out_dated_batches();
-                curs.1.clean_out_dated_batches();
+                self.as_mut().flush(cur1, cur2).await?;
+                cur1.clean_out_dated_batches();
+                cur2.clean_out_dated_batches();
             }
 
-            match compare_cursor!(curs) {
+            match compare_cursor!(cur1, cur2) {
                 Ordering::Less => {
                     if L_OUTER {
-                        self.lindices.push(curs.0.cur_idx);
+                        self.lindices.push(cur1.cur_idx());
                         self.rindices.push(Idx::default());
                     }
-                    cur_forward!(curs.0);
+                    cur_forward!(cur1);
                 }
                 Ordering::Greater => {
                     if R_OUTER {
                         self.lindices.push(Idx::default());
-                        self.rindices.push(curs.1.cur_idx);
+                        self.rindices.push(cur2.cur_idx());
                     }
-                    cur_forward!(curs.1);
+                    cur_forward!(cur2);
                 }
                 Ordering::Equal => {
                     equal_lindices.clear();
                     equal_rindices.clear();
-                    equal_lindices.push(curs.0.cur_idx);
-                    equal_rindices.push(curs.1.cur_idx);
-                    let l_key_idx = curs.0.cur_idx;
-                    let r_key_idx = curs.1.cur_idx;
-                    cur_forward!(curs.0);
-                    cur_forward!(curs.1);
+                    equal_lindices.push(cur1.cur_idx());
+                    equal_rindices.push(cur2.cur_idx());
+                    let l_key_idx = cur1.cur_idx();
+                    let r_key_idx = cur2.cur_idx();
+                    cur_forward!(cur1);
+                    cur_forward!(cur2);
 
                     // iterate both stream, find smaller one, use it for probing
                     let mut has_multi_equal = false;
@@ -127,19 +135,19 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     let mut r_equal = true;
                     while l_equal && r_equal {
                         if l_equal {
-                            l_equal = !curs.0.finished && curs.0.cur_key() == curs.0.key(l_key_idx);
+                            l_equal = !cur1.finished() && cur1.cur_key() == cur1.key(l_key_idx);
                             if l_equal {
                                 has_multi_equal = true;
-                                equal_lindices.push(curs.0.cur_idx);
-                                cur_forward!(curs.0);
+                                equal_lindices.push(cur1.cur_idx());
+                                cur_forward!(cur1);
                             }
                         }
                         if r_equal {
-                            r_equal = !curs.1.finished && curs.1.cur_key() == curs.1.key(r_key_idx);
+                            r_equal = !cur2.finished() && cur2.cur_key() == cur2.key(r_key_idx);
                             if r_equal {
                                 has_multi_equal = true;
-                                equal_rindices.push(curs.1.cur_idx);
-                                cur_forward!(curs.1);
+                                equal_rindices.push(cur2.cur_idx());
+                                cur_forward!(cur2);
                             }
                         }
                     }
@@ -158,30 +166,30 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
 
                     if r_equal {
                         // stream right side
-                        while !curs.1.finished && curs.1.cur_key() == curs.0.key(l_key_idx) {
+                        while !cur2.finished() && cur2.cur_key() == cur1.key(l_key_idx) {
                             for &lidx in &equal_lindices {
                                 self.lindices.push(lidx);
-                                self.rindices.push(curs.1.cur_idx);
+                                self.rindices.push(cur2.cur_idx());
                             }
-                            cur_forward!(curs.1);
-                            if self.should_flush() || curs.1.num_buffered_batches() > 1 {
-                                self.as_mut().flush(curs).await?;
-                                curs.1.clean_out_dated_batches();
+                            cur_forward!(cur2);
+                            if self.should_flush() || cur2.num_buffered_batches() > 1 {
+                                self.as_mut().flush(cur1, cur2).await?;
+                                cur2.clean_out_dated_batches();
                             }
                         }
                     }
 
                     if l_equal {
                         // stream left side
-                        while !curs.0.finished && curs.0.cur_key() == curs.1.key(r_key_idx) {
+                        while !cur1.finished() && cur1.cur_key() == cur2.key(r_key_idx) {
                             for &ridx in &equal_rindices {
-                                self.lindices.push(curs.0.cur_idx);
+                                self.lindices.push(cur1.cur_idx());
                                 self.rindices.push(ridx);
                             }
-                            cur_forward!(curs.0);
-                            if self.should_flush() || curs.0.num_buffered_batches() > 1 {
-                                self.as_mut().flush(curs).await?;
-                                curs.0.clean_out_dated_batches();
+                            cur_forward!(cur1);
+                            if self.should_flush() || cur1.num_buffered_batches() > 1 {
+                                self.as_mut().flush(cur1, cur2).await?;
+                                cur1.clean_out_dated_batches();
                             }
                         }
                     }
@@ -190,34 +198,34 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
         }
 
         if !self.lindices.is_empty() {
-            self.as_mut().flush(curs).await?;
-            curs.0.clean_out_dated_batches();
-            curs.1.clean_out_dated_batches();
+            self.as_mut().flush(cur1, cur2).await?;
+            cur1.clean_out_dated_batches();
+            cur2.clean_out_dated_batches();
         }
 
         // at least one side is finished, consume the other side if it is an outer side
-        while L_OUTER && !curs.0.finished {
-            let lidx = curs.0.cur_idx;
+        while L_OUTER && !cur1.finished() {
+            let lidx = cur1.cur_idx();
             self.lindices.push(lidx);
             self.rindices.push(Idx::default());
-            cur_forward!(curs.0);
+            cur_forward!(cur1);
             if self.should_flush() {
-                self.as_mut().flush(curs).await?;
-                curs.0.clean_out_dated_batches();
+                self.as_mut().flush(cur1, cur2).await?;
+                cur1.clean_out_dated_batches();
             }
         }
-        while R_OUTER && !curs.1.finished {
-            let ridx = curs.1.cur_idx;
+        while R_OUTER && !cur2.finished() {
+            let ridx = cur2.cur_idx();
             self.lindices.push(Idx::default());
             self.rindices.push(ridx);
-            cur_forward!(curs.1);
+            cur_forward!(cur2);
             if self.should_flush() {
-                self.as_mut().flush(curs).await?;
-                curs.1.clean_out_dated_batches();
+                self.as_mut().flush(cur1, cur2).await?;
+                cur2.clean_out_dated_batches();
             }
         }
         if !self.lindices.is_empty() {
-            self.flush(curs).await?;
+            self.flush(cur1, cur2).await?;
         }
         Ok(())
     }
