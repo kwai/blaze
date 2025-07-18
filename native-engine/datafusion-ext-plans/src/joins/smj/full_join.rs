@@ -16,7 +16,7 @@ use std::{cmp::Ordering, pin::Pin, sync::Arc};
 
 use arrow::array::{RecordBatch, RecordBatchOptions};
 use async_trait::async_trait;
-use datafusion::common::Result;
+use datafusion::common::{DataFusionError, Result};
 use datafusion_ext_commons::arrow::selection::create_batch_interleaver;
 use itertools::Itertools;
 
