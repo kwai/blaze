@@ -112,12 +112,23 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     cur_forward!(curs.1);
                 }
                 Ordering::Equal => {
+                    log::info!(
+                        "SMJ Equal Block Entered: l_cur={:?}, r_cur={:?}",
+                        curs.0.cur_idx,
+                        curs.1.cur_idx
+                    );
                     equal_lindices.clear();
                     equal_rindices.clear();
                     equal_lindices.push(curs.0.cur_idx);
                     equal_rindices.push(curs.1.cur_idx);
                     let l_key_idx = curs.0.cur_idx;
                     let r_key_idx = curs.1.cur_idx;
+                    log::info!(
+                        "SMJ Anchor Keys Set: l_anchor_idx={:?}, r_anchor_idx={:?}",
+                        l_key_idx,
+                        r_key_idx
+                    );
+
                     cur_forward!(curs.0);
                     cur_forward!(curs.1);
 
@@ -125,9 +136,27 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                     let mut has_multi_equal = false;
                     let mut l_equal = true;
                     let mut r_equal = true;
+                    let mut inner_loop_count = 0;
+
                     while l_equal && r_equal {
+                        inner_loop_count += 1;
+                        if inner_loop_count > 1_000_000 {
+                            let err_msg = format!(
+                                "SMJ deadlock detected in inner loop. l_cur={:?}, r_cur={:?}, l_anchor_idx={:?}, r_anchor_idx={:?}",
+                                curs.0.cur_idx, curs.1.cur_idx, l_key_idx, r_key_idx
+                            );
+                            log::error!("{}", &err_msg);
+                            return Err(DataFusionError::Execution(err_msg));
+                        }
+
                         if l_equal {
                             l_equal = !curs.0.finished && curs.0.cur_key() == curs.0.key(l_key_idx);
+                            if inner_loop_count % 1000 == 0 { // Log periodically
+                                log::info!(
+                                    "  [L] loop={}, l_equal={}, l_cur={:?}, l_cur_key={:?}, l_anchor_key={:?}",
+                                    inner_loop_count, l_equal, curs.0.cur_idx, curs.0.cur_key(), curs.0.key(l_key_idx)
+                                );
+                            }
                             if l_equal {
                                 has_multi_equal = true;
                                 equal_lindices.push(curs.0.cur_idx);
@@ -136,6 +165,12 @@ impl<const L_OUTER: bool, const R_OUTER: bool> Joiner for FullJoiner<L_OUTER, R_
                         }
                         if r_equal {
                             r_equal = !curs.1.finished && curs.1.cur_key() == curs.1.key(r_key_idx);
+                            if inner_loop_count % 1000 == 0 { // Log periodically
+                                log::info!(
+                                    "  [R] loop={}, r_equal={}, r_cur={:?}, r_cur_key={:?}, r_anchor_key={:?}",
+                                    inner_loop_count, r_equal, curs.1.cur_idx, curs.1.cur_key(), curs.1.key(r_key_idx)
+                                );
+                            }
                             if r_equal {
                                 has_multi_equal = true;
                                 equal_rindices.push(curs.1.cur_idx);
