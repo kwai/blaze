@@ -34,11 +34,12 @@ public class ValidateSparkPlanInjector {
     public static void inject() {
         try {
             ByteBuddyAgent.install();
-            TypeDescription typeDescription = TypePool.Default.ofSystemLoader()
+            ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+            TypeDescription typeDescription = TypePool.Default.of(contextClassLoader)
                     .describe("org.apache.spark.sql.execution.adaptive.ValidateSparkPlan$")
                     .resolve();
             new ByteBuddy()
-                    .redefine(typeDescription, ClassFileLocator.ForClassLoader.ofSystemLoader())
+                    .redefine(typeDescription, ClassFileLocator.ForClassLoader.of(contextClassLoader))
                     .method(named("apply"))
                     .intercept(MethodDelegation.to(ValidateSparkPlanApplyInterceptor.class))
                     .make()
