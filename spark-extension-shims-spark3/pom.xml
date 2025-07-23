@@ -60,6 +60,12 @@
       <artifactId>rss-client-spark3-shaded</artifactId>
       <version>0.9.2</version>
       <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>log4j-slf4j-impl</artifactId>
+          <groupId>org.apache.logging.log4j</groupId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.arrow</groupId>
