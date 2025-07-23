@@ -175,6 +175,7 @@ impl SortMergeJoinExec {
         let output = exec_ctx_cloned
             .clone()
             .output_with_sender("SortMergeJoin", move |sender| {
+                sender.exclude_time(exec_ctx_cloned.baseline_metrics().elapsed_compute());
                 execute_join(left, right, join_params, exec_ctx_cloned, sender)
             });
         Ok(exec_ctx.coalesce_with_default_batch_size(output))
