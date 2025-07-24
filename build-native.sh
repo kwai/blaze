@@ -51,6 +51,9 @@ echo -e "new build-checksum: \n$new_checksum\n========"
 
 if [ "$new_checksum" != "$old_checksum" ]; then
     export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
+    echo "Running rustup update nightly..."
+    rustup update nightly
+
     echo "Running cargo fix..."
     cargo fix --all --allow-dirty --allow-staged --allow-no-vcs
 
