@@ -73,7 +73,7 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
     }
   }
 
-  def rssStop(success: Boolean): Unit = {}
+  def rssStop(success: Boolean): Option[MapStatus]
 
   @sparkver("3.2 / 3.3 / 3.4 / 3.5")
   override def getPartitionLengths(): Array[Long] = rpw.getPartitionLengthMap
@@ -83,12 +83,18 @@ abstract class BlazeRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsRepor
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
-    rssStop(success)
-    if (success) {
-      val blockManagerId = SparkEnv.get.blockManager.shuffleServerId
-      Some(Shims.get.getMapStatus(blockManagerId, rpw.getPartitionLengthMap, mapId))
-    } else {
-      None
+    if (!success) {
+      return None
+    }
+
+    val mapStatus: Option[MapStatus] = rssStop(success)
+    mapStatus match {
+      case Some(status) =>
+        Some(status)
+      case None =>
+        // Fall back to get mapStatus manually
+        val blockManagerId = SparkEnv.get.blockManager.shuffleServerId
+        Some(Shims.get.getMapStatus(blockManagerId, rpw.getPartitionLengthMap, mapId))
     }
   }
 }

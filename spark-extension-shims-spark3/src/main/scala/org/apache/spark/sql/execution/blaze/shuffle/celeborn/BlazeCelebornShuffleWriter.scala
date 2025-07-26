@@ -17,6 +17,7 @@ package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
 import org.apache.celeborn.client.ShuffleClient
 import org.apache.spark.TaskContext
+import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.ShuffleWriter
@@ -63,7 +64,7 @@ class BlazeCelebornShuffleWriter[K, V](
     celebornPartitionWriter.getPartitionLengthMap
   }
 
-  override def rssStop(success: Boolean): Unit = {
+  override def rssStop(success: Boolean): Option[MapStatus] = {
     celebornShuffleWriter.write(Iterator.empty) // force flush
     celebornShuffleWriter.stop(success)
   }

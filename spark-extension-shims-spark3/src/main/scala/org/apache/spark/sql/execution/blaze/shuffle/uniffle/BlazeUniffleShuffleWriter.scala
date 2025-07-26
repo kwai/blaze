@@ -16,6 +16,7 @@
 package org.apache.spark.sql.execution.blaze.shuffle.uniffle
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
 import org.apache.spark.sql.execution.blaze.shuffle.{BlazeRssShuffleWriterBase, RssPartitionWriterBase}
@@ -41,10 +42,9 @@ class BlazeUniffleShuffleWriter[K, V, C](
     method.invoke(rssShuffleWriter)
   }
 
-  override def rssStop(success: Boolean): Unit = {
+  override def rssStop(success: Boolean): Option[MapStatus] = {
     waitAndCheckBlocksSend()
     logInfo(s"Reporting the shuffle result...")
-    super.stop(success)
     rssShuffleWriter.stop(success)
   }
 }
