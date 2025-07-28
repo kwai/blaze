@@ -313,7 +313,7 @@ case class DeclarativeAggRowsColumn(
     extends BufferRowsColumn[UnsafeRow] {
 
   if (rowsMemUsed < 0) {
-    rowsMemUsed = rows.map(_.getSizeInBytes).sum
+    rowsMemUsed = rows.foldLeft(0)(_ + _.getSizeInBytes)
   }
 
   override def length: Int = rows.length
@@ -325,7 +325,7 @@ case class DeclarativeAggRowsColumn(
       rowsMemUsed += newRow.getSizeInBytes
       newRow
     }))
-    rowsMemUsed -= rows.slice(len, rows.length).filter(_ != null).map(_.getSizeInBytes).sum
+    rowsMemUsed -= rows.slice(len, rows.length).filter(_ != null).foldLeft(0)(_ + _.getSizeInBytes)
     rows.trimEnd(rows.length - len)
   }
 
@@ -544,7 +544,7 @@ class SparkUDAFMemTracker
   // we should spill when returning false
   def updateUsed(): Boolean = {
     if (!shouldSpill) {
-      val currentUsed = columns.map(_.memUsed).sum
+      val currentUsed = columns.foldLeft(0)(_ + _.memUsed)
       val increased = currentUsed - this.getUsed
       if (increased > 0) {
         val acquired = this.acquireMemory(increased)
