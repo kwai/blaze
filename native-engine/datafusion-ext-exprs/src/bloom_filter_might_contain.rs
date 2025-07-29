@@ -119,7 +119,7 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
             })
         })?;
 
-        // always return false if bllom filter is null
+        // always return false if bloom filter is null
         if bloom_filter.is_none() {
             return Ok(ColumnarValue::Scalar(ScalarValue::from(false)));
         }
