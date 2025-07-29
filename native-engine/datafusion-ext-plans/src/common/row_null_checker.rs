@@ -73,6 +73,7 @@ impl RowNullChecker {
             DataType::Float64 => FieldConfig::new_primitive(sort_options, 9), // 1 byte null
             // flag + 8 bytes
             // value
+            DataType::Decimal128(..) => FieldConfig::new_primitive(sort_options, 17),
             DataType::Utf8 | DataType::LargeUtf8 => FieldConfig::new_variable(sort_options),
             DataType::Binary | DataType::LargeBinary => FieldConfig::new_variable(sort_options),
             DataType::FixedSizeBinary(size) => {
@@ -97,9 +98,9 @@ impl RowNullChecker {
                 };
                 FieldConfig::new_dictionary(sort_options, key_length)
             }
-            _ => {
-                // For unsupported types, treat as variable length
-                FieldConfig::new_variable(sort_options)
+            other => {
+                // For unsupported types, panic
+                panic!("unsupported data type in RowNullChecker: {:?}", other)
             }
         }
     }
@@ -422,11 +423,11 @@ impl FieldConfig {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
     use arrow::{
         array::{ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray},
-        row::RowConverter,
+        row::{RowConverter, SortField},
     };
-    use arrow::row::SortField;
     use arrow_schema::{DataType, Field, Schema};
 
     use super::*;
@@ -515,7 +516,13 @@ mod tests {
     #[test]
     fn test_descending_null_sentinel() {
         // Create SortField with Int32 data type and nulls_first = false
-        let checker = RowNullChecker::new(&[(DataType::Int32, SortOptions::default())]);
+        let checker = RowNullChecker::new(&[(
+            DataType::Int32,
+            SortOptions {
+                descending: false,
+                nulls_first: false,
+            },
+        )]);
 
         // Null value with nulls_first = false (0xFF is the null sentinel)
         let null_data = vec![0xFFu8, 0, 0, 0, 0];
