@@ -58,22 +58,28 @@ impl RowNullChecker {
                 encoded_length: 0,
             },
             DataType::Boolean => FieldConfig::new_boolean(sort_options),
-            DataType::Int8 => FieldConfig::new_primitive(sort_options, 2), // 1 byte null flag +
-            // 1 byte value
-            DataType::Int16 => FieldConfig::new_primitive(sort_options, 3), /* 1 byte null flag + 2 bytes value */
-            DataType::Int32 => FieldConfig::new_primitive(sort_options, 5), /* 1 byte null flag + 4 bytes value */
-            DataType::Int64 => FieldConfig::new_primitive(sort_options, 9), /* 1 byte null flag + 8 bytes value */
-            DataType::UInt8 => FieldConfig::new_primitive(sort_options, 2),
-            DataType::UInt16 => FieldConfig::new_primitive(sort_options, 3),
-            DataType::UInt32 => FieldConfig::new_primitive(sort_options, 5),
-            DataType::UInt64 => FieldConfig::new_primitive(sort_options, 9),
-            DataType::Float32 => FieldConfig::new_primitive(sort_options, 5), // 1 byte null
-            // flag + 4 bytes
-            // value
-            DataType::Float64 => FieldConfig::new_primitive(sort_options, 9), // 1 byte null
-            // flag + 8 bytes
-            // value
-            DataType::Decimal128(..) => FieldConfig::new_primitive(sort_options, 17),
+            dt if dt.is_primitive() => {
+                FieldConfig::new_primitive(sort_options, 1 + dt.primitive_width().unwrap())
+            }
+            // DataType::Int8 => FieldConfig::new_primitive(sort_options, 2), // 1 byte null flag +
+            // // 1 byte value
+            // DataType::Int16 => FieldConfig::new_primitive(sort_options, 3), /* 1 byte null flag +
+            // 2 bytes value */ DataType::Int32 =>
+            // FieldConfig::new_primitive(sort_options, 5), /* 1 byte null flag + 4 bytes value */
+            // DataType::Date32 => FieldConfig::new_primitive(sort_options, 5),
+            // DataType::Int64 => FieldConfig::new_primitive(sort_options, 9), /* 1 byte null flag +
+            // 8 bytes value */ DataType::Date64 =>
+            // FieldConfig::new_primitive(sort_options, 9), DataType::UInt8 =>
+            // FieldConfig::new_primitive(sort_options, 2), DataType::UInt16 =>
+            // FieldConfig::new_primitive(sort_options, 3), DataType::UInt32 =>
+            // FieldConfig::new_primitive(sort_options, 5), DataType::UInt64 =>
+            // FieldConfig::new_primitive(sort_options, 9), DataType::Float32 =>
+            // FieldConfig::new_primitive(sort_options, 5), // 1 byte null // flag + 4
+            // bytes // value
+            // DataType::Float64 => FieldConfig::new_primitive(sort_options, 9), // 1 byte null
+            // // flag + 8 bytes
+            // // value
+            // DataType::Decimal128(..) => FieldConfig::new_primitive(sort_options, 17),
             DataType::Utf8 | DataType::LargeUtf8 => FieldConfig::new_variable(sort_options),
             DataType::Binary | DataType::LargeBinary => FieldConfig::new_variable(sort_options),
             DataType::FixedSizeBinary(size) => {
