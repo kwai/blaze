@@ -447,18 +447,6 @@ mod tests {
         SortField::new_with_options(data_type, sort_options)
     }
 
-    // Helper function to create multiple SortFields for testing
-    fn create_test_sort_fields(data_types: Vec<DataType>) -> Vec<SortField> {
-        data_types
-            .into_iter()
-            .enumerate()
-            .map(|(i, dt)| {
-                let sort_options = SortOptions::default();
-                SortField::new_with_options(dt, sort_options)
-            })
-            .collect()
-    }
-
     #[test]
     fn test_primitive_null_detection() {
         // Create a SortField with Int32 data type
@@ -492,7 +480,6 @@ mod tests {
     #[test]
     fn test_multiple_fields() {
         // Create SortFields with Int32 and String data types
-        let sort_fields = create_test_sort_fields(vec![DataType::Int32, DataType::Utf8]);
         let checker = RowNullChecker::new(&[
             (DataType::Int32, SortOptions::default()),
             (DataType::Utf8, SortOptions::default()),
