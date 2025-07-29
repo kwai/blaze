@@ -421,10 +421,12 @@ impl FieldConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use arrow::{
         array::{ArrayRef, BooleanArray, Int32Array, RecordBatch, StringArray},
         row::RowConverter,
     };
+    use arrow::row::SortField;
     use arrow_schema::{DataType, Field, Schema};
 
     use super::*;
