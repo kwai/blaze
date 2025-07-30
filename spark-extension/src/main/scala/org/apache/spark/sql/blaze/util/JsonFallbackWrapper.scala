@@ -59,4 +59,3 @@ case class JsonFallbackWrapper(jsonPath: String) extends Logging {
     }
   }
 }
-
