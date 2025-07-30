@@ -52,6 +52,7 @@ use datafusion_ext_commons::{
         selection::{BatchInterleaver, create_batch_interleaver, take_batch},
     },
     compute_suggested_batch_size_for_kway_merge, compute_suggested_batch_size_for_output,
+    downcast_any,
     io::{read_len, read_one_batch, write_len, write_one_batch},
 };
 use futures::StreamExt;
@@ -61,8 +62,11 @@ use parking_lot::Mutex;
 
 use crate::{
     common::{
-        column_pruning::ExecuteWithColumnPruning,
-        execution_context::{ExecutionContext, WrappedRecordBatchSender},
+        execution_context::{
+            ExecutionContext, WrappedRecordBatchSender, WrappedRecordBatchWithKeyRowsSender,
+            WrappedSenderTrait,
+        },
+        key_rows_output::{RecordBatchWithKeyRows, SendableRecordBatchWithKeyRowsStream},
         timer_helper::TimerHelper,
     },
     memmgr::{
@@ -103,6 +107,10 @@ impl SortExec {
             record_output: true,
             props: OnceCell::new(),
         }
+    }
+
+    pub fn sort_exprs(&self) -> &[PhysicalSortExpr] {
+        &self.exprs
     }
 }
 
@@ -186,7 +194,7 @@ impl ExecutionPlan for SortExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let projection: Vec<usize> = (0..self.schema().fields().len()).collect();
-        self.execute_projected(partition, context, &projection)
+        self.execute_projected_without_key_rows(partition, context, &projection)
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -195,6 +203,125 @@ impl ExecutionPlan for SortExec {
 
     fn statistics(&self) -> Result<Statistics> {
         Statistics::with_fetch(self.input.statistics()?, self.schema(), self.fetch, 0, 1)
+    }
+}
+
+impl SortExec {
+    fn init_sorter(
+        &self,
+        exec_ctx: Arc<ExecutionContext>,
+        projection: &[usize],
+    ) -> Result<Arc<ExternalSorter>> {
+        let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
+            self.input.schema(),
+            projection,
+            &self.exprs,
+        )?);
+        let mut sorter = Arc::new(ExternalSorter {
+            exec_ctx,
+            mem_consumer_info: None,
+            weak: Weak::new(),
+            prune_sort_keys_from_batch: prune_sort_keys_from_batch.clone(),
+            limit: self.fetch.unwrap_or(usize::MAX),
+            record_output: self.record_output,
+            in_mem_blocks: Default::default(),
+            spills: Default::default(),
+            num_total_rows: Default::default(),
+            mem_total_size: Default::default(),
+        });
+        MemManager::register_consumer(sorter.clone(), true);
+
+        unsafe {
+            // safety: set weak reference to sorter
+            let weak = Arc::downgrade(&sorter);
+            let sorter_mut = Arc::get_mut_unchecked(&mut sorter);
+            sorter_mut.weak = weak;
+        }
+        Ok(sorter)
+    }
+
+    /// Execute with projection without outputting key rows
+    fn execute_projected_without_key_rows(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchStream> {
+        let exec_ctx =
+            ExecutionContext::new(context.clone(), partition, self.schema(), &self.metrics);
+        let sorter = self.init_sorter(exec_ctx.clone(), projection)?;
+
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
+
+        // Implement proper key rows output by using the existing sorter with key rows
+        // support
+        let output = exec_ctx
+            .clone()
+            .output_with_sender("Sort", move |sender| async move {
+                let _timer = elapsed_compute.timer();
+                sender.exclude_time(&elapsed_compute);
+
+                while let Some(batch) = elapsed_compute
+                    .exclude_timer_async(coalesced.next())
+                    .await
+                    .transpose()?
+                {
+                    sorter.insert_batch(batch).await?;
+                }
+                sorter.output(sender).await?;
+                Ok(())
+            });
+        Ok(exec_ctx.coalesce_with_default_batch_size(output))
+    }
+
+    /// Execute with projection and output key rows for optimization
+    pub fn execute_with_key_rows(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchWithKeyRowsStream> {
+        let projection: Vec<usize> = (0..self.schema().fields().len()).collect();
+        self.execute_projected_with_key_rows(partition, context, &projection)
+    }
+
+    /// Execute with projection and output key rows for optimization
+    pub fn execute_projected_with_key_rows(
+        &self,
+        partition: usize,
+        context: Arc<TaskContext>,
+        projection: &[usize],
+    ) -> Result<SendableRecordBatchWithKeyRowsStream> {
+        let exec_ctx =
+            ExecutionContext::new(context.clone(), partition, self.schema(), &self.metrics);
+        let sorter = self.init_sorter(exec_ctx.clone(), projection)?;
+
+        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
+        let input = exec_ctx.execute_with_input_stats(&self.input)?;
+        let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
+
+        // Implement proper key rows output by using the existing sorter with key rows
+        // support
+        let output = exec_ctx.clone().output_with_sender_with_key_rows(
+            "Sort",
+            &self.exprs,
+            move |sender| async move {
+                let _timer = elapsed_compute.timer();
+                sender.exclude_time(&elapsed_compute);
+
+                while let Some(batch) = elapsed_compute
+                    .exclude_timer_async(coalesced.next())
+                    .await
+                    .transpose()?
+                {
+                    sorter.insert_batch(batch).await?;
+                }
+                sorter.output(sender).await?;
+                Ok(())
+            },
+        );
+        Ok(exec_ctx.coalesce_with_key_rows_with_default_batch_size(output))
     }
 }
 
@@ -486,70 +613,6 @@ impl SortedBlockBuilder<SpillSortedBlock, SqueezeKeyCollector> for SpillSortedBl
     }
 }
 
-impl ExecuteWithColumnPruning for SortExec {
-    fn execute_projected(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-        projection: &[usize],
-    ) -> Result<SendableRecordBatchStream> {
-        let exec_ctx = ExecutionContext::new(context, partition, self.schema(), &self.metrics);
-
-        // if no sort key expr is specified, just forward the input
-        if self.exprs.is_empty() {
-            return exec_ctx.execute_projected(&self.input, projection);
-        }
-
-        let prune_sort_keys_from_batch = Arc::new(PruneSortKeysFromBatch::try_new(
-            self.input.schema(),
-            projection,
-            &self.exprs,
-        )?);
-        let mut sorter = Arc::new(ExternalSorter {
-            exec_ctx: exec_ctx.clone(),
-            mem_consumer_info: None,
-            weak: Weak::new(),
-            prune_sort_keys_from_batch,
-            limit: self.fetch.unwrap_or(usize::MAX),
-            record_output: self.record_output,
-            in_mem_blocks: Default::default(),
-            spills: Default::default(),
-            num_total_rows: Default::default(),
-            mem_total_size: Default::default(),
-        });
-        MemManager::register_consumer(sorter.clone(), true);
-
-        unsafe {
-            // safety: set weak reference to sorter
-            let weak = Arc::downgrade(&sorter);
-            let sorter_mut = Arc::get_mut_unchecked(&mut sorter);
-            sorter_mut.weak = weak;
-        }
-
-        let elapsed_compute = exec_ctx.baseline_metrics().elapsed_compute().clone();
-        let input = exec_ctx.execute_with_input_stats(&self.input)?;
-        let mut coalesced = exec_ctx.coalesce_with_default_batch_size(input);
-
-        let output = exec_ctx
-            .clone()
-            .output_with_sender("Sort", move |sender| async move {
-                let _timer = elapsed_compute.timer();
-                sender.exclude_time(&elapsed_compute);
-
-                while let Some(batch) = elapsed_compute
-                    .exclude_timer_async(coalesced.next())
-                    .await
-                    .transpose()?
-                {
-                    sorter.insert_batch(batch).await?;
-                }
-                sorter.output(sender).await?;
-                Ok(())
-            });
-        Ok(exec_ctx.coalesce_with_default_batch_size(output))
-    }
-}
-
 impl Drop for ExternalSorter {
     fn drop(&mut self) {
         MemManager::deregister_consumer(self);
@@ -601,7 +664,7 @@ impl ExternalSorter {
         Ok(())
     }
 
-    async fn output(self: &Arc<Self>, sender: Arc<WrappedRecordBatchSender>) -> Result<()> {
+    async fn output(self: &Arc<Self>, sender: Arc<impl WrappedSenderTrait>) -> Result<()> {
         // if external merging is required, we need to spill in-mem data
         // to free memory as soon as possible
         let has_spill = !self.spills.lock().is_empty();
@@ -633,15 +696,18 @@ impl ExternalSorter {
                 while let Some((key_collector, pruned_batch)) =
                     merger.next::<InMemRowsKeyCollector>(output_batch_size)?
                 {
-                    let batch = self
-                        .prune_sort_keys_from_batch
-                        .restore(pruned_batch, key_collector)?;
                     if self.record_output {
                         self.exec_ctx
                             .baseline_metrics()
-                            .record_output(batch.num_rows());
+                            .record_output(pruned_batch.num_rows());
                     }
-                    sender.send(batch).await;
+                    send_output_batch(
+                        sender.as_ref(),
+                        pruned_batch,
+                        &self.prune_sort_keys_from_batch,
+                        key_collector,
+                    )
+                    .await?;
                 }
             }
             self.update_mem_used(0).await?;
@@ -653,18 +719,19 @@ impl ExternalSorter {
         while let Some((key_collector, pruned_batch)) =
             merger.next::<InMemRowsKeyCollector>(output_batch_size)?
         {
-            let batch = self
-                .prune_sort_keys_from_batch
-                .restore(pruned_batch, key_collector)?;
-            let cursors_mem_used = merger.cursors_mem_used();
-
-            self.update_mem_used(cursors_mem_used).await?;
+            self.update_mem_used(merger.cursors_mem_used()).await?;
             if self.record_output {
                 self.exec_ctx
                     .baseline_metrics()
-                    .record_output(batch.num_rows());
+                    .record_output(pruned_batch.num_rows());
             }
-            sender.send(batch).await;
+            send_output_batch(
+                sender.as_ref(),
+                pruned_batch,
+                &self.prune_sort_keys_from_batch,
+                key_collector,
+            )
+            .await?;
         }
         self.update_mem_used(0).await?;
         Ok(())
@@ -689,6 +756,29 @@ impl ExternalSorter {
             .map(|block| block.mem_used())
             .sum::<usize>()
     }
+}
+
+async fn send_output_batch(
+    sender: &impl WrappedSenderTrait,
+    pruned_batch: RecordBatch,
+    prune_sort_keys_from_batch: &PruneSortKeysFromBatch,
+    key_collector: impl KeyCollector,
+) -> Result<()> {
+    if let Ok(sender) = downcast_any!(sender, WrappedRecordBatchSender) {
+        let batch = prune_sort_keys_from_batch.restore(pruned_batch, key_collector)?;
+        sender.send(batch).await
+    } else if let Ok(sender) = downcast_any!(sender, WrappedRecordBatchWithKeyRowsSender) {
+        let key_rows = Arc::new(key_collector.into_rows(
+            pruned_batch.num_rows(),
+            &*prune_sort_keys_from_batch.sort_row_converter.lock(),
+        )?);
+        let batch =
+            prune_sort_keys_from_batch.restore_from_existed_key_rows(pruned_batch, &key_rows)?;
+        sender
+            .send(RecordBatchWithKeyRows { batch, key_rows })
+            .await;
+    }
+    Ok(())
 }
 
 struct SortedBlockCursor<B: SortedBlock> {
@@ -1080,10 +1170,20 @@ impl PruneSortKeysFromBatch {
         key_collector: KC,
     ) -> Result<RecordBatch> {
         let num_rows = pruned_batch.num_rows();
-
-        // restore key columns
         let key_rows = key_collector.into_rows(num_rows, &*self.sort_row_converter.lock())?;
-        let key_cols = self.sort_row_converter.lock().convert_rows(&key_rows)?;
+        self.restore_from_existed_key_rows(pruned_batch, &key_rows)
+    }
+
+    fn restore_from_existed_key_rows(
+        &self,
+        pruned_batch: RecordBatch,
+        key_rows: &Rows,
+    ) -> Result<RecordBatch> {
+        // restore key columns
+        let key_cols = self
+            .sort_row_converter
+            .lock()
+            .convert_rows(key_rows.iter())?;
 
         // restore batch
         let mut restored_fields = vec![];
@@ -1113,7 +1213,7 @@ trait KeyCollector: Default {
     fn into_rows(self, num_rows: usize, row_converter: &RowConverter) -> Result<Rows>;
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct InMemRowsKeyCollector {
     buffer: Vec<u8>,
     offsets: Vec<usize>,

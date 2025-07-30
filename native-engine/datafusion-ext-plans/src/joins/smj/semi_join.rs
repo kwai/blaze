@@ -23,8 +23,9 @@ use crate::{
     common::execution_context::WrappedRecordBatchSender,
     compare_cursor, cur_forward,
     joins::{
-        Idx, JoinParams, StreamCursors,
+        Idx, JoinParams,
         smj::semi_join::SemiJoinSide::{L, R},
+        stream_cursor::StreamCursor,
     },
     sort_merge_join_exec::Joiner,
 };
@@ -77,17 +78,21 @@ impl<const P: JoinerParams> SemiJoiner<P> {
         self.indices.len() >= self.join_params.batch_size
     }
 
-    async fn flush(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
+    async fn flush(
+        mut self: Pin<&mut Self>,
+        cur1: &mut StreamCursor,
+        cur2: &mut StreamCursor,
+    ) -> Result<()> {
         let indices = std::mem::take(&mut self.indices);
         let num_rows = indices.len();
 
         let cols = match P.join_side {
             L => {
-                let batch_interleaver = create_batch_interleaver(&curs.0.projected_batches, false)?;
+                let batch_interleaver = create_batch_interleaver(cur1.batches(), false)?;
                 batch_interleaver(&indices)?
             }
             R => {
-                let batch_interleaver = create_batch_interleaver(&curs.1.projected_batches, false)?;
+                let batch_interleaver = create_batch_interleaver(cur2.batches(), false)?;
                 batch_interleaver(&indices)?
             }
         };
@@ -107,92 +112,96 @@ impl<const P: JoinerParams> SemiJoiner<P> {
 
 #[async_trait]
 impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
-    async fn join(mut self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()> {
-        while !curs.0.finished && !curs.1.finished {
+    async fn join(
+        mut self: Pin<&mut Self>,
+        cur1: &mut StreamCursor,
+        cur2: &mut StreamCursor,
+    ) -> Result<()> {
+        while !cur1.finished() && !cur2.finished() {
             if self.should_flush()
-                || curs.0.num_buffered_batches() > 1
-                || curs.1.num_buffered_batches() > 1
+                || cur1.num_buffered_batches() > 1
+                || cur2.num_buffered_batches() > 1
             {
-                self.as_mut().flush(curs).await?;
-                curs.0.clean_out_dated_batches();
-                curs.1.clean_out_dated_batches();
+                self.as_mut().flush(cur1, cur2).await?;
+                cur1.clean_out_dated_batches();
+                cur2.clean_out_dated_batches();
             }
 
-            match compare_cursor!(curs) {
+            match compare_cursor!(cur1, cur2) {
                 Ordering::Less => {
                     if P.join_side == L && !P.semi {
-                        self.indices.push(curs.0.cur_idx);
+                        self.indices.push(cur1.cur_idx());
                     }
-                    cur_forward!(curs.0);
+                    cur_forward!(cur1);
                 }
                 Ordering::Greater => {
                     if P.join_side == R && !P.semi {
-                        self.indices.push(curs.1.cur_idx);
+                        self.indices.push(cur2.cur_idx());
                     }
-                    cur_forward!(curs.1);
+                    cur_forward!(cur2);
                 }
                 Ordering::Equal => {
-                    let l_key_idx = curs.0.cur_idx;
-                    let r_key_idx = curs.1.cur_idx;
+                    let l_key_idx = cur1.cur_idx();
+                    let r_key_idx = cur2.cur_idx();
 
                     if P.join_side == L && P.semi {
                         self.indices.push(l_key_idx);
                     }
-                    cur_forward!(curs.0);
+                    cur_forward!(cur1);
 
                     if P.join_side == R && P.semi {
                         self.indices.push(r_key_idx);
                     }
-                    cur_forward!(curs.1);
+                    cur_forward!(cur2);
 
                     // iterate both stream, find smaller one, use it for probing
                     let mut l_equal = true;
                     let mut r_equal = true;
                     while l_equal && r_equal {
                         if l_equal {
-                            l_equal = !curs.0.finished && curs.0.cur_key() == curs.0.key(l_key_idx);
+                            l_equal = !cur1.finished() && cur1.cur_key() == cur1.key(l_key_idx);
                             if l_equal {
                                 if P.join_side == L && P.semi {
-                                    self.indices.push(curs.0.cur_idx);
+                                    self.indices.push(cur1.cur_idx());
                                 }
-                                cur_forward!(curs.0);
+                                cur_forward!(cur1);
                             }
                         }
                         if r_equal {
-                            r_equal = !curs.1.finished && curs.1.cur_key() == curs.1.key(r_key_idx);
+                            r_equal = !cur2.finished() && cur2.cur_key() == cur2.key(r_key_idx);
                             if r_equal {
                                 if P.join_side == R && P.semi {
-                                    self.indices.push(curs.1.cur_idx);
+                                    self.indices.push(cur2.cur_idx());
                                 }
-                                cur_forward!(curs.1);
+                                cur_forward!(cur2);
                             }
                         }
                     }
 
                     if l_equal {
                         // stream left side
-                        while !curs.0.finished && curs.0.cur_key() == curs.1.key(r_key_idx) {
+                        while !cur1.finished() && cur1.cur_key() == cur2.key(r_key_idx) {
                             if P.join_side == L && P.semi {
-                                self.indices.push(curs.0.cur_idx);
+                                self.indices.push(cur1.cur_idx());
                             }
-                            cur_forward!(curs.0);
-                            if self.should_flush() || curs.0.num_buffered_batches() > 1 {
-                                self.as_mut().flush(curs).await?;
-                                curs.0.clean_out_dated_batches();
+                            cur_forward!(cur1);
+                            if self.should_flush() || cur1.num_buffered_batches() > 1 {
+                                self.as_mut().flush(cur1, cur2).await?;
+                                cur1.clean_out_dated_batches();
                             }
                         }
                     }
 
                     if r_equal {
                         // stream right side
-                        while !curs.1.finished && curs.1.cur_key() == curs.0.key(l_key_idx) {
+                        while !cur2.finished() && cur2.cur_key() == cur1.key(l_key_idx) {
                             if P.join_side == R && P.semi {
-                                self.indices.push(curs.1.cur_idx);
+                                self.indices.push(cur2.cur_idx());
                             }
-                            cur_forward!(curs.1);
-                            if self.should_flush() || curs.1.num_buffered_batches() > 1 {
-                                self.as_mut().flush(curs).await?;
-                                curs.1.clean_out_dated_batches();
+                            cur_forward!(cur2);
+                            if self.should_flush() || cur2.num_buffered_batches() > 1 {
+                                self.as_mut().flush(cur1, cur2).await?;
+                                cur2.clean_out_dated_batches();
                             }
                         }
                     }
@@ -202,27 +211,27 @@ impl<const P: JoinerParams> Joiner for SemiJoiner<P> {
 
         // at least one side is finished, consume the other side if it is an anti side
         if !P.semi {
-            while P.join_side == L && !P.semi && !curs.0.finished {
-                let lidx = curs.0.cur_idx;
+            while P.join_side == L && !P.semi && !cur1.finished() {
+                let lidx = cur1.cur_idx();
                 self.indices.push(lidx);
-                cur_forward!(curs.0);
+                cur_forward!(cur1);
                 if self.should_flush() {
-                    self.as_mut().flush(curs).await?;
-                    curs.0.clean_out_dated_batches();
+                    self.as_mut().flush(cur1, cur2).await?;
+                    cur1.clean_out_dated_batches();
                 }
             }
-            while P.join_side == R && !P.semi && !curs.1.finished {
-                let ridx = curs.1.cur_idx;
+            while P.join_side == R && !P.semi && !cur2.finished() {
+                let ridx = cur2.cur_idx();
                 self.indices.push(ridx);
-                cur_forward!(curs.1);
+                cur_forward!(cur2);
                 if self.should_flush() {
-                    self.as_mut().flush(curs).await?;
-                    curs.1.clean_out_dated_batches();
+                    self.as_mut().flush(cur1, cur2).await?;
+                    cur2.clean_out_dated_batches();
                 }
             }
         }
         if !self.indices.is_empty() {
-            self.flush(curs).await?;
+            self.flush(cur1, cur2).await?;
         }
         Ok(())
     }

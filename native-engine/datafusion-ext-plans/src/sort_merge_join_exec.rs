@@ -17,10 +17,10 @@ use std::{any::Any, fmt::Formatter, pin::Pin, sync::Arc};
 use arrow::{compute::SortOptions, datatypes::SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
-    common::{DataFusionError, JoinSide},
+    common::DataFusionError,
     error::Result,
     execution::context::TaskContext,
-    physical_expr::{EquivalenceProperties, PhysicalExprRef},
+    physical_expr::{EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
         PlanProperties, SendableRecordBatchStream, Statistics,
@@ -29,6 +29,7 @@ use datafusion::{
     },
 };
 use datafusion_ext_commons::{batch_size, df_execution_err};
+use futures::FutureExt;
 use once_cell::sync::OnceCell;
 
 use crate::{
@@ -39,7 +40,7 @@ use crate::{
     },
     cur_forward,
     joins::{
-        JoinParams, JoinProjection, StreamCursors,
+        JoinParams, JoinProjection,
         join_utils::{JoinType, JoinType::*},
         smj::{
             existence_join::ExistenceJoiner,
@@ -85,31 +86,6 @@ impl SortMergeJoinExec {
         })
     }
 
-    pub fn try_new_with_join_params(
-        left: Arc<dyn ExecutionPlan>,
-        right: Arc<dyn ExecutionPlan>,
-        join_params: JoinParams,
-    ) -> Result<Self> {
-        let on = join_params
-            .left_keys
-            .iter()
-            .zip(&join_params.right_keys)
-            .map(|(l, r)| (l.clone(), r.clone()))
-            .collect();
-
-        Ok(Self {
-            schema: join_params.output_schema.clone(),
-            left,
-            right,
-            on,
-            join_type: join_params.join_type,
-            sort_options: join_params.sort_options.clone(),
-            join_params: OnceCell::with_value(join_params),
-            metrics: ExecutionPlanMetricsSet::new(),
-            props: OnceCell::new(),
-        })
-    }
-
     fn create_join_params(&self, projection: &[usize]) -> Result<JoinParams> {
         let left_schema = self.left.schema();
         let right_schema = self.right.schema();
@@ -135,8 +111,8 @@ impl SortMergeJoinExec {
         let projection = JoinProjection::try_new(
             self.join_type,
             &self.schema,
-            &left_schema,
-            &right_schema,
+            &self.left.schema(),
+            &self.right.schema(),
             projection,
         )?;
         Ok(JoinParams {
@@ -169,13 +145,63 @@ impl SortMergeJoinExec {
             join_params.projection.schema.clone(),
             &self.metrics,
         );
+
+        let poll_time = Time::new();
+        let left = exec_ctx.execute_projected_with_key_rows_output(
+            &self.left,
+            &join_params
+                .left_keys
+                .iter()
+                .zip(&join_params.sort_options)
+                .map(|(k, s)| PhysicalSortExpr::new(k.clone(), s.clone()))
+                .collect::<Vec<_>>(),
+            &join_params.projection.left,
+        )?;
+        let right = exec_ctx.execute_projected_with_key_rows_output(
+            &self.right,
+            &join_params
+                .right_keys
+                .iter()
+                .zip(&join_params.sort_options)
+                .map(|(k, s)| PhysicalSortExpr::new(k.clone(), s.clone()))
+                .collect::<Vec<_>>(),
+            &join_params.projection.right,
+        )?;
+
+        let left = StreamCursor::try_new(left, poll_time.clone(), &join_params.key_data_types)?;
+        let right = StreamCursor::try_new(right, poll_time.clone(), &join_params.key_data_types)?;
+        self.output_with_streams(exec_ctx, join_params, left, right, poll_time)
+    }
+
+    fn output_with_streams(
+        &self,
+        exec_ctx: Arc<ExecutionContext>,
+        join_params: JoinParams,
+        left: StreamCursor,
+        right: StreamCursor,
+        poll_time: Time,
+    ) -> Result<SendableRecordBatchStream> {
         let exec_ctx_cloned = exec_ctx.clone();
-        let left = exec_ctx.execute(&self.left)?;
-        let right = exec_ctx.execute(&self.right)?;
-        let output = exec_ctx_cloned
+        let output = exec_ctx
             .clone()
             .output_with_sender("SortMergeJoin", move |sender| {
-                execute_join(left, right, join_params, exec_ctx_cloned, sender)
+                let exec_ctx = exec_ctx_cloned.clone();
+                sender.exclude_time(exec_ctx.baseline_metrics().elapsed_compute());
+                execute_join(
+                    left,
+                    right,
+                    join_params,
+                    exec_ctx,
+                    poll_time.clone(),
+                    sender,
+                )
+                .inspect(move |_| {
+                    // discount poll time
+                    exec_ctx_cloned
+                        .baseline_metrics()
+                        .elapsed_compute()
+                        .sub_duration(poll_time.duration());
+                })
             });
         Ok(exec_ctx.coalesce_with_default_batch_size(output))
     }
@@ -261,77 +287,86 @@ impl ExecutionPlan for SortMergeJoinExec {
     }
 }
 
-pub async fn execute_join(
-    lstream: SendableRecordBatchStream,
-    rstream: SendableRecordBatchStream,
+async fn execute_join(
+    mut left: StreamCursor,
+    mut right: StreamCursor,
     join_params: JoinParams,
     exec_ctx: Arc<ExecutionContext>,
+    poll_time: Time,
     sender: Arc<WrappedRecordBatchSender>,
 ) -> Result<()> {
     let _timer = exec_ctx.baseline_metrics().elapsed_compute().timer();
-    let poll_time = Time::new();
 
-    let mut curs = (
-        StreamCursor::try_new(
-            lstream,
-            poll_time.clone(),
-            &join_params,
-            JoinSide::Left,
-            &join_params.projection.left,
-        )?,
-        StreamCursor::try_new(
-            rstream,
-            poll_time.clone(),
-            &join_params,
-            JoinSide::Right,
-            &join_params.projection.right,
-        )?,
-    );
-
-    // start first batches of both side asynchronously
+    // Start first batches of both sides asynchronously
+    let concurrent_poll_time = Time::new();
+    let concurrent_poll_timer = concurrent_poll_time.timer();
     tokio::try_join!(
-        async { Ok::<_, DataFusionError>(cur_forward!(curs.0)) },
-        async { Ok::<_, DataFusionError>(cur_forward!(curs.1)) },
+        async { Ok::<_, DataFusionError>(cur_forward!(left)) },
+        async { Ok::<_, DataFusionError>(cur_forward!(right)) },
     )?;
+    drop(concurrent_poll_timer);
+    poll_time.sub_duration(poll_time.duration());
+    poll_time.add_duration(concurrent_poll_time.duration());
 
-    let join_type = join_params.join_type;
-    let mut joiner: Pin<Box<dyn Joiner + Send>> = match join_type {
-        Inner => Box::pin(InnerJoiner::new(join_params, sender)),
-        Left => Box::pin(LeftOuterJoiner::new(join_params, sender)),
-        Right => Box::pin(RightOuterJoiner::new(join_params, sender)),
-        Full => Box::pin(FullOuterJoiner::new(join_params, sender)),
-        LeftSemi => Box::pin(LeftSemiJoiner::new(join_params, sender)),
-        RightSemi => Box::pin(RightSemiJoiner::new(join_params, sender)),
-        LeftAnti => Box::pin(LeftAntiJoiner::new(join_params, sender)),
-        RightAnti => Box::pin(RightAntiJoiner::new(join_params, sender)),
-        Existence => Box::pin(ExistenceJoiner::new(join_params, sender)),
+    macro_rules! join {
+        ($joiner:ty) => {{
+            let mut joiner = Box::pin(<$joiner>::new(join_params, sender));
+            joiner.as_mut().join(&mut left, &mut right).await?;
+            exec_ctx
+                .baseline_metrics()
+                .record_output(joiner.num_output_rows());
+        }};
+    }
+
+    match join_params.join_type {
+        Inner => {
+            join!(InnerJoiner)
+        }
+        Left => {
+            join!(LeftOuterJoiner)
+        }
+        Right => {
+            join!(RightOuterJoiner)
+        }
+        Full => {
+            join!(FullOuterJoiner)
+        }
+        LeftSemi => {
+            join!(LeftSemiJoiner)
+        }
+        LeftAnti => {
+            join!(LeftAntiJoiner)
+        }
+        RightSemi => {
+            join!(RightSemiJoiner)
+        }
+        RightAnti => {
+            join!(RightAntiJoiner)
+        }
+        Existence => {
+            join!(ExistenceJoiner)
+        }
     };
-    joiner.as_mut().join(&mut curs).await?;
-    exec_ctx
-        .baseline_metrics()
-        .record_output(joiner.num_output_rows());
-
-    // discount poll time
-    exec_ctx
-        .baseline_metrics()
-        .elapsed_compute()
-        .sub_duration(poll_time.duration());
     Ok(())
 }
 
 #[macro_export]
 macro_rules! compare_cursor {
-    ($curs:expr) => {{
-        match ($curs.0.cur_idx, $curs.1.cur_idx) {
-            (lidx, _) if $curs.0.is_null_key(lidx) => Ordering::Less,
-            (_, ridx) if $curs.1.is_null_key(ridx) => Ordering::Greater,
-            (lidx, ridx) => $curs.0.key(lidx).cmp(&$curs.1.key(ridx)),
+    ($cur1:expr, $cur2:expr) => {{
+        match ($cur1.cur_idx(), $cur2.cur_idx()) {
+            (lidx, _) if $cur1.is_null_key(lidx) => Ordering::Less,
+            (_, ridx) if $cur2.is_null_key(ridx) => Ordering::Greater,
+            (lidx, ridx) => $cur1.key(lidx).cmp(&$cur2.key(ridx)),
         }
     }};
 }
 
 #[async_trait]
 pub trait Joiner {
-    async fn join(self: Pin<&mut Self>, curs: &mut StreamCursors) -> Result<()>;
+    async fn join(
+        self: Pin<&mut Self>,
+        cur1: &mut StreamCursor,
+        cur2: &mut StreamCursor,
+    ) -> Result<()>;
     fn num_output_rows(&self) -> usize;
 }
