@@ -321,7 +321,7 @@ impl SortExec {
                 Ok(())
             },
         );
-        Ok(exec_ctx.coalesce_with_key_rows_with_default_batch_size(output))
+        Ok(output)
     }
 }
 
@@ -1179,11 +1179,7 @@ impl PruneSortKeysFromBatch {
         pruned_batch: RecordBatch,
         key_rows: &Rows,
     ) -> Result<RecordBatch> {
-        // restore key columns
-        let key_cols = self
-            .sort_row_converter
-            .lock()
-            .convert_rows(key_rows.iter())?;
+        let key_cols = OnceCell::new();
 
         // restore batch
         let mut restored_fields = vec![];
@@ -1193,6 +1189,10 @@ impl PruneSortKeysFromBatch {
                     restored_fields.push(pruned_batch.column(idx).clone());
                 }
                 ColMapper::FromKey(idx) => {
+                    let sort_row_converter = self.sort_row_converter.clone();
+                    let key_cols = key_cols.get_or_try_init(move || {
+                        sort_row_converter.lock().convert_rows(key_rows.iter())
+                    })?;
                     restored_fields.push(key_cols[idx].clone());
                 }
             }

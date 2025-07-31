@@ -25,7 +25,7 @@ use std::{
 use arrow::{
     array::{RecordBatch, RecordBatchOptions},
     datatypes::SchemaRef,
-    row::{RowConverter, Rows, SortField},
+    row::{RowConverter, SortField},
 };
 use arrow_schema::Schema;
 use blaze_jni_bridge::{conf, conf::BooleanConf, is_task_running};
@@ -44,10 +44,13 @@ use datafusion_ext_commons::{
     batch_size, df_execution_err, downcast_any, suggested_batch_mem_size,
 };
 use futures::{Stream, StreamExt};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, stream::BoxStream};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use tokio::sync::mpsc::Sender;
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinSet,
+};
 
 use crate::{
     common::{
@@ -141,88 +144,36 @@ impl ExecutionContext {
         self: &Arc<Self>,
         input: SendableRecordBatchStream,
     ) -> SendableRecordBatchStream {
-        let schema = input.schema();
-        let stream =
-            self.coalesce_with_default_batch_size_impl(input, schema.clone(), |batches, schema| {
-                Ok(coalesce_batches_unchecked(schema, &batches))
-            });
-        Box::pin(RecordBatchStreamAdapter::new(schema, stream))
-    }
-
-    pub fn coalesce_with_key_rows_with_default_batch_size(
-        self: &Arc<Self>,
-        input: SendableRecordBatchWithKeyRowsStream,
-    ) -> SendableRecordBatchWithKeyRowsStream {
-        let keys = input.keys().to_vec();
-        let schema = input.schema();
-        let stream = self.coalesce_with_default_batch_size_impl(
-            input,
-            schema.clone(),
-            |batches: Vec<RecordBatchWithKeyRows>, schema| {
-                let batch = coalesce_batches_unchecked(
-                    schema,
-                    &batches
-                        .iter()
-                        .map(|b| &b.batch)
-                        .cloned()
-                        .collect::<Vec<_>>(),
-                );
-                let key_rows = Arc::new(coalesce_multiple_rows(
-                    &batches
-                        .iter()
-                        .map(|b| b.key_rows.as_ref())
-                        .collect::<Vec<_>>(),
-                ));
-                Ok(RecordBatchWithKeyRows { batch, key_rows })
-            },
-        );
-        Box::pin(RecordBatchWithKeyRowsStreamAdapter::new(
-            stream, schema, keys,
-        ))
-    }
-
-    fn coalesce_with_default_batch_size_impl<R: RecordBatchWithPayload>(
-        self: &Arc<Self>,
-        input: Pin<Box<dyn Stream<Item = Result<R>> + Send + 'static>>,
-        schema: SchemaRef,
-        coalesce_fn: fn(Vec<R>, SchemaRef) -> Result<R>,
-    ) -> impl Stream<Item = Result<R>> + Send + 'static {
-        pub struct CoalesceStream<R: RecordBatchWithPayload> {
-            input: Pin<Box<dyn Stream<Item = Result<R>> + Send + 'static>>,
-            schema: SchemaRef,
-            staging_batches: Vec<R>,
+        pub struct CoalesceStream {
+            input: SendableRecordBatchStream,
+            staging_batches: Vec<RecordBatch>,
             staging_rows: usize,
             staging_batches_mem_size: usize,
-            batch_size: usize,
             elapsed_compute: Time,
-            coalesce_fn: fn(Vec<R>, SchemaRef) -> Result<R>,
         }
 
-        impl<R: RecordBatchWithPayload> CoalesceStream<R> {
-            fn coalesce(&mut self) -> Result<R> {
-                // better concat_batches() implementation that releases old batch columns asap.
-                let schema = self.schema.clone();
-                let coalesced_batch =
-                    (self.coalesce_fn)(std::mem::take(&mut self.staging_batches), schema.clone())?;
+        impl CoalesceStream {
+            fn coalesce(&mut self) -> RecordBatch {
+                let staging_batches = std::mem::take(&mut self.staging_batches);
                 self.staging_rows = 0;
                 self.staging_batches_mem_size = 0;
-                Ok(coalesced_batch)
+                coalesce_batches_unchecked(self.schema(), &staging_batches)
             }
 
             fn should_flush(&self) -> bool {
-                let size_limit = suggested_batch_mem_size();
-                let (batch_size_limit, mem_size_limit) = if self.staging_batches.len() > 1 {
-                    (self.batch_size, size_limit)
-                } else {
-                    (self.batch_size / 2, size_limit / 2)
-                };
-                self.staging_rows >= batch_size_limit
-                    || self.staging_batches_mem_size > mem_size_limit
+                self.staging_rows >= batch_size()
+                    || self.staging_batches_mem_size > suggested_batch_mem_size()
             }
         }
 
-        impl<R: RecordBatchWithPayload> Stream for CoalesceStream<R> {
-            type Item = Result<R>;
+        impl RecordBatchStream for CoalesceStream {
+            fn schema(&self) -> SchemaRef {
+                self.input.schema()
+            }
+        }
+
+        impl Stream for CoalesceStream {
+            type Item = Result<RecordBatch>;
 
             fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
                 let elapsed_time = self.elapsed_compute.clone();
@@ -230,21 +181,35 @@ impl ExecutionContext {
                     match ready!(self.input.as_mut().poll_next_unpin(cx)).transpose()? {
                         Some(batch) => {
                             let _timer = elapsed_time.timer();
-                            let num_rows = batch.batch().num_rows();
-                            if num_rows > 0 {
-                                self.staging_rows += num_rows;
-                                self.staging_batches_mem_size += batch.batch().get_batch_mem_size();
-                                self.staging_batches.push(batch);
-                                if self.should_flush() {
-                                    let coalesced = self.coalesce()?;
-                                    return Poll::Ready(Some(Ok(coalesced)));
-                                }
+                            if batch.is_empty() {
                                 continue;
+                            }
+
+                            // short path for not coalescable batches
+                            let batch_num_rows = batch.batch().num_rows();
+                            if self.staging_batches.is_empty() {
+                                if batch_num_rows > batch_size() / 4 {
+                                    return Poll::Ready(Some(Ok(batch)));
+                                }
+                            }
+                            let batch_mem_size = batch.batch().get_batch_mem_size();
+                            if self.staging_batches.is_empty() {
+                                if batch_mem_size >= suggested_batch_mem_size() / 4 {
+                                    return Poll::Ready(Some(Ok(batch)));
+                                }
+                            }
+
+                            self.staging_rows += batch_num_rows;
+                            self.staging_batches_mem_size += batch_mem_size;
+                            self.staging_batches.push(batch);
+                            if self.should_flush() {
+                                let coalesced = self.coalesce();
+                                return Poll::Ready(Some(Ok(coalesced)));
                             }
                         }
                         None if !self.staging_batches.is_empty() => {
                             let _timer = elapsed_time.timer();
-                            let coalesced = self.coalesce()?;
+                            let coalesced = self.coalesce();
                             return Poll::Ready(Some(Ok(coalesced)));
                         }
                         None => {
@@ -257,13 +222,10 @@ impl ExecutionContext {
 
         Box::pin(CoalesceStream {
             input,
-            schema,
             staging_batches: vec![],
             staging_rows: 0,
             staging_batches_mem_size: 0,
-            batch_size: batch_size(),
             elapsed_compute: self.baseline_metrics().elapsed_compute().clone(),
-            coalesce_fn,
         })
     }
 
@@ -316,29 +278,26 @@ impl ExecutionContext {
         let key_exprs = keys.iter().map(|k| k.expr.clone()).collect::<Vec<_>>();
 
         let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
-        let mut input = self.execute(input)?;
-        Ok(self.output_with_sender_with_key_rows(
-            "ExecuteWithKeyRowsOutput",
-            keys,
-            move |sender| async move {
-                sender.exclude_time(&elapsed_compute);
-                while let Some(batch) = input.next().await.transpose()? {
-                    let _timer = elapsed_compute.timer();
-                    let keys = key_exprs
-                        .iter()
-                        .map(|k| {
-                            k.evaluate(&batch)
-                                .and_then(|r| r.into_array(batch.num_rows()))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    let key_rows = key_converter.convert_columns(&keys)?;
-                    sender
-                        .send(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
-                        .await;
-                }
-                Ok(())
-            },
-        ))
+        let input = self.execute(input)?;
+        let with_key_stream = input.map(move |r| {
+            r.and_then(|batch| {
+                let _timer = elapsed_compute.timer();
+                let keys = key_exprs
+                    .iter()
+                    .map(|k| {
+                        k.evaluate(&batch)
+                            .and_then(|r| r.into_array(batch.num_rows()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let key_rows = key_converter.convert_columns(&keys)?;
+                Ok(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
+            })
+        });
+        Ok(Box::pin(RecordBatchWithKeyRowsStreamAdapter::new(
+            with_key_stream,
+            output_schema,
+            keys.to_vec(),
+        )))
     }
 
     pub fn execute_projected_with_key_rows_output(
@@ -377,42 +336,38 @@ impl ExecutionContext {
             .collect::<Vec<_>>();
 
         let elapsed_compute = self.baseline_metrics.elapsed_compute().clone();
-        let mut input = self.execute_projected(input, &projection_with_keys)?;
+        let input = self.execute_projected(input, &projection_with_keys)?;
         let projected_schema = Arc::new(Schema::new(
             input.schema().fields()[..projection.len()].to_vec(),
         ));
 
-        Ok(self
-            .with_new_output_schema(projected_schema.clone())
-            .output_with_sender_with_key_rows(
-                "ExecuteWithKeyRowsOutput",
-                keys,
-                move |sender| async move {
-                    sender.exclude_time(&elapsed_compute);
-                    while let Some(mut batch) = input.next().await.transpose()? {
-                        let _timer = elapsed_compute.timer();
-                        let keys = key_exprs
-                            .iter()
-                            .map(|k| {
-                                k.evaluate(&batch)
-                                    .and_then(|r| r.into_array(batch.num_rows()))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        let key_rows = key_converter.convert_columns(&keys)?;
-                        if projection.len() < projection_with_keys.len() {
-                            batch = RecordBatch::try_new_with_options(
-                                projected_schema.clone(),
-                                batch.columns()[..projection.len()].to_vec(),
-                                &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
-                            )?;
-                        }
-                        sender
-                            .send(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
-                            .await;
-                    }
-                    Ok(())
-                },
-            ))
+        let projected_schema_cloned = projected_schema.clone();
+        let with_key_stream = input.map(move |r| {
+            r.and_then(|mut batch| {
+                let _timer = elapsed_compute.timer();
+                let keys = key_exprs
+                    .iter()
+                    .map(|k| {
+                        k.evaluate(&batch)
+                            .and_then(|r| r.into_array(batch.num_rows()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let key_rows = key_converter.convert_columns(&keys)?;
+                if projection.len() < projection_with_keys.len() {
+                    batch = RecordBatch::try_new_with_options(
+                        projected_schema_cloned.clone(),
+                        batch.columns()[..projection.len()].to_vec(),
+                        &RecordBatchOptions::new().with_row_count(Some(batch.num_rows())),
+                    )?;
+                }
+                Ok(RecordBatchWithKeyRows::new(batch, Arc::new(key_rows)))
+            })
+        });
+        Ok(Box::pin(RecordBatchWithKeyRowsStreamAdapter::new(
+            with_key_stream,
+            projected_schema,
+            keys.to_vec(),
+        )))
     }
 
     pub fn execute_projected(
@@ -553,11 +508,64 @@ impl ExecutionContext {
         desc: &'static str,
         output: impl FnOnce(Arc<WrappedSender<T>>) -> Fut + Send + 'static,
     ) -> impl Stream<Item = Result<T>> + Send + 'static {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let err_sender = tx.clone();
-        let wrapped_sender = WrappedSender::<T>::new(self.clone(), tx.clone());
+        // ReceiverStreamBuilder is copied from datafusion_physical_plan
+        struct ReceiverStreamBuilder<O> {
+            tx: Sender<Result<O>>,
+            rx: Receiver<Result<O>>,
+            join_set: JoinSet<Result<()>>,
+        }
+        impl<O: Send + 'static> ReceiverStreamBuilder<O> {
+            pub fn new(capacity: usize) -> Self {
+                let (tx, rx) = tokio::sync::mpsc::channel(capacity);
+                Self {
+                    tx,
+                    rx,
+                    join_set: JoinSet::new(),
+                }
+            }
 
-        tokio::spawn(async move {
+            pub fn build(self) -> BoxStream<'static, Result<O>> {
+                let Self {
+                    tx,
+                    rx,
+                    mut join_set,
+                } = self;
+                drop(tx);
+
+                let check = async move {
+                    while let Some(result) = join_set.join_next().await {
+                        match result {
+                            Ok(task_result) => match task_result {
+                                Ok(_) => continue,
+                                Err(error) => return Some(Err(error)),
+                            },
+                            Err(e) => {
+                                if e.is_panic() {
+                                    std::panic::resume_unwind(e.into_panic());
+                                } else {
+                                    return Some(df_execution_err!("Non Panic Task error: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    None
+                };
+
+                let check_stream =
+                    futures::stream::once(check).filter_map(|item| async move { item });
+                let rx_stream = futures::stream::unfold(rx, |mut rx| async move {
+                    let next_item = rx.recv().await;
+                    next_item.map(|next_item| (next_item, rx))
+                });
+                futures::stream::select(rx_stream, check_stream).boxed()
+            }
+        }
+
+        let mut stream_builder = ReceiverStreamBuilder::<T>::new(1);
+        let wrapped_sender = WrappedSender::<T>::new(self.clone(), stream_builder.tx.clone());
+        let err_sender = stream_builder.tx.clone();
+
+        stream_builder.join_set.spawn(async move {
             let result = AssertUnwindSafe(async move {
                 if let Err(err) = output(wrapped_sender).await {
                     panic!("output_with_sender[{desc}]: output() returns error: {err}");
@@ -588,12 +596,7 @@ impl ExecutionContext {
             }
             Ok::<_, DataFusionError>(())
         });
-        Box::pin(
-            futures::stream::unfold(rx, |mut rx| async move {
-                rx.recv().await.map(|item| (item, rx))
-            })
-            .fuse(),
-        )
+        stream_builder.build()
     }
 }
 
@@ -752,51 +755,4 @@ pub fn cancel_all_tasks(task_ctx: &Arc<TaskContext>) {
             None => false,   // already released
         })
         .collect();
-}
-
-fn coalesce_multiple_rows(rows: &[&Rows]) -> Rows {
-    struct XRows {
-        buffer: Vec<u8>,
-        offsets: Vec<usize>,
-        config: XRowConfig,
-    }
-    struct XRowConfig {
-        fields: Arc<[SortField]>,
-        validate_utf8: bool,
-    }
-    assert_eq!(
-        std::alloc::Layout::new::<XRows>(),
-        std::alloc::Layout::new::<Rows>()
-    );
-    assert!(!rows.is_empty());
-
-    // safety: assume Rows and XRows have the same layout
-    let rows = unsafe { std::mem::transmute::<_, &[&XRows]>(rows) };
-    let mut offsets =
-        Vec::with_capacity(rows.iter().map(|r| r.offsets.len() - 1).sum::<usize>() + 1);
-    let mut buffer = Vec::with_capacity(rows.iter().map(|r| r.buffer.len()).sum::<usize>());
-
-    offsets.push(0);
-    for rows in rows {
-        let cur_offset = buffer.len();
-        offsets.extend(
-            rows.offsets
-                .iter()
-                .skip(1)
-                .map(|offset| offset + cur_offset),
-        );
-        buffer.extend_from_slice(&rows.buffer);
-    }
-
-    // safety: assume Rows and XRows have the same layout
-    unsafe {
-        std::mem::transmute(XRows {
-            buffer,
-            offsets,
-            config: XRowConfig {
-                fields: rows[0].config.fields.clone(),
-                validate_utf8: rows[0].config.validate_utf8,
-            },
-        })
-    }
 }
