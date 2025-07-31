@@ -89,7 +89,8 @@ abstract class Shims {
       right: SparkPlan,
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
-      joinType: JoinType): NativeSortMergeJoinBase
+      joinType: JoinType,
+      isSkewJoin: Boolean): NativeSortMergeJoinBase
 
   def createNativeShuffledHashJoinExec(
       left: SparkPlan,

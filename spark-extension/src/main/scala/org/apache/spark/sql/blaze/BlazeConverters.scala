@@ -428,8 +428,15 @@ object BlazeConverters extends Logging {
         buildSide)
     }
 
-    val (leftKeys, rightKeys, joinType, condition, left, right) =
-      (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
+    val (leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =
+      (
+        exec.leftKeys,
+        exec.rightKeys,
+        exec.joinType,
+        exec.condition,
+        exec.left,
+        exec.right,
+        exec.isSkewJoin)
     logDebug(s"Converting SortMergeJoinExec: ${Shims.get.simpleStringWithNodeId(exec)}")
     logDebug(s"  leftKeys: $leftKeys")
     logDebug(s"  rightKeys: $rightKeys")
@@ -442,7 +449,8 @@ object BlazeConverters extends Logging {
       addRenameColumnsExec(convertToNative(right)),
       leftKeys,
       rightKeys,
-      joinType)
+      joinType,
+      isSkewJoin)
   }
 
   def convertShuffledHashJoinExec(exec: ShuffledHashJoinExec): SparkPlan = {
