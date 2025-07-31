@@ -32,6 +32,16 @@
         <version>${scalaLongVersion}</version>
       </dependency>
       <dependency>
+        <groupId>org.scala-lang</groupId>
+        <artifactId>scala-compiler</artifactId>
+        <version>${scalaLongVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.scala-lang</groupId>
+        <artifactId>scala-reflect</artifactId>
+        <version>${scalaLongVersion}</version>
+      </dependency>
+      <dependency>
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-core_${scalaVersion}</artifactId>
         <version>${sparkVersion}</version>
