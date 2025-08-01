@@ -14,6 +14,7 @@
 
 use std::{cell::Cell, time::Instant};
 
+use chrono::Local;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::OnceCell;
 
@@ -53,8 +54,11 @@ impl Log for SimpleLogger {
             let partition_id = THREAD_PARTITION_ID.get();
             let tid = THREAD_TID.get();
             eprintln!(
-                "(+{elapsed_sec:.3}s) [{}] (stage: {stage_id}, partition: {partition_id}, tid: {tid}) - {}",
+                "{} (+{elapsed_sec:.3}s) [{}] [{}:{}] (stage: {stage_id}, partition: {partition_id}, tid: {tid}) - {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
                 record.level(),
+                record.module_path().unwrap_or(""),
+                record.line().unwrap_or(0),
                 record.args()
             );
         }
