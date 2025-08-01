@@ -31,7 +31,7 @@ use datafusion::{
 use datafusion_ext_plans::memmgr::MemManager;
 use jni::{
     JNIEnv,
-    objects::{JClass, JObject},
+    objects::{JClass, JObject, JString},
 };
 use once_cell::sync::OnceCell;
 
@@ -43,6 +43,7 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
     env: JNIEnv,
     _: JClass,
     executor_memory_overhead: i64,
+    log_level: JString,
     native_wrapper: JObject,
 ) -> i64 {
     handle_unwinded_scope(|| -> Result<i64> {
@@ -61,7 +62,9 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
         INIT.get_or_try_init(|| {
             // logging is not initialized at this moment
             eprintln!("------ initializing blaze native environment ------");
-            init_logging();
+            let log_level = env.get_string(log_level).map(|s| String::from(s)).unwrap();
+            eprintln!("initializing logging with level: {}", log_level);
+            init_logging(log_level.as_str());
 
             // init jni java classes
             log::info!("initializing JNI bridge");

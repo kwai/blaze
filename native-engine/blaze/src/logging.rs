@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{cell::Cell, time::Instant};
+use std::{cell::Cell, str::FromStr, time::Instant};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use once_cell::sync::OnceCell;
@@ -23,12 +23,14 @@ thread_local! {
     pub static THREAD_PARTITION_ID: Cell<usize> = Cell::new(0);
 }
 
-const MAX_LEVEL: Level = Level::Info;
+const DEFAULT_MAX_LEVEL: Level = Level::Info;
 
-pub fn init_logging() {
+pub fn init_logging(level: &str) {
+    let log_level = Level::from_str(level).unwrap_or_else(|_| DEFAULT_MAX_LEVEL);
     static LOGGER: OnceCell<SimpleLogger> = OnceCell::new();
     let logger = LOGGER.get_or_init(|| SimpleLogger {
         start_instant: Instant::now(),
+        log_level,
     });
 
     log::set_logger(logger).expect("error setting logger");
@@ -38,11 +40,12 @@ pub fn init_logging() {
 #[derive(Clone, Copy)]
 struct SimpleLogger {
     start_instant: Instant,
+    log_level: Level,
 }
 
 impl Log for SimpleLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= MAX_LEVEL
+        metadata.level() <= self.log_level
     }
 
     fn log(&self, record: &Record) {

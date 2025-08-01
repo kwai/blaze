@@ -64,7 +64,8 @@ case class BlazeCallNativeWrapper(
   private var batchCurRowIdx = 0
 
   logWarning(s"Start executing native plan")
-  private var nativeRuntimePtr = JniBridge.callNative(NativeHelper.nativeMemory, this)
+  private var nativeRuntimePtr =
+    JniBridge.callNative(NativeHelper.nativeMemory, BlazeConf.NATIVE_LOG_LEVEL.stringConf(), this)
 
   private lazy val rowIterator = new Iterator[InternalRow] {
     override def hasNext: Boolean = {
