@@ -43,7 +43,7 @@ public class ValidateSparkPlanInjector {
                     .method(named("apply"))
                     .intercept(MethodDelegation.to(ValidateSparkPlanApplyInterceptor.class))
                     .make()
-                    .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION);
+                    .load(contextClassLoader, ClassLoadingStrategy.Default.INJECTION);
         } catch (TypePool.Resolution.NoSuchTypeException e) {
             logger.debug("No such type of ValidateSparkPlan", e);
         }
