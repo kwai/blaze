@@ -214,14 +214,16 @@ class ShimsImpl extends Shims with Logging {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      buildSide: BuildSide): SparkPlan =
+      buildSide: BuildSide,
+      isSkewJoin: Boolean): SparkPlan =
     NativeShuffledHashJoinExecProvider.provide(
       left,
       right,
       leftKeys,
       rightKeys,
       joinType,
-      buildSide)
+      buildSide,
+      isSkewJoin)
 
   override def createNativeExpandExec(
       projections: Seq[Seq[Expression]],
