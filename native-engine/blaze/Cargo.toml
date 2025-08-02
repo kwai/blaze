@@ -29,6 +29,7 @@ once_cell = { workspace = true }
 panic-message = { workspace = true }
 prost = { workspace = true }
 tokio = { workspace = true }
+chrono = { workspace = true }
 
 [dependencies.tikv-jemalloc-ctl]
 version = "0.6.0"

@@ -494,6 +494,7 @@ dependencies = [
  "blaze-jni-bridge",
  "blaze-serde",
  "bytesize",
+ "chrono",
  "datafusion",
  "datafusion-ext-commons",
  "datafusion-ext-plans",
