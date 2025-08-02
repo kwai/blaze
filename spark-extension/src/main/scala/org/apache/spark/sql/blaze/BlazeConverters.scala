@@ -313,6 +313,12 @@ object BlazeConverters extends Logging {
       getShuffleOrigin(exec))
   }
 
+  @sparkver(" 3.2 / 3.3 / 3.4 / 3.5")
+  def getIsSkewJoinFromSHJ(exec: ShuffledHashJoinExec): Boolean = exec.isSkewJoin
+
+  @sparkver("3.0 / 3.1")
+  def getIsSkewJoinFromSHJ(exec: ShuffledHashJoinExec): Boolean = false
+
   @sparkver("3.1 / 3.2 / 3.3 / 3.4 / 3.5")
   def getShuffleOrigin(exec: ShuffleExchangeExec): Option[Any] = Some(exec.shuffleOrigin)
 
@@ -400,8 +406,15 @@ object BlazeConverters extends Logging {
     if (!requireOrdering
       && BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf()
       && exec.children.forall(_.isInstanceOf[NativeSortBase])) {
-      val (leftKeys, rightKeys, joinType, condition, left, right) =
-        (exec.leftKeys, exec.rightKeys, exec.joinType, exec.condition, exec.left, exec.right)
+      val (leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =
+        (
+          exec.leftKeys,
+          exec.rightKeys,
+          exec.joinType,
+          exec.condition,
+          exec.left,
+          exec.right,
+          exec.isSkewJoin)
       logDebug(
         s"Converting SortMergeJoinExec (with forceShuffledHashJoin): ${Shims.get.simpleStringWithNodeId(exec)}")
       logDebug(s"  leftKeys: $leftKeys")
@@ -425,7 +438,8 @@ object BlazeConverters extends Logging {
         leftKeys,
         rightKeys,
         joinType,
-        buildSide)
+        buildSide,
+        isSkewJoin)
     }
 
     val (leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) =
@@ -480,7 +494,8 @@ object BlazeConverters extends Logging {
         buildSide match {
           case BuildLeft => org.apache.spark.sql.execution.blaze.plan.BuildLeft
           case BuildRight => org.apache.spark.sql.execution.blaze.plan.BuildRight
-        })
+        },
+        getIsSkewJoinFromSHJ(exec))
 
     } catch {
       case _ if BlazeConf.FORCE_SHUFFLED_HASH_JOIN.booleanConf() =>
