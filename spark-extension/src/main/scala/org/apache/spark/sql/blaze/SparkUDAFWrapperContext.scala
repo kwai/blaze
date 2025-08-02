@@ -325,7 +325,10 @@ case class DeclarativeAggRowsColumn(
       rowsMemUsed += newRow.getSizeInBytes
       newRow
     }))
-    rowsMemUsed -= rows.slice(len, rows.length).filter(_ != null).foldLeft(0)(_ + _.getSizeInBytes)
+    rowsMemUsed -= rows
+      .slice(len, rows.length)
+      .filter(_ != null)
+      .foldLeft(0)(_ + _.getSizeInBytes)
     rows.trimEnd(rows.length - len)
   }
 
