@@ -36,7 +36,7 @@ import org.apache.spark.sql.blaze.memory.OnHeapSpillManager$;
 public class JniBridge {
     public static final ConcurrentHashMap<String, Object> resourcesMap = new ConcurrentHashMap<>();
 
-    public static native long callNative(long initNativeMemory, BlazeCallNativeWrapper wrapper);
+    public static native long callNative(long initNativeMemory, String logLevel, BlazeCallNativeWrapper wrapper);
 
     public static native boolean nextBatch(long ptr);
 
