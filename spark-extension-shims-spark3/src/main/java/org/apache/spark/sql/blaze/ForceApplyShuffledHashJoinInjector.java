@@ -28,14 +28,15 @@ import net.bytebuddy.pool.TypePool;
 public class ForceApplyShuffledHashJoinInjector {
     public static void inject() {
         ByteBuddyAgent.install();
-        TypeDescription typeDescription = TypePool.Default.ofSystemLoader()
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        TypeDescription typeDescription = TypePool.Default.of(contextClassLoader)
                 .describe("org.apache.spark.sql.catalyst.optimizer.JoinSelectionHelper")
                 .resolve();
         new ByteBuddy()
-                .redefine(typeDescription, ClassFileLocator.ForClassLoader.ofSystemLoader())
+                .redefine(typeDescription, ClassFileLocator.ForClassLoader.of(contextClassLoader))
                 .method(named("forceApplyShuffledHashJoin"))
                 .intercept(MethodDelegation.to(ForceApplyShuffledHashJoinInterceptor.class))
                 .make()
-                .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION);
+                .load(contextClassLoader, ClassLoadingStrategy.Default.INJECTION);
     }
 }
