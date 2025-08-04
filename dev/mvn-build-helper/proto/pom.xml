@@ -6,7 +6,7 @@
     <groupId>org.blaze</groupId>
     <artifactId>blaze-engine</artifactId>
     <version>${revision}</version>
-    <relativePath>../../../</relativePath>
+    <relativePath>../../../pom.xml</relativePath>
   </parent>
   <groupId>org.blaze</groupId>
   <artifactId>proto</artifactId>
