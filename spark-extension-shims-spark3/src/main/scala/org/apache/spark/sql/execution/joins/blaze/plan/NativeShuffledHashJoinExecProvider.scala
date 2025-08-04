@@ -60,11 +60,11 @@ case object NativeShuffledHashJoinExecProvider {
         HashJoin.rewriteKeyExpr(exprs)
 
       override def inputRDDs(): Seq[RDD[InternalRow]] = {
-        throw new NotImplementedError("NativeSortMergeJoin dose not support codegen")
+        throw new NotImplementedError("NativeShuffledHash dose not support codegen")
       }
 
       override protected def doProduce(ctx: CodegenContext): String = {
-        throw new NotImplementedError("NativeSortMergeJoin dose not support codegen")
+        throw new NotImplementedError("NativeShuffledHash dose not support codegen")
       }
 
       override protected def withNewChildrenInternal(
