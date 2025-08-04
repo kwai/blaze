@@ -63,7 +63,7 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
   private lazy val fileSizes = partitions
     .flatMap(_.files)
     .groupBy(_.filePath)
-    .mapValues(_.map(_.length).sum)
+    .mapValues(_.foldLeft(0L)(_ + _.length))
     .map(identity) // make this map serializable
 
   // should not include partition columns
