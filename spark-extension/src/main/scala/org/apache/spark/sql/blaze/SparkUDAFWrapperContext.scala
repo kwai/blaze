@@ -444,13 +444,12 @@ case class TypedImperativeAggRowsColumn[B](
         val estimRowSize =
           if (rows.length >= N) {
             val totalSize = (0 until N)
-              .map(i => {
-                serializedRow(i) match {
+              .foldLeft(0)((total, i) => {
+                total + (serializedRow(i) match {
                   case row if row != null => row.length
                   case null => 0
-                }
+                })
               })
-              .sum
             val estimRowSize = totalSize / N * 4 + 16
             evaluator.estimatedRowSize = Some(estimRowSize)
             estimRowSize

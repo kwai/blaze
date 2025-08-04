@@ -179,7 +179,7 @@ class Tables(sqlContext: SQLContext, scaleFactor: Int) extends Serializable {
         val cached = data.cache()
         val plainDataSize = cached
           .mapPartitions { iter =>
-            Iterator.single(iter.map(_.mkString("\t").length).sum.toLong)
+            Iterator.single(iter.foldLeft(0L)(_ + _.mkString("\t").length.toLong))
           }
           .collect()
           .sum
