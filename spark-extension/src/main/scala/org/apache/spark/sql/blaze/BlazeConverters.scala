@@ -605,7 +605,7 @@ object BlazeConverters extends Logging {
           assert(NativeHelper.isNative(left), "broadcast join build side is not native")
       }
 
-      // reuse NativeBroadcastJoin with empty equility keys
+      // reuse NativeBroadcastJoin with empty equality keys
       Shims.get.createNativeBroadcastJoinExec(
         addRenameColumnsExec(convertToNative(left)),
         addRenameColumnsExec(convertToNative(right)),
@@ -738,7 +738,7 @@ object BlazeConverters extends Logging {
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
-            s"Error projecting resultExpressions, failback to non-native projection: " +
+            s"Error projecting resultExpressions, fallback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
           proj.setTagValue(convertToNonNativeTag, true)
@@ -795,7 +795,7 @@ object BlazeConverters extends Logging {
       } catch {
         case e @ (_: NotImplementedError | _: AssertionError | _: Exception) =>
           logWarning(
-            s"Error projecting resultExpressions, failback to non-native projection: " +
+            s"Error projecting resultExpressions, fallback to non-native projection: " +
               s"${e.getMessage}")
           val proj = ProjectExec(exec.resultExpressions, nativeAggr)
           proj.setTagValue(convertToNonNativeTag, true)

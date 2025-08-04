@@ -60,7 +60,7 @@ public enum BlazeConf {
     /// partial aggregate skipping ratio
     PARTIAL_AGG_SKIPPING_RATIO("spark.blaze.partialAggSkipping.ratio", 0.9),
 
-    /// mininum number of rows to trigger partial aggregate skipping
+    /// minimum number of rows to trigger partial aggregate skipping
     PARTIAL_AGG_SKIPPING_MIN_ROWS("spark.blaze.partialAggSkipping.minRows", BATCH_SIZE.intConf() * 5),
 
     /// always skip partial aggregate when triggered spilling
@@ -69,7 +69,7 @@ public enum BlazeConf {
     // parquet enable page filtering
     PARQUET_ENABLE_PAGE_FILTERING("spark.blaze.parquet.enable.pageFiltering", false),
 
-    // parqeut enable bloom filter
+    // parquet enable bloom filter
     PARQUET_ENABLE_BLOOM_FILTER("spark.blaze.parquet.enable.bloomFilter", false),
 
     // spark io compression codec

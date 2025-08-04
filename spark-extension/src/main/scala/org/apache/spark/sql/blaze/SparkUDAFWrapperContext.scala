@@ -128,7 +128,7 @@ case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {
       ArrowArray.wrap(importBatchFFIArrayPtr)) { (inputRoot, inputArray) =>
       // import into params root
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, inputArray, inputRoot, dictionaryProvider)
-      val inputRow = ColumnarHelper.rootRowReuseable(inputRoot)
+      val inputRow = ColumnarHelper.rootRowReusable(inputRoot)
 
       for (zippedIdx <- zippedIndices) {
         val rowIdx = ((zippedIdx >> 32) & 0xffffffff).toInt

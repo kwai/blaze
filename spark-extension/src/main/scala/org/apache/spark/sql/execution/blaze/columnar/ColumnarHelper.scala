@@ -21,7 +21,7 @@ import org.apache.arrow.vector.VectorSchemaRoot
 
 object ColumnarHelper {
   def rootRowsIter(root: VectorSchemaRoot): Iterator[BlazeColumnarBatchRow] = {
-    val row = rootRowReuseable(root)
+    val row = rootRowReusable(root)
     val numRows = root.getRowCount
     Range(0, numRows).iterator.map { rowId =>
       row.rowId = rowId
@@ -29,7 +29,7 @@ object ColumnarHelper {
     }
   }
 
-  def rootRowReuseable(root: VectorSchemaRoot): BlazeColumnarBatchRow = {
+  def rootRowReusable(root: VectorSchemaRoot): BlazeColumnarBatchRow = {
     val vectors = root.getFieldVectors.asScala.toArray
     new BlazeColumnarBatchRow(
       vectors.map(new BlazeArrowColumnVector(_).asInstanceOf[BlazeColumnVector]))
