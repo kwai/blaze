@@ -32,7 +32,8 @@ case object NativeShuffledHashJoinExecProvider {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      buildSide: BuildSide): NativeShuffledHashJoinBase = {
+      buildSide: BuildSide,
+      isSkewJoin: Boolean): NativeShuffledHashJoinBase = {
 
     import org.apache.spark.rdd.RDD
     import org.apache.spark.sql.catalyst.InternalRow
@@ -44,7 +45,8 @@ case object NativeShuffledHashJoinExecProvider {
         override val leftKeys: Seq[Expression],
         override val rightKeys: Seq[Expression],
         override val joinType: JoinType,
-        buildSide: BuildSide)
+        buildSide: BuildSide,
+        skewJoin: Boolean)
         extends NativeShuffledHashJoinBase(left, right, leftKeys, rightKeys, joinType, buildSide)
         with org.apache.spark.sql.execution.joins.ShuffledJoin {
 
@@ -70,9 +72,10 @@ case object NativeShuffledHashJoinExecProvider {
           newRight: SparkPlan): SparkPlan =
         copy(left = newLeft, right = newRight)
 
-      override def nodeName: String = "NativeShuffledHashJoinExec"
+      override def nodeName: String =
+        "NativeShuffledHashJoinExec" + (if (skewJoin) "(skew=true)" else "")
     }
-    NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide)
+    NativeShuffledHashJoinExec(left, right, leftKeys, rightKeys, joinType, buildSide, isSkewJoin)
   }
 
   @sparkver("3.1")
@@ -82,7 +85,8 @@ case object NativeShuffledHashJoinExecProvider {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      buildSide: BuildSide): NativeShuffledHashJoinBase = {
+      buildSide: BuildSide,
+      isSkewJoin: Boolean): NativeShuffledHashJoinBase = {
 
     import org.apache.spark.sql.catalyst.expressions.SortOrder
     import org.apache.spark.sql.execution.blaze.plan.BuildLeft
@@ -129,7 +133,8 @@ case object NativeShuffledHashJoinExecProvider {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      buildSide: BuildSide): NativeShuffledHashJoinBase = {
+      buildSide: BuildSide,
+      isSkewJoin: Boolean): NativeShuffledHashJoinBase = {
 
     import org.apache.spark.sql.catalyst.expressions.Attribute
     import org.apache.spark.sql.execution.blaze.plan.BuildLeft

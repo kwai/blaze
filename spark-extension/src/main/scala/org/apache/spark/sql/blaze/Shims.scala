@@ -98,7 +98,8 @@ abstract class Shims {
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       joinType: JoinType,
-      buildSide: BuildSide): SparkPlan
+      buildSide: BuildSide,
+      isSkewJoin: Boolean): SparkPlan
 
   def createNativeExpandExec(
       projections: Seq[Seq[Expression]],
