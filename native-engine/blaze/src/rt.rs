@@ -108,7 +108,9 @@ impl NativeExecutionRuntime {
         let spark_task_context_global = jni_new_global_ref!(spark_task_context.as_obj())?;
         let mut tokio_runtime_builder = tokio::runtime::Builder::new_multi_thread();
         tokio_runtime_builder
-            .thread_name(format!("blaze-native-stage-{stage_id}-part-{partition_id}"))
+            .thread_name(format!(
+                "blaze-native-stage-{stage_id}-part-{partition_id}-tid-{tid}"
+            ))
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(
