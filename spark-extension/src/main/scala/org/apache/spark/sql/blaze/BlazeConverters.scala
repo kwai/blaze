@@ -363,8 +363,10 @@ object BlazeConverters extends Logging {
 
   def convertProjectExec(exec: ProjectExec): SparkPlan = {
     val (projectList, child) = (exec.projectList, exec.child)
-    logDebug(s"Converting ProjectExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
+    if (log.isDebugEnabled) {
+      logDebug(s"Converting ProjectExec: ${Shims.get.simpleStringWithNodeId(exec)}")
+      projectList.foreach(p => logDebug(s"  projectExpr: ${p}"))
+    }
     Shims.get.createNativeProjectExec(projectList, addRenameColumnsExec(convertToNative(child)))
   }
 
