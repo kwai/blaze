@@ -15,7 +15,7 @@
 use std::io::{Error, ErrorKind};
 
 use log::error;
-use poem::{IntoResponse, Request, RouteMethod, http::StatusCode};
+use poem::{Request, RouteMethod, http::StatusCode};
 
 use super::Handler;
 
