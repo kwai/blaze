@@ -22,7 +22,9 @@ use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 use arrow::datatypes::SchemaRef;
 use arrow_schema::DataType;
 use blaze_jni_bridge::{
-    conf, conf::BooleanConf, conf::IntConf, jni_call_static, jni_new_global_ref, jni_new_string,
+    conf,
+    conf::{BooleanConf, IntConf},
+    jni_call_static, jni_new_global_ref, jni_new_string,
 };
 use bytes::Bytes;
 use datafusion::{
@@ -362,9 +364,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
         &mut self,
         ranges: Vec<Range<usize>>,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Vec<Bytes>>> {
-        let max_over_read_size = conf::PARQUET_MAX_OVER_READ_SIZE
-          .value()
-          .unwrap_or(16384) as usize;
+        let max_over_read_size = conf::PARQUET_MAX_OVER_READ_SIZE.value().unwrap_or(16384) as usize;
         let num_ranges = ranges.len();
         let (sorted_range_indices, sorted_ranges): (Vec<usize>, Vec<Range<usize>>) = ranges
             .into_iter()
