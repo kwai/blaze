@@ -105,6 +105,13 @@ object NativeConverters extends Logging {
     }
   }
 
+  def roundRobinTypeSupported(dataType: DataType): Boolean = dataType match {
+    case MapType(_, _, _) => false
+    case ArrayType(elementType, _) => roundRobinTypeSupported(elementType)
+    case StructType(fields) => fields.forall(f => roundRobinTypeSupported(f.dataType))
+    case _ => true
+  }
+
   def convertDataType(sparkDataType: DataType): pb.ArrowType = {
     val arrowTypeBuilder = pb.ArrowType.newBuilder()
     sparkDataType match {

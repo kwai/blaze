@@ -29,7 +29,7 @@ import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertStrategyTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.convertToNonNativeTag
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.isNeverConvert
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.joinSmallerSideTag
-import org.apache.spark.sql.blaze.NativeConverters.{scalarTypeSupported, StubExpr}
+import org.apache.spark.sql.blaze.NativeConverters.{roundRobinTypeSupported, scalarTypeSupported, StubExpr}
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -283,20 +283,27 @@ object BlazeConverters extends Logging {
     logDebug(s"Converting ShuffleExchangeExec: ${Shims.get.simpleStringWithNodeId(exec)}")
 
     assert(
-      exec.outputPartitioning.numPartitions == 1 || exec.outputPartitioning
-        .isInstanceOf[HashPartitioning] || exec.outputPartitioning
-        .isInstanceOf[RoundRobinPartitioning] || exec.outputPartitioning
+      outputPartitioning.numPartitions == 1 || outputPartitioning
+        .isInstanceOf[HashPartitioning] || outputPartitioning
+        .isInstanceOf[RoundRobinPartitioning] || outputPartitioning
         .isInstanceOf[RangePartitioning],
-      s"partitioning not supported: ${exec.outputPartitioning}")
+      s"partitioning not supported: $outputPartitioning")
 
-    if (exec.outputPartitioning.isInstanceOf[RangePartitioning]) {
-      val unsupportedOrderType = exec.outputPartitioning
-        .asInstanceOf[RangePartitioning]
-        .ordering
-        .find(e => !scalarTypeSupported(e.dataType))
-      assert(
-        unsupportedOrderType.isEmpty,
-        s"Unsupported order type in range partitioning: ${unsupportedOrderType.get}")
+    outputPartitioning match {
+      case partitioning: RangePartitioning =>
+        val unsupportedOrderType = partitioning.ordering
+          .find(e => !scalarTypeSupported(e.dataType))
+        assert(
+          unsupportedOrderType.isEmpty,
+          s"Unsupported order type in range partitioning: ${unsupportedOrderType.get}")
+      case _: RoundRobinPartitioning =>
+        val unsupportedTypeInRR =
+          exec.output.find(attr => !roundRobinTypeSupported(attr.dataType))
+        assert(
+          unsupportedTypeInRR.isEmpty,
+          s"Unsupported data type in $outputPartitioning: attribute=${unsupportedTypeInRR.get.name}" +
+            s", dataType=${unsupportedTypeInRR.get.dataType}")
+      case _ =>
     }
 
     val convertedChild = outputPartitioning match {
