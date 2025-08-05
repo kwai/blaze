@@ -628,16 +628,26 @@ impl ExternalSorter {
         self.mem_total_size
             .fetch_add(batch.get_batch_mem_size(), SeqCst);
 
+        // sort keys
+        // NOTE: we use stable merge sort for longer keys due to less comparison
         let (keys, batch) = self.prune_sort_keys_from_batch.prune(batch)?;
-        let sorted_indices: Vec<u32> = (0..batch.num_rows() as u32)
-            .sorted_unstable_by_key(|&row_idx| unsafe {
+        let sorted_indices = if keys.size() / keys.num_rows() <= 8 {
+            (0..keys.num_rows() as u32).sorted_unstable_by_key(|&row_idx| unsafe {
                 // safety: bypass boundary and lifetime checking
                 std::mem::transmute::<_, &'static [u8]>(
                     keys.row_unchecked(row_idx as usize).as_ref(),
                 )
             })
-            .take(self.limit)
-            .collect();
+        } else {
+            (0..keys.num_rows() as u32).sorted_by_key(|&row_idx| unsafe {
+                // safety: bypass boundary and lifetime checking
+                std::mem::transmute::<_, &'static [u8]>(
+                    keys.row_unchecked(row_idx as usize).as_ref(),
+                )
+            })
+        }
+        .take(self.limit)
+        .collect::<Vec<_>>();
 
         // build keys
         let mut key_collector = InMemRowsKeyCollector::default();
