@@ -121,7 +121,7 @@ abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val chi
       .map(_.copy())
       .toArray
 
-    val broadcast = relationFuture.get // bloadcast must be resolved
+    val broadcast = relationFuture.get // broadcast must be resolved
     val v = mode.transform(dataRows)
     val dummyBroadcasted = new Broadcast[Any](-1) {
       override protected def getValue(): Any = v

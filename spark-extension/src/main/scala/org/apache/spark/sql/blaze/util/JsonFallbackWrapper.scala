@@ -40,7 +40,7 @@ case class JsonFallbackWrapper(jsonPath: String) extends Logging {
       ArrowArray.wrap(jsonsStrArrayPtr),
       ArrowArray.wrap(outputArrayPtr)) { case (inputRoot, outputRoot, inputArray, outputArray) =>
       Data.importIntoVectorSchemaRoot(ROOT_ALLOCATOR, inputArray, inputRoot, dictionaryProvider)
-      val inputRow = ColumnarHelper.rootRowReuseable(inputRoot)
+      val inputRow = ColumnarHelper.rootRowReusable(inputRoot)
       val nullOutputRow = new GenericInternalRow(1)
       val outputRow = new GenericInternalRow(1)
       val outputWriter = ArrowWriter.create(outputRoot)

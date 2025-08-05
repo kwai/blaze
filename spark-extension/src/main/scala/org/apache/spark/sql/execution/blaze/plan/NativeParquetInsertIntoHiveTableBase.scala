@@ -78,7 +78,7 @@ abstract class NativeParquetInsertIntoHiveTableBase(
     val encryptEnabled: Boolean = hadoopConf.getBoolean("parquet.encrypt.enable", false)
 
     assert(outputFormatClassName.endsWith("mapredparquetoutputformat"), "not parquet format")
-    assert(!encryptEnabled, "not supported writting encrypted table")
+    assert(!encryptEnabled, "not supported writing encrypted table")
   }
   check()
 

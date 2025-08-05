@@ -162,11 +162,11 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
         def toRow(
             values: Seq[String],
             partitionSchema: StructType,
-            defaultTimeZondId: String): InternalRow = {
+            defaultTimeZoneId: String): InternalRow = {
           val caseInsensitiveProperties = CaseInsensitiveMap(
             relation.tableMeta.storage.properties)
           val timeZoneId =
-            caseInsensitiveProperties.getOrElse(DateTimeUtils.TIMEZONE_OPTION, defaultTimeZondId)
+            caseInsensitiveProperties.getOrElse(DateTimeUtils.TIMEZONE_OPTION, defaultTimeZoneId)
           InternalRow.fromSeq(partitionSchema.zipWithIndex.map { case (field, index) =>
             val partValue = if (values(index) == ExternalCatalogUtils.DEFAULT_PARTITION_NAME) {
               null

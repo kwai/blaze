@@ -106,7 +106,7 @@ case class SparkUDTFWrapperContext(serialized: ByteBuffer) extends Logging {
         // evaluate expression and write to output root
         val reusedOutputRow = new GenericInternalRow(Array[Any](null, null))
         val outputWriter = ArrowWriter.create(outputRoot)
-        val paramsRow = ColumnarHelper.rootRowReuseable(currentParamsRoot)
+        val paramsRow = ColumnarHelper.rootRowReusable(currentParamsRoot)
 
         while (currentRowIdx < currentParamsRoot.getRowCount
           && allocator.getAllocatedMemory < maxBatchMemorySize
