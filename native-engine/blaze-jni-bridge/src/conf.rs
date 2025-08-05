@@ -41,6 +41,8 @@ define_conf!(IntConf, PARTIAL_AGG_SKIPPING_MIN_ROWS);
 define_conf!(BooleanConf, PARTIAL_AGG_SKIPPING_SKIP_SPILL);
 define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
 define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
+define_conf!(IntConf, PARQUET_MAX_OVER_READ_SIZE);
+define_conf!(IntConf, PARQUET_METADATA_CACHE_SIZE);
 define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
 define_conf!(IntConf, TOKIO_WORKER_THREADS_PER_CPU);
 define_conf!(IntConf, SPARK_TASK_CPUS);
