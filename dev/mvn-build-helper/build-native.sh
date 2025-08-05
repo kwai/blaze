@@ -2,9 +2,13 @@
 
 set -e
 
-cd "$(dirname "$0")"
-profile="$1"
+# Preserve the calling directory
+_CALLING_DIR="$(pwd)"
 
+PROJECT_DIR="$(cd "`dirname "$0"`/../.."; pwd)"
+cd "$PROJECT_DIR"
+
+profile="$1"
 features_arg=""
 if [ -n "$2" ]; then
     features_arg="--features $2"
@@ -76,3 +80,5 @@ echo "build-checksum updated: $new_checksum"
 echo "$new_checksum" >"$checksum_cache_file"
 
 echo "Finished native building"
+
+cd "${_CALLING_DIR}"
