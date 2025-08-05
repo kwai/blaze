@@ -357,7 +357,10 @@ object BlazeConverters extends Logging {
       case p if p.getClass.getName.endsWith("OrcFileFormat") =>
         assert(enableScanOrc)
         addRenameColumnsExec(Shims.get.createNativeOrcScanExec(exec))
-      case _ => throw new NotImplementedError("Cannot convert non parquet/orc scan exec")
+      case p =>
+        throw new NotImplementedError(
+          s"Cannot convert FileSourceScanExec tableIdentifier: ${tableIdentifier.getOrElse(
+            "unknown")}, class: ${p.getClass.getName}")
     }
   }
 
