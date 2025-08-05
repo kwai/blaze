@@ -105,7 +105,8 @@ class BlazeQuerySuite
 
   test("repartition over MapType with ArrayType") {
     withTable("t_map_struct") {
-      sql("create table t_map_struct using parquet as select named_struct('m', map('x', '1')) as data_struct")
+      sql(
+        "create table t_map_struct using parquet as select named_struct('m', map('x', '1')) as data_struct")
       val df = sql("SELECT /*+ repartition(10) */ data_struct FROM t_map_struct")
       checkAnswer(df, Seq(Row(Row(Map("x" -> "1")))))
     }
@@ -113,8 +114,7 @@ class BlazeQuerySuite
 
   test("repartition over ArrayType with MapType") {
     withTable("t_array_map") {
-      sql(
-        """
+      sql("""
           |create table t_array_map using parquet as
           |select array(map('k1', 1, 'k2', 2), map('k3', 3)) as array_of_map
           |""".stripMargin)
@@ -125,8 +125,7 @@ class BlazeQuerySuite
 
   test("repartition over StructType with MapType") {
     withTable("t_struct_map") {
-      sql(
-        """
+      sql("""
           |create table t_struct_map using parquet as
           |select named_struct('id', 101, 'metrics', map('ctr', 0.123, 'cvr', 0.045)) as user_metrics
           |""".stripMargin)
@@ -137,8 +136,7 @@ class BlazeQuerySuite
 
   test("repartition over MapType with StructType") {
     withTable("t_map_struct_value") {
-      sql(
-        """
+      sql("""
           |create table t_map_struct_value using parquet as
           |select map(
           |  'item1', named_struct('count', 3, 'score', 4.5),
@@ -146,19 +144,13 @@ class BlazeQuerySuite
           |) as map_struct_value
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ map_struct_value FROM t_map_struct_value")
-      checkAnswer(df, Seq(Row(
-        Map(
-          "item1" -> Row(3, 4.5),
-          "item2" -> Row(7, 9.1)
-        )
-      )))
+      checkAnswer(df, Seq(Row(Map("item1" -> Row(3, 4.5), "item2" -> Row(7, 9.1)))))
     }
   }
 
   test("repartition over nested MapType") {
     withTable("t_nested_map") {
-      sql(
-        """
+      sql("""
           |create table t_nested_map using parquet as
           |select map(
           |  'outer1', map('inner1', 10, 'inner2', 20),
@@ -166,19 +158,16 @@ class BlazeQuerySuite
           |) as nested_map
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ nested_map FROM t_nested_map")
-      checkAnswer(df, Seq(Row(
-        Map(
-          "outer1" -> Map("inner1" -> 10, "inner2" -> 20),
-          "outer2" -> Map("inner3" -> 30)
-        )
-      )))
+      checkAnswer(
+        df,
+        Seq(Row(
+          Map("outer1" -> Map("inner1" -> 10, "inner2" -> 20), "outer2" -> Map("inner3" -> 30)))))
     }
   }
 
   test("repartition over ArrayType of StructType with MapType") {
     withTable("t_array_struct_map") {
-      sql(
-        """
+      sql("""
           |create table t_array_struct_map using parquet as
           |select array(
           |  named_struct('name', 'user1', 'features', map('f1', 1.0, 'f2', 2.0)),
@@ -186,10 +175,11 @@ class BlazeQuerySuite
           |) as user_feature_array
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ user_feature_array FROM t_array_struct_map")
-      checkAnswer(df, Seq(Row(Seq(
-        Row("user1", Map("f1" -> 1.0f, "f2" -> 2.0f)),
-        Row("user2", Map("f3" -> 3.5f))
-      ))))
+      checkAnswer(
+        df,
+        Seq(
+          Row(
+            Seq(Row("user1", Map("f1" -> 1.0f, "f2" -> 2.0f)), Row("user2", Map("f3" -> 3.5f))))))
     }
   }
 

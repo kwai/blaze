@@ -291,8 +291,7 @@ object BlazeConverters extends Logging {
 
     outputPartitioning match {
       case partitioning: RangePartitioning =>
-        val unsupportedOrderType = partitioning
-          .ordering
+        val unsupportedOrderType = partitioning.ordering
           .find(e => !scalarTypeSupported(e.dataType))
         assert(
           unsupportedOrderType.isEmpty,
@@ -303,8 +302,7 @@ object BlazeConverters extends Logging {
         assert(
           unsupportedTypeInRR.isEmpty,
           s"Unsupported data type in $outputPartitioning: attribute=${unsupportedTypeInRR.get.name}" +
-            s", dataType=${unsupportedTypeInRR.get.dataType}"
-        )
+            s", dataType=${unsupportedTypeInRR.get.dataType}")
       case _ =>
     }
 
