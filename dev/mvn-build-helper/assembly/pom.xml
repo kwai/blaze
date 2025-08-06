@@ -65,10 +65,11 @@
                     <exclude>org/apache/commons/codec/**/*</exclude>
                     <exclude>org/apache/commons/compress/**/*</exclude>
                     <exclude>org/slf4j/**/*</exclude>
-                    <excludes>META-INF/*.SF</excludes>
-                    <excludes>META-INF/*.DSA</excludes>
-                    <excludes>META-INF/*.RSA</excludes>
-                    <excludes>**/*.semanticdb</excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/**/module-info.class</exclude>
+                    <exclude>**/*.semanticdb</exclude>
                   </excludes>
                 </filter>
               </filters>
