@@ -18,7 +18,11 @@
 use std::io::{BufReader, Read, Take, Write};
 
 use arrow::{array::ArrayRef, datatypes::SchemaRef};
-use blaze_jni_bridge::{conf, conf::StringConf, is_jni_bridge_inited};
+use blaze_jni_bridge::{
+    conf,
+    conf::{IntConf, StringConf},
+    is_jni_bridge_inited,
+};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use datafusion::common::Result;
 use datafusion_ext_commons::{
@@ -26,7 +30,6 @@ use datafusion_ext_commons::{
     io::{read_one_batch, write_one_batch},
 };
 use once_cell::sync::OnceCell;
-use blaze_jni_bridge::conf::IntConf;
 
 pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
 
@@ -181,7 +184,10 @@ impl<W: Write> IoCompressionWriter<W> {
     pub fn try_new(codec: &str, inner: W) -> Result<Self> {
         match codec {
             "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameEncoder::new(inner))),
-            "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(inner, conf::SPARK_IO_COMPRESSION_ZSTD_LEVEL.value().unwrap_or(1))?)),
+            "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(
+                inner,
+                conf::SPARK_IO_COMPRESSION_ZSTD_LEVEL.value().unwrap_or(1),
+            )?)),
             _ => df_execution_err!("unsupported codec: {}", codec),
         }
     }
