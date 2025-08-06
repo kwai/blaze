@@ -91,7 +91,8 @@ Blaze.
 ```shell
 SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.4/spark-3.5
 MODE=release # or pre
-./build/mvn clean package -P"${SHIM}" -P"${MODE}"
+JAVA_VERSION=8 # or 11/17
+./build/mvn clean package -P"${SHIM}" -P"${MODE} -P"jdk-${JAVA_VERSION}"
 ```
 
 Skip build native (native lib is already built, and you can check the native lib in `native-engine/_build/${MODE}`).
@@ -99,7 +100,8 @@ Skip build native (native lib is already built, and you can check the native lib
 ```shell
 SHIM=spark-3.3 # or spark-3.0/spark-3.1/spark-3.2/spark-3.3/spark-3.4/spark-3.5
 MODE=release # or pre
-./build/mvn clean package -P"${SHIM}" -P"${MODE}" -DskipBuildNative
+JAVA_VERSION=8 # or 11/17
+./build/mvn clean package -P"${SHIM}" -P"${MODE}" -P"jdk-${JAVA_VERSION}" -DskipBuildNative
 ```
 
 After the build is finished, a fat Jar package that contains all the dependencies will be generated in the `target`
@@ -109,7 +111,7 @@ directory.
 
 You can use the following command to build a centos-7 compatible release:
 ```shell
-SHIM=spark-3.3 MODE=release ./release-docker.sh
+SHIM=spark-3.3 MODE=release JAVA_VERSION=8 ./release-docker.sh
 ```
 
 ## Run Spark Job with Blaze Accelerator
