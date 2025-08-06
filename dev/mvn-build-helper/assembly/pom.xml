@@ -85,6 +85,7 @@
                 <relocation>
                   <pattern>org.apache.arrow</pattern>
                   <shadedPattern>${blaze.shade.packageName}.org.apache.arrow</shadedPattern>
+                  <!--arrow's C and dataset wrapper refers to the original class path, so we should not relocate here-->
                   <excludes>
                     <exclude>org.apache.arrow.c.**</exclude>
                   </excludes>
