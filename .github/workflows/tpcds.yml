@@ -45,8 +45,25 @@ jobs:
       sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.4.3/spark-3.4.3-bin-hadoop3.tgz
 
   test-spark-35:
-    name: Test spark-3.5
+    name: Test spark-3.5 JDK8
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      javaver: '8'
+
+  test-spark-35-jdk11:
+    name: Test spark-3.5 JDK11
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark-3.5
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      javaver: '11'
+
+  test-spark-35-jdk17:
+    name: Test spark-3.5 JDK17
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark-3.5
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      javaver: '17'
