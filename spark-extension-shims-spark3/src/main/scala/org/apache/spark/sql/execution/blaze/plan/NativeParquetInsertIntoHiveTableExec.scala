@@ -113,9 +113,17 @@ case class NativeParquetInsertIntoHiveTableExec(
       new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
         override def newTaskInstance(): WriteTaskStatsTracker = {
           new BasicWriteTaskStatsTracker(serializableHadoopConf.value) {
-            override def newRow(_filePath: String, _row: InternalRow): Unit = {}
+            override def newRow(filePath: String, row: InternalRow): Unit = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.newRow(filePath, row)
+              }
+            }
 
             override def closeFile(filePath: String): Unit = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.closeFile(filePath)
+              }
+
               val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
               for (_ <- 0L until outputFileStat.numRows) {
                 super.newRow(filePath, null)
@@ -147,12 +155,23 @@ case class NativeParquetInsertIntoHiveTableExec(
               mutable.ArrayBuffer.empty
 
             override def newPartition(partitionValues: InternalRow): Unit = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.newPartition(partitionValues)
+              }
               partitions.append(partitionValues)
             }
 
-            override def newRow(_row: InternalRow): Unit = {}
+            override def newRow(row: InternalRow): Unit = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.newRow(row)
+              }
+            }
 
             override def getFinalStats(): WriteTaskStats = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.getFinalStats()
+              }
+
               val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
               BasicWriteTaskStats(
                 partitions = partitions,
@@ -179,9 +198,17 @@ case class NativeParquetInsertIntoHiveTableExec(
       new BasicWriteJobStatsTracker(serializableHadoopConf, metrics) {
         override def newTaskInstance(): WriteTaskStatsTracker = {
           new BasicWriteTaskStatsTracker(serializableHadoopConf.value) {
-            override def newRow(_row: InternalRow): Unit = {}
+            override def newRow(row: InternalRow): Unit = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.newRow(row)
+              }
+            }
 
             override def getFinalStats(): WriteTaskStats = {
+              if (!ParquetSinkTaskContext.get.isNative) {
+                return super.getFinalStats()
+              }
+
               val outputFileStat = ParquetSinkTaskContext.get.processedOutputFiles.remove()
               BasicWriteTaskStats(
                 numPartitions = 1,
