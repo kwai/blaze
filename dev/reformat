@@ -36,9 +36,9 @@ for ver in ${sparkver[@]}
 do
   SHIM=$ver
   if [[ "$CHECK" == "true" ]]; then
-    mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -P"${SHIM}" -P"${MODE}"
+    mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -DskipBuildNative -P"${SHIM}" -P"${MODE}"
   else
-    mvn spotless:apply compile test-compile scalafix:scalafix -P"${SHIM}" -P"${MODE}"
+    mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}"
   fi
 done
 
