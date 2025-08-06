@@ -22,7 +22,9 @@ use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 use arrow::datatypes::SchemaRef;
 use arrow_schema::DataType;
 use blaze_jni_bridge::{
-    conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
+    conf,
+    conf::{BooleanConf, IntConf},
+    jni_call_static, jni_new_global_ref, jni_new_string,
 };
 use bytes::Bytes;
 use datafusion::{
@@ -362,7 +364,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
         &mut self,
         ranges: Vec<Range<usize>>,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Vec<Bytes>>> {
-        const MAX_OVER_READ_SIZE: usize = 16384; // TODO: make it configurable
+        let max_over_read_size = conf::PARQUET_MAX_OVER_READ_SIZE.value().unwrap_or(16384) as usize;
         let num_ranges = ranges.len();
         let (sorted_range_indices, sorted_ranges): (Vec<usize>, Vec<Range<usize>>) = ranges
             .into_iter()
@@ -378,7 +380,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
             }
 
             let last_merged_range = merged_ranges.last_mut().unwrap();
-            if range.start <= last_merged_range.end + MAX_OVER_READ_SIZE {
+            if range.start <= last_merged_range.end + max_over_read_size {
                 last_merged_range.end = range.end.max(last_merged_range.end);
             } else {
                 merged_ranges.push(range);
@@ -439,8 +441,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
     fn get_metadata(
         &mut self,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
-        const METADATA_CACHE_SIZE: usize = 5; // TODO: make it configurable
-
+        let metadata_cache_size = conf::PARQUET_METADATA_CACHE_SIZE.value().unwrap_or(5) as usize;
         type ParquetMetaDataSlot = tokio::sync::OnceCell<Arc<ParquetMetaData>>;
         type ParquetMetaDataCacheTable = Vec<(ObjectMeta, ParquetMetaDataSlot)>;
         static METADATA_CACHE: OnceCell<Mutex<ParquetMetaDataCacheTable>> = OnceCell::new();
@@ -459,7 +460,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
             }
 
             // reserve a new cache slot
-            if metadata_cache.len() >= METADATA_CACHE_SIZE {
+            if metadata_cache.len() >= metadata_cache_size {
                 metadata_cache.remove(0); // remove eldest
             }
             let cache_slot = ParquetMetaDataSlot::default();

@@ -72,6 +72,12 @@ public enum BlazeConf {
     // parquet enable bloom filter
     PARQUET_ENABLE_BLOOM_FILTER("spark.blaze.parquet.enable.bloomFilter", false),
 
+    // parquet max over read size
+    PARQUET_MAX_OVER_READ_SIZE("spark.blaze.parquet.maxOverReadSize", 16384),
+
+    // parquet metadata cache size
+    PARQUET_METADATA_CACHE_SIZE("spark.blaze.parquet.metadataCacheSize", 5),
+
     // spark io compression codec
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
