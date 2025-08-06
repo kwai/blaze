@@ -76,7 +76,7 @@ public enum BlazeConf {
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
     // spark io compression zstd level
-    SPARK_IO_COMPRESSION_ZSTD_LEVEL("spark.io.compression.zstd.level", "1"),
+    SPARK_IO_COMPRESSION_ZSTD_LEVEL("spark.io.compression.zstd.level", 1),
 
     // tokio worker threads per cpu (spark.task.cpus), 0 for auto detection
     TOKIO_WORKER_THREADS_PER_CPU("spark.blaze.tokio.worker.threads.per.cpu", 0),
