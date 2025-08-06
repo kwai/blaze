@@ -162,7 +162,7 @@ pub fn cast_impl(
                         // "value"
                         if col.is_none() && (origin.eq("key") || origin.eq("value")) {
                             let adjust = format!("{}s", origin);
-                            log::info!("adjust map entries field name: {} -> {}", origin, adjust);
+                            log::debug!("adjust map entries field name: {} -> {}", origin, adjust);
                             col = struct_.column_by_name(adjust.as_str());
                         }
                         if col.is_some() {
