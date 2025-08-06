@@ -60,13 +60,13 @@ fi
 if [ ! -f "$libpath" ] || [ "$new_checksum" != "$old_checksum" ]; then
     export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
     echo "Running cargo fix..."
-    cargo fix --all --allow-dirty --allow-staged --allow-no-vcs
+    cargo fix --all --allow-dirty --allow-staged --allow-no-vcs  2>&1
 
     echo "Running cargo fmt..."
-    cargo fmt --all -q --
+    cargo fmt --all -q -- 2>&1
 
     echo "Building native with [$profile] profile..."
-    cargo build --profile="$profile" $features_arg --verbose --locked --frozen
+    cargo build --profile="$profile" $features_arg --verbose --locked --frozen 2>&1
 else
     echo "native-engine source code and built libraries not modified, no need to rebuild"
 fi
