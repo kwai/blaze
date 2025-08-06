@@ -26,9 +26,9 @@ use datafusion_ext_commons::{
     io::{read_one_batch, write_one_batch},
 };
 use once_cell::sync::OnceCell;
+use blaze_jni_bridge::conf::IntConf;
 
 pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
-const ZSTD_LEVEL: i32 = 1;
 
 pub struct IpcCompressionWriter<W: Write> {
     output: W,
@@ -181,7 +181,7 @@ impl<W: Write> IoCompressionWriter<W> {
     pub fn try_new(codec: &str, inner: W) -> Result<Self> {
         match codec {
             "lz4" => Ok(Self::LZ4(lz4_flex::frame::FrameEncoder::new(inner))),
-            "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(inner, ZSTD_LEVEL)?)),
+            "zstd" => Ok(Self::ZSTD(zstd::Encoder::new(inner, conf::SPARK_IO_COMPRESSION_ZSTD_LEVEL.value().unwrap_or(1))?)),
             _ => df_execution_err!("unsupported codec: {}", codec),
         }
     }

@@ -42,6 +42,7 @@ define_conf!(BooleanConf, PARTIAL_AGG_SKIPPING_SKIP_SPILL);
 define_conf!(BooleanConf, PARQUET_ENABLE_PAGE_FILTERING);
 define_conf!(BooleanConf, PARQUET_ENABLE_BLOOM_FILTER);
 define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
+define_conf!(IntConf, SPARK_IO_COMPRESSION_ZSTD_LEVEL);
 define_conf!(IntConf, TOKIO_WORKER_THREADS_PER_CPU);
 define_conf!(IntConf, SPARK_TASK_CPUS);
 define_conf!(StringConf, SPILL_COMPRESSION_CODEC);
