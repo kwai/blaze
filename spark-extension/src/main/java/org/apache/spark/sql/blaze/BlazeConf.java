@@ -15,8 +15,8 @@
  */
 package org.apache.spark.sql.blaze;
 
-import org.apache.spark.SparkConf;
-import org.apache.spark.SparkEnv$;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.internal.SQLConf$;
 
 @SuppressWarnings("unused")
 public enum BlazeConf {
@@ -123,23 +123,23 @@ public enum BlazeConf {
     }
 
     public boolean booleanConf() {
-        return conf().getBoolean(key, (boolean) defaultValue);
+        return Boolean.valueOf(stringConf());
     }
 
     public int intConf() {
-        return conf().getInt(key, (int) defaultValue);
+        return Integer.valueOf(stringConf());
     }
 
     public long longConf() {
-        return conf().getLong(key, (long) defaultValue);
+        return Long.valueOf(stringConf());
     }
 
     public double doubleConf() {
-        return conf().getDouble(key, (double) defaultValue);
+        return Double.valueOf(stringConf());
     }
 
     public String stringConf() {
-        return conf().get(key, (String) defaultValue);
+        return conf().getConfString(key, defaultValue.toString()).trim();
     }
 
     public static boolean booleanConf(String confName) {
@@ -162,7 +162,7 @@ public enum BlazeConf {
         return BlazeConf.valueOf(confName).stringConf();
     }
 
-    private static SparkConf conf() {
-        return SparkEnv$.MODULE$.get().conf();
+    private static SQLConf conf() {
+        return SQLConf$.MODULE$.get();
     }
 }
