@@ -136,10 +136,11 @@ object BlazeConverters extends Logging {
   def enableScanOrc: Boolean =
     getBooleanConf("spark.blaze.enable.scan.orc", defaultValue = true)
 
+  // scalafix:off
+  // necessary imports for cross spark versions build
   import org.apache.spark.sql.catalyst.plans._
   import org.apache.spark.sql.catalyst.optimizer._
-  var _UnusedQueryPlan: QueryPlan[_] = _
-  var _UnusedOptimizer: Optimizer = _
+  // scalafix:on
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     // convert
