@@ -159,6 +159,7 @@ jobs:
           ls -la
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
+          export SCALA_VERSION=${{ inputs.scalaver }}
           SPARK_HOME=spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
