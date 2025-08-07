@@ -42,5 +42,3 @@ do
     mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
   fi
 done
-
-
