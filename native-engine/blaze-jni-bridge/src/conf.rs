@@ -14,7 +14,7 @@
 
 use datafusion::common::{DataFusionError, Result};
 
-use crate::{is_jni_bridge_inited, jni_call_static, jni_get_string, jni_new_string};
+use crate::{ensure_jni_bridge_inited, jni_call_static, jni_get_string, jni_new_string};
 
 macro_rules! define_conf {
     ($conftype:ty, $name:ident) => {
@@ -60,11 +60,7 @@ define_conf!(StringConf, NATIVE_LOG_LEVEL);
 pub trait BooleanConf {
     fn key(&self) -> &'static str;
     fn value(&self) -> Result<bool> {
-        if !is_jni_bridge_inited() {
-            return Err(DataFusionError::Execution(format!(
-                "JNIEnv not initialized"
-            )));
-        }
+        ensure_jni_bridge_inited()?;
         let key = jni_new_string!(self.key())?;
         jni_call_static!(BlazeConf.booleanConf(key.as_obj()) -> bool)
     }
@@ -73,11 +69,7 @@ pub trait BooleanConf {
 pub trait IntConf {
     fn key(&self) -> &'static str;
     fn value(&self) -> Result<i32> {
-        if !is_jni_bridge_inited() {
-            return Err(DataFusionError::Execution(format!(
-                "JNIEnv not initialized"
-            )));
-        }
+        ensure_jni_bridge_inited()?;
         let key = jni_new_string!(self.key())?;
         jni_call_static!(BlazeConf.intConf(key.as_obj()) -> i32)
     }
@@ -86,11 +78,7 @@ pub trait IntConf {
 pub trait LongConf {
     fn key(&self) -> &'static str;
     fn value(&self) -> Result<i64> {
-        if !is_jni_bridge_inited() {
-            return Err(DataFusionError::Execution(format!(
-                "JNIEnv not initialized"
-            )));
-        }
+        ensure_jni_bridge_inited()?;
         let key = jni_new_string!(self.key())?;
         jni_call_static!(BlazeConf.longConf(key.as_obj()) -> i64)
     }
@@ -99,11 +87,7 @@ pub trait LongConf {
 pub trait DoubleConf {
     fn key(&self) -> &'static str;
     fn value(&self) -> Result<f64> {
-        if !is_jni_bridge_inited() {
-            return Err(DataFusionError::Execution(format!(
-                "JNIEnv not initialized"
-            )));
-        }
+        ensure_jni_bridge_inited()?;
         let key = jni_new_string!(self.key())?;
         jni_call_static!(BlazeConf.doubleConf(key.as_obj()) -> f64)
     }
@@ -112,11 +96,7 @@ pub trait DoubleConf {
 pub trait StringConf {
     fn key(&self) -> &'static str;
     fn value(&self) -> Result<String> {
-        if !is_jni_bridge_inited() {
-            return Err(DataFusionError::Execution(format!(
-                "JNIEnv not initialized"
-            )));
-        }
+        ensure_jni_bridge_inited()?;
         let key = jni_new_string!(self.key())?;
         let value = jni_get_string!(
             jni_call_static!(BlazeConf.stringConf(key.as_obj()) -> JObject)?

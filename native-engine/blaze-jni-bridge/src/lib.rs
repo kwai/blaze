@@ -12,13 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::common::Result;
+use datafusion::common::{DataFusionError, Result};
 
 pub mod conf;
 pub mod jni_bridge;
 
 pub fn is_jni_bridge_inited() -> bool {
     jni_bridge::JavaClasses::inited()
+}
+
+pub fn ensure_jni_bridge_inited() -> Result<()> {
+    if is_jni_bridge_inited() {
+        Ok(())
+    } else {
+        Err(DataFusionError::Execution(
+            "JNIEnv not initialized".to_string(),
+        ))
+    }
 }
 
 pub fn is_task_running() -> bool {
