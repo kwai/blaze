@@ -110,11 +110,19 @@
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/blaze-engine-${shimName}-${releaseMode}-${revision}.jar</outputFile>
+              <outputFile>../../../target/blaze-engine-${shimName}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
             </configuration>
           </execution>
         </executions>
       </plugin>
     </plugins>
+    <extensions>
+      <!-- provides os.detected.classifier (i.e. linux-x86_64, osx-x86_64) property -->
+      <extension>
+        <groupId>kr.motd.maven</groupId>
+        <artifactId>os-maven-plugin</artifactId>
+        <version>${os-maven-plugin.version}</version>
+      </extension>
+    </extensions>
   </build>
 </project>
