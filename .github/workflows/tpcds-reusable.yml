@@ -13,6 +13,10 @@ on:
         required: false
         type: string
         default: '8'
+      scalaver:
+        required: false
+        type: string
+        default: '2.12'
 
 jobs:
   build-validator:
@@ -44,7 +48,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tpcds-validator-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
+          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
           path: target/tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar
           overwrite: true
 
@@ -78,14 +82,14 @@ jobs:
       - name: Cargo test
         run: cargo +nightly test --workspace --all-features
 
-      - name: Build ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
-        run: mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }}
+      - name: Build ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
+        run: mvn package -Ppre -P${{ inputs.sparkver }} -Pscala-${{ inputs.scalaver }} -Pjdk-${{ inputs.javaver }}
 
-      - name: Upload ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
+      - name: Upload ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
-          path: target/blaze-engine-${{ inputs.sparkver }}-pre-*-SNAPSHOT.jar
+          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          path: target/blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
   run-tpcds-test:
@@ -113,24 +117,24 @@ jobs:
       - uses: actions/cache@v4
         id: cache-spark-bin
         with:
-          path: spark-bin-${{ inputs.sparkver }}
-          key: spark-bin-${{ inputs.sparkver }}
+          path: spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}
+          key: spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}
 
       - name: Setup ${{ inputs.sparkver }}
         id: setup-spark-bin
         if: steps.cache-spark-bin.outputs.cache-hit != 'true'
         run: |
           wget -c ${{ inputs.sparkurl }}
-          mkdir -p spark-bin-${{ inputs.sparkver }}
-          cd spark-bin-${{ inputs.sparkver }} && tar -xf ../spark-*.tgz --strip-component=1
+          mkdir -p spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}
+          cd spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }} && tar -xf ../spark-*.tgz --strip-component=1
 
       - uses: actions/download-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
+          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: tpcds-validator-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
+          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
 
       - name: Checkout TPC-DS Data
         uses: actions/checkout@v4
@@ -141,7 +145,7 @@ jobs:
       - name: Install Blaze JAR
         run: |
           ls -la
-          cp blaze-engine-*${{ inputs.sparkver }}*.jar spark-bin-${{ inputs.sparkver }}/jars/
+          cp blaze-engine-*${{ inputs.sparkver }}_${{ inputs.scalaver }}*.jar spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}/jars/
 
       - uses: actions/setup-java@v4
         with:
@@ -154,6 +158,6 @@ jobs:
           ls -la
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
-          SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
+          SPARK_HOME=spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }} dev/run-tpcds-test \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
