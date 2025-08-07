@@ -12,6 +12,10 @@
   <artifactId>assembly</artifactId>
   <packaging>jar</packaging>
 
+  <properties>
+    <blaze.shade.packageName>blaze</blaze.shade.packageName>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>org.blaze</groupId>
@@ -61,28 +65,46 @@
                     <exclude>org/apache/commons/codec/**/*</exclude>
                     <exclude>org/apache/commons/compress/**/*</exclude>
                     <exclude>org/slf4j/**/*</exclude>
-                    <excludes>META-INF/*.SF</excludes>
-                    <excludes>META-INF/*.DSA</excludes>
-                    <excludes>META-INF/*.RSA</excludes>
-                    <excludes>**/*.semanticdb</excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/**/module-info.class</exclude>
+                    <exclude>**/*.semanticdb</exclude>
                   </excludes>
                 </filter>
               </filters>
               <relocations>
                 <relocation>
                   <pattern>com.google.flatbuffers</pattern>
-                  <shadedPattern>blaze.com.google.flatbuffers</shadedPattern>
+                  <shadedPattern>${blaze.shade.packageName}.com.google.flatbuffers</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>com.google.protobuf</pattern>
-                  <shadedPattern>blaze.com.google.protobuf</shadedPattern>
+                  <shadedPattern>${blaze.shade.packageName}.com.google.protobuf</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>org.apache.arrow</pattern>
-                  <shadedPattern>blaze.org.apache.arrow</shadedPattern>
+                  <shadedPattern>${blaze.shade.packageName}.org.apache.arrow</shadedPattern>
+                  <!--arrow's C and dataset wrapper refers to the original class path, so we should not relocate here-->
                   <excludes>
                     <exclude>org.apache.arrow.c.**</exclude>
                   </excludes>
+                </relocation>
+                <relocation>
+                  <pattern>javax.annotation</pattern>
+                  <shadedPattern>${blaze.shade.packageName}.javax.annotation</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>net.bytebuddy</pattern>
+                  <shadedPattern>${blaze.shade.packageName}.net.bytebuddy</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.checkerframework</pattern>
+                  <shadedPattern>${blaze.shade.packageName}.org.checkerframework</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>scala.compat</pattern>
+                  <shadedPattern>${blaze.shade.packageName}.scala.compat</shadedPattern>
                 </relocation>
               </relocations>
               <archive>
