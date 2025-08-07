@@ -369,7 +369,7 @@ object BlazeConverters extends Logging {
       case p =>
         throw new NotImplementedError(
           s"Cannot convert FileSourceScanExec tableIdentifier: ${tableIdentifier.getOrElse(
-              "unknown")}, class: ${p.getClass.getName}")
+            "unknown")}, class: ${p.getClass.getName}")
     }
   }
 
