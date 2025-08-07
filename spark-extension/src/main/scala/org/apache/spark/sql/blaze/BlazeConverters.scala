@@ -136,11 +136,7 @@ object BlazeConverters extends Logging {
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.parquet", defaultValue = true)
   val enableScanOrc: Boolean =
     SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.orc", defaultValue = true)
-
-  import org.apache.spark.sql.catalyst.plans._
   import org.apache.spark.sql.catalyst.optimizer._
-  var _UnusedQueryPlan: QueryPlan[_] = _
-  var _UnusedOptimizer: Optimizer = _
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     // convert
