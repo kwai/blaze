@@ -30,15 +30,16 @@ while (( "$#" )); do
 done
 
 sparkver=(spark-3.0 spark-3.1 spark-3.2 spark-3.3 spark-3.4 spark-3.5)
+SCALA_PROFILE=scala-2.12
 
 MODE=pre
 for ver in ${sparkver[@]}
 do
   SHIM=$ver
   if [[ "$CHECK" == "true" ]]; then
-    mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -DskipBuildNative -P"${SHIM}" -P"${MODE}"
+    mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
   else
-    mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}"
+    mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
   fi
 done
 
