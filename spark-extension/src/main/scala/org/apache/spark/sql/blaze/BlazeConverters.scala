@@ -20,7 +20,6 @@ import scala.collection.mutable
 
 import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
-import org.apache.spark.SparkEnv
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConvertStrategy.childOrderingRequiredTag
@@ -88,54 +87,54 @@ import org.blaze.protobuf.EmptyPartitionsExecNode
 import org.blaze.protobuf.PhysicalPlanNode
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
 import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
+import org.apache.spark.sql.internal.SQLConf
 import org.blaze.sparkver
 
 object BlazeConverters extends Logging {
-  val enableScan: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan", defaultValue = true)
-  val enablePaimonScan: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.paimon.scan", defaultValue = false)
-  val enableProject: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.project", defaultValue = true)
-  val enableFilter: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.filter", defaultValue = true)
-  val enableSort: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.sort", defaultValue = true)
-  val enableUnion: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.union", defaultValue = true)
-  val enableSmj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.smj", defaultValue = true)
-  val enableShj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.shj", defaultValue = true)
-  val enableBhj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bhj", defaultValue = true)
-  val enableBnlj: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.bnlj", defaultValue = true)
-  val enableLocalLimit: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.limit", defaultValue = true)
-  val enableGlobalLimit: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.global.limit", defaultValue = true)
-  val enableTakeOrderedAndProject: Boolean =
-    SparkEnv.get.conf
-      .getBoolean("spark.blaze.enable.take.ordered.and.project", defaultValue = true)
-  val enableAggr: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.aggr", defaultValue = true)
-  val enableExpand: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.expand", defaultValue = true)
-  val enableWindow: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.window", defaultValue = true)
-  val enableWindowGroupLimit: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.window.group.limit", defaultValue = true)
-  val enableGenerate: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.generate", defaultValue = true)
-  val enableLocalTableScan: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.local.table.scan", defaultValue = true)
-  val enableDataWriting: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.data.writing", defaultValue = false)
-  val enableScanParquet: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.parquet", defaultValue = true)
-  val enableScanOrc: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.enable.scan.orc", defaultValue = true)
+  def enableScan: Boolean =
+    getBooleanConf("spark.blaze.enable.scan", defaultValue = true)
+  def enablePaimonScan: Boolean =
+    getBooleanConf("spark.blaze.enable.paimon.scan", defaultValue = false)
+  def enableProject: Boolean =
+    getBooleanConf("spark.blaze.enable.project", defaultValue = true)
+  def enableFilter: Boolean =
+    getBooleanConf("spark.blaze.enable.filter", defaultValue = true)
+  def enableSort: Boolean =
+    getBooleanConf("spark.blaze.enable.sort", defaultValue = true)
+  def enableUnion: Boolean =
+    getBooleanConf("spark.blaze.enable.union", defaultValue = true)
+  def enableSmj: Boolean =
+    getBooleanConf("spark.blaze.enable.smj", defaultValue = true)
+  def enableShj: Boolean =
+    getBooleanConf("spark.blaze.enable.shj", defaultValue = true)
+  def enableBhj: Boolean =
+    getBooleanConf("spark.blaze.enable.bhj", defaultValue = true)
+  def enableBnlj: Boolean =
+    getBooleanConf("spark.blaze.enable.bnlj", defaultValue = true)
+  def enableLocalLimit: Boolean =
+    getBooleanConf("spark.blaze.enable.local.limit", defaultValue = true)
+  def enableGlobalLimit: Boolean =
+    getBooleanConf("spark.blaze.enable.global.limit", defaultValue = true)
+  def enableTakeOrderedAndProject: Boolean =
+    getBooleanConf("spark.blaze.enable.take.ordered.and.project", defaultValue = true)
+  def enableAggr: Boolean =
+    getBooleanConf("spark.blaze.enable.aggr", defaultValue = true)
+  def enableExpand: Boolean =
+    getBooleanConf("spark.blaze.enable.expand", defaultValue = true)
+  def enableWindow: Boolean =
+    getBooleanConf("spark.blaze.enable.window", defaultValue = true)
+  def enableWindowGroupLimit: Boolean =
+    getBooleanConf("spark.blaze.enable.window.group.limit", defaultValue = true)
+  def enableGenerate: Boolean =
+    getBooleanConf("spark.blaze.enable.generate", defaultValue = true)
+  def enableLocalTableScan: Boolean =
+    getBooleanConf("spark.blaze.enable.local.table.scan", defaultValue = true)
+  def enableDataWriting: Boolean =
+    getBooleanConf("spark.blaze.enable.data.writing", defaultValue = false)
+  def enableScanParquet: Boolean =
+    getBooleanConf("spark.blaze.enable.scan.parquet", defaultValue = true)
+  def enableScanOrc: Boolean =
+    getBooleanConf("spark.blaze.enable.scan.orc", defaultValue = true)
 
   import org.apache.spark.sql.catalyst.plans._
   import org.apache.spark.sql.catalyst.optimizer._
@@ -1082,6 +1081,16 @@ object BlazeConverters extends Logging {
         transformedAggExprs.toList,
         transformedGroupingExprs.toList,
         projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toList))
+  }
+
+  private def getBooleanConf(key: String, defaultValue: Boolean): Boolean = {
+    val s = SQLConf.get.getConfString(key, defaultValue.toString)
+    try {
+      s.trim.toBoolean
+    } catch {
+      case _: IllegalArgumentException =>
+        throw new IllegalArgumentException(s"$key should be boolean, but was $s")
+    }
   }
 
   abstract class ForceNativeExecutionWrapperBase(override val child: SparkPlan)
