@@ -60,9 +60,9 @@ object sparkver {
 
       impl(c)(annottees: _*) {
         val head = annottees.head.tree match {
-          case ClassDef(mods, name, tparams, Template(parents, self, _body)) =>
+          case ClassDef(mods, name, tparams, Template(parents, self, _)) =>
             ClassDef(mods, name, tparams, Template(parents, self, List(EmptyTree)))
-          case ModuleDef(mods, name, Template(parents, self, _body)) =>
+          case ModuleDef(mods, name, Template(parents, self, _)) =>
             ModuleDef(mods, name, Template(parents, self, List(EmptyTree)))
         }
         c.Expr(q"$head; ..${annottees.tail}")
