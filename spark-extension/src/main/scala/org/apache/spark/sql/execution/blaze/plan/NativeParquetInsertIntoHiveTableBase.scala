@@ -165,6 +165,7 @@ class BlazeMapredParquetOutputFormat
 case class OutputFileStat(path: String, numRows: Long, numBytes: Long)
 
 class ParquetSinkTaskContext {
+  var isNative: Boolean = false
   val processingOutputFiles = new LinkedBlockingDeque[String]()
   val processedOutputFiles = new util.ArrayDeque[OutputFileStat]()
 }

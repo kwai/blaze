@@ -97,6 +97,9 @@ abstract class NativeParquetSinkBase(
       inputRDD.isShuffleReadFull,
       (partition, context) => {
 
+        // mark for native parquet sink
+        ParquetSinkTaskContext.get.isNative = true
+
         // init hadoop fs
         val resourceId = s"NativeParquetSinkExec:${UUID.randomUUID().toString}"
         JniBridge.resourcesMap.put(
