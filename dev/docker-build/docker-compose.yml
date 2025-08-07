@@ -18,4 +18,5 @@ services:
       RUSTFLAGS: "-C target-cpu=skylake"
       SHIM: "${SHIM}"
       MODE: "${MODE}"
-    command: "bash -c 'source ~/.bashrc && cd /blaze && mvn -T8 package -P${SHIM} -P${MODE}'"
+      JAVA_VERSION: "${JAVA_VERSION}"
+    command: "bash -c 'source ~/.bashrc && cd /blaze && mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION}'"
