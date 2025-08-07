@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.blaze</groupId>
-  <artifactId>blaze-engine</artifactId>
+  <artifactId>blaze-engine_${scalaVersion}</artifactId>
   <version>${revision}</version>
   <packaging>pom</packaging>
 
@@ -24,9 +24,13 @@
     <celebornVersion>0.6.0</celebornVersion>
 
     <javaVersion>8</javaVersion>
+    <scalaVersion>2.12</scalaVersion>
+    <scalaLongVersion>2.12.17</scalaLongVersion>
     <maven.version>3.8.1</maven.version>
     <maven.plugin.scala.version>4.9.2</maven.plugin.scala.version>
     <maven.plugin.shade.version>3.5.2</maven.plugin.shade.version>
+    <scalamacros.paradise.version>2.1.1</scalamacros.paradise.version>
+    <semanticdb.version>4.8.1</semanticdb.version>
   </properties>
 
   <dependencyManagement>
@@ -159,12 +163,12 @@
             <compilerPlugin>
               <groupId>org.scalameta</groupId>
               <artifactId>semanticdb-scalac_${scalaLongVersion}</artifactId>
-              <version>4.8.1</version>
+              <version>${semanticdb.version}</version>
             </compilerPlugin>
             <compilerPlugin>
               <groupId>org.scalamacros</groupId>
               <artifactId>paradise_${scalaLongVersion}</artifactId>
-              <version>2.1.1</version>
+              <version>${scalamacros.paradise.version}</version>
             </compilerPlugin>
           </compilerPlugins>
         </configuration>
@@ -328,8 +332,6 @@
       <properties>
         <shimName>spark-3.0</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.17</scalaLongVersion>
         <scalaTestVersion>3.0.8</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.0.3</sparkVersion>
@@ -341,8 +343,6 @@
       <properties>
         <shimName>spark-3.1</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.1.3</sparkVersion>
@@ -354,8 +354,6 @@
       <properties>
         <shimName>spark-3.2</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.2.4</sparkVersion>
@@ -367,8 +365,6 @@
       <properties>
         <shimName>spark-3.3</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.3.4</sparkVersion>
@@ -380,8 +376,6 @@
       <properties>
         <shimName>spark-3.4</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.4.4</sparkVersion>
@@ -393,8 +387,6 @@
       <properties>
         <shimName>spark-3.5</shimName>
         <shimPkg>spark-extension-shims-spark3</shimPkg>
-        <scalaVersion>2.12</scalaVersion>
-        <scalaLongVersion>2.12.15</scalaLongVersion>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
         <sparkVersion>3.5.5</sparkVersion>
@@ -429,6 +421,44 @@
       <properties>
         <javaVersion>17</javaVersion>
       </properties>
+    </profile>
+
+    <profile>
+      <id>scala-2.13</id>
+      <activation>
+        <property>
+          <name>scalaVersion</name>
+          <value>2.13</value>
+        </property>
+      </activation>
+      <properties>
+        <scalaVersion>2.13</scalaVersion>
+        <scalaLongVersion>2.13.8</scalaLongVersion>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>net.alchim31.maven</groupId>
+            <artifactId>scala-maven-plugin</artifactId>
+            <configuration>
+              <args>
+                <arg>-Ywarn-unused</arg>
+                <!-- https://github.com/scalamacros/paradise is no longer actively developed. -->
+                <!-- In Scala 2.13, the plugin's functionality has been included in the compiler -->
+                <!-- directly under the -Ymacro-annotations flag.  -->
+                <arg>-Ymacro-annotations</arg>
+              </args>
+              <compilerPlugins>
+                <compilerPlugin>
+                  <groupId>org.scalameta</groupId>
+                  <artifactId>semanticdb-scalac_${scalaLongVersion}</artifactId>
+                  <version>${semanticdb.version}</version>
+                </compilerPlugin>
+              </compilerPlugins>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
     </profile>
   </profiles>
 </project>
