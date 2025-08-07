@@ -60,7 +60,7 @@ abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
       None,
       Nil,
       rddShuffleReadFull = true,
-      (partition, _context) => {
+      (partition, _) => {
         val resourceId = s"NativeParquetScanExec:${UUID.randomUUID().toString}"
         putJniBridgeResource(resourceId, broadcastedHadoopConf)
 

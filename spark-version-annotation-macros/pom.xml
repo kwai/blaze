@@ -4,12 +4,12 @@
 
   <parent>
     <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine</artifactId>
+    <artifactId>blaze-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.blaze</groupId>
-  <artifactId>spark-version-annotation-macros</artifactId>
+  <artifactId>spark-version-annotation-macros_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
@@ -28,20 +28,31 @@
       <artifactId>scala-reflect</artifactId>
       <scope>provided</scope>
     </dependency>
-    <dependency>
-      <groupId>org.scalamacros</groupId>
-      <artifactId>paradise_${scalaLongVersion}</artifactId>
-      <version>2.1.1</version>
-      <exclusions>
-        <exclusion>
-          <groupId>org.scala-lang</groupId>
-          <artifactId>scala-compiler</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.scala-lang</groupId>
-          <artifactId>scala-reflect</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
   </dependencies>
+
+  <profiles>
+    <profile>
+      <id>scala-2.12</id>
+      <activation>
+        <activeByDefault>true</activeByDefault>
+      </activation>
+      <dependencies>
+        <dependency>
+          <groupId>org.scalamacros</groupId>
+          <artifactId>paradise_${scalaLongVersion}</artifactId>
+          <version>${scalamacros.paradise.version}</version>
+          <exclusions>
+            <exclusion>
+              <groupId>org.scala-lang</groupId>
+              <artifactId>scala-compiler</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.scala-lang</groupId>
+              <artifactId>scala-reflect</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
 </project>

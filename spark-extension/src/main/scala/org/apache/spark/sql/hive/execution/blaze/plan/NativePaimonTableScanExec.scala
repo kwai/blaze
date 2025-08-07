@@ -203,6 +203,7 @@ case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
         }
       }
       .sortBy(_.length)(implicitly[Ordering[Long]].reverse)
+      .toSeq
     FilePartition.getFilePartitions(sparkSession, partitionedFiles, maxSplitBytes).toArray
   }
 

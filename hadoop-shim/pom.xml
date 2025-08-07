@@ -4,12 +4,12 @@
 
   <parent>
     <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine</artifactId>
+    <artifactId>blaze-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.blaze</groupId>
-  <artifactId>hadoop-shim</artifactId>
+  <artifactId>hadoop-shim_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
@@ -20,7 +20,7 @@
     </dependency>
     <dependency>
       <groupId>org.scala-lang.modules</groupId>
-      <artifactId>scala-java8-compat_2.12</artifactId>
+      <artifactId>scala-java8-compat_${scalaVersion}</artifactId>
       <version>1.0.2</version>
       <exclusions>
         <exclusion>
