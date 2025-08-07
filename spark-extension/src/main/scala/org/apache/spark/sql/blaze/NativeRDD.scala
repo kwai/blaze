@@ -80,7 +80,7 @@ class NativePlanWrapper(var p: (Partition, TaskContext) => PhysicalPlanNode)
   @throws[IOException]
   @throws[ClassNotFoundException]
   private def readObject(in: ObjectInputStream): Unit = {
-    NativePlanWrapper.changeProtobufDefaultRecursionLimit
+    val _init: Unit = NativePlanWrapper.changeProtobufDefaultRecursionLimit
     p = in.readObject.asInstanceOf[(Partition, TaskContext) => PhysicalPlanNode]
   }
 }

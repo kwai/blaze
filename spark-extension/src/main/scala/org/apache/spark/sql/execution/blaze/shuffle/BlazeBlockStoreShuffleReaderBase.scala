@@ -160,7 +160,7 @@ object BlazeBlockStoreShuffleReaderBase extends Logging {
 
       case in: InputStreamToByteBuffer =>
         Some(in.toByteBuffer)
-      case _ =>
+      case in =>
         None
     }
   }
