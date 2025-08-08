@@ -62,8 +62,8 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     .flatMap(_.files)
     .groupBy(_.filePath)
     .mapValues(_.foldLeft(0L)(_ + _.length))
-    .map(identity)
-    .toMap // make this map serializable
+    .map(identity) // make this map serializable
+    .toMap
 
   // should not include partition columns
   protected def nativeFileSchema: pb.Schema =
