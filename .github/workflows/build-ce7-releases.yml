@@ -1,7 +1,6 @@
 name: Build Centos7 Releases
 
 on:
-  pull_request:
   workflow_dispatch:
   push:
     branches: ["master"]
