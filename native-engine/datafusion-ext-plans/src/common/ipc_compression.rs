@@ -31,8 +31,6 @@ use datafusion_ext_commons::{
 };
 use once_cell::sync::OnceCell;
 
-pub const DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE: usize = 4194304;
-
 pub struct IpcCompressionWriter<W: Write> {
     output: W,
     shared_buf: VecBuffer,
@@ -71,7 +69,12 @@ impl<W: Write> IpcCompressionWriter<W> {
         self.block_empty = false;
 
         let buf_len = self.shared_buf.inner().len();
-        if buf_len as f64 >= DEFAULT_SHUFFLE_COMPRESSION_TARGET_BUF_SIZE as f64 * 0.9 {
+        if buf_len as f64
+            >= conf::SHUFFLE_COMPRESSION_TARGET_BUF_SIZE
+                .value()
+                .unwrap_or(4194304) as f64 // default to 4MB
+                * 0.9
+        {
             self.finish_current_buf()?;
         }
         Ok(())
