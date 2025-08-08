@@ -42,4 +42,9 @@ do
   fi
 done
 
-
+# check or format the rust code
+if [[ "$CHECK" == "true" ]]; then
+  cargo fmt --check
+else
+  cargo fmt --all -q --
+fi
