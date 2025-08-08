@@ -1083,7 +1083,7 @@ object BlazeConverters extends Logging {
         projections.map(kv => Alias(kv._1, kv._2.name)(kv._2.exprId)).toList))
   }
 
-  private def getBooleanConf(key: String, defaultValue: Boolean): Boolean = {
+  def getBooleanConf(key: String, defaultValue: Boolean): Boolean = {
     val s = SQLConf.get.getConfString(key, defaultValue.toString)
     try {
       s.trim.toBoolean

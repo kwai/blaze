@@ -49,7 +49,7 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '8'
 
   test-spark-35-jdk11:
@@ -57,7 +57,7 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '11'
 
   test-spark-35-jdk17-scala-2-12:
@@ -65,7 +65,7 @@ jobs:
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '17'
       scalaver: '2.12'
 

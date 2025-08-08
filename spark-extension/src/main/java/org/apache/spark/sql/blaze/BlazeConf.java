@@ -93,6 +93,9 @@ public enum BlazeConf {
     // replace all sort-merge join to shuffled-hash join, only used for benchmarking
     FORCE_SHUFFLED_HASH_JOIN("spark.blaze.forceShuffledHashJoin", false),
 
+    // shuffle compression target buffer size, default is 4MB
+    SHUFFLE_COMPRESSION_TARGET_BUF_SIZE("spark.blaze.shuffle.compression.targetBufSize", 4194304),
+
     // spark spill compression codec
     SPILL_COMPRESSION_CODEC("spark.blaze.spill.compression.codec", "lz4"),
 

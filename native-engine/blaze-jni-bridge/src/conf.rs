@@ -47,6 +47,7 @@ define_conf!(StringConf, SPARK_IO_COMPRESSION_CODEC);
 define_conf!(IntConf, SPARK_IO_COMPRESSION_ZSTD_LEVEL);
 define_conf!(IntConf, TOKIO_WORKER_THREADS_PER_CPU);
 define_conf!(IntConf, SPARK_TASK_CPUS);
+define_conf!(IntConf, SHUFFLE_COMPRESSION_TARGET_BUF_SIZE);
 define_conf!(StringConf, SPILL_COMPRESSION_CODEC);
 define_conf!(BooleanConf, SMJ_FALLBACK_ENABLE);
 define_conf!(IntConf, SMJ_FALLBACK_ROWS_THRESHOLD);

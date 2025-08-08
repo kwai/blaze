@@ -32,7 +32,6 @@ import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.commons.lang3.reflect.MethodUtils
 
 import com.google.protobuf.ByteString
-import org.apache.spark.SparkEnv
 import org.blaze.{protobuf => pb}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.util.Using
@@ -82,10 +81,12 @@ import org.apache.spark.util.Utils
 import org.blaze.protobuf.PhysicalExprNode
 
 object NativeConverters extends Logging {
-  val udfJsonEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.udf.UDFJson.enabled", defaultValue = true)
-  val decimalArithOpEnabled: Boolean =
-    SparkEnv.get.conf.getBoolean("spark.blaze.decimal.arithOp.enabled", defaultValue = false)
+  def udfJsonEnabled: Boolean =
+    BlazeConverters.getBooleanConf("spark.blaze.udf.UDFJson.enabled", defaultValue = true)
+  def udfBrickHouseEnabled: Boolean =
+    BlazeConverters.getBooleanConf("spark.blaze.udf.brickhouse.enabled", defaultValue = true)
+  def decimalArithOpEnabled: Boolean =
+    BlazeConverters.getBooleanConf("spark.blaze.decimal.arithOp.enabled", defaultValue = false)
 
   def scalarTypeSupported(dataType: DataType): Boolean = {
     dataType match {
@@ -1040,9 +1041,7 @@ object NativeConverters extends Logging {
       // hive UDF brickhouse.array_union
       case e
           if getFunctionClassName(e).contains("brickhouse.udf.collect.ArrayUnionUDF")
-            && SparkEnv.get.conf.getBoolean(
-              "spark.blaze.udf.brickhouse.enabled",
-              defaultValue = true) =>
+            && udfBrickHouseEnabled =>
         buildExtScalarFunction("BrickhouseArrayUnion", e.children, e.dataType)
 
       case e =>
@@ -1112,9 +1111,7 @@ object NativeConverters extends Logging {
           if HiveUDFUtil
             .getFunctionClassName(udaf)
             .contains("brickhouse.udf.collect.CollectUDAF")
-            && SparkEnv.get.conf.getBoolean(
-              "spark.blaze.udf.brickhouse.enabled",
-              defaultValue = true)
+            && udfBrickHouseEnabled
             && udaf.children.size == 1
             && udaf.children.head.dataType.isInstanceOf[ArrayType] =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COLLECT)
@@ -1123,9 +1120,7 @@ object NativeConverters extends Logging {
           if HiveUDFUtil
             .getFunctionClassName(udaf)
             .contains("brickhouse.udf.collect.CombineUniqueUDAF")
-            && SparkEnv.get.conf.getBoolean(
-              "spark.blaze.udf.brickhouse.enabled",
-              defaultValue = true) =>
+            && udfBrickHouseEnabled =>
         aggBuilder.setAggFunction(pb.AggFunction.BRICKHOUSE_COMBINE_UNIQUE)
         aggBuilder.addChildren(convertExpr(udaf.children.head))
 

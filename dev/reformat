@@ -42,3 +42,10 @@ do
     mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
   fi
 done
+
+# check or format the rust code
+if [[ "$CHECK" == "true" ]]; then
+  cargo fmt --check
+else
+  cargo fmt --all -q --
+fi

@@ -377,7 +377,7 @@
         <shimPkg>spark-extension-shims-spark3</shimPkg>
         <scalaTestVersion>3.2.9</scalaTestVersion>
         <scalafmtVersion>3.0.0</scalafmtVersion>
-        <sparkVersion>3.5.5</sparkVersion>
+        <sparkVersion>3.5.6</sparkVersion>
       </properties>
     </profile>
 
