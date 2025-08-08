@@ -25,6 +25,7 @@ import scala.reflect.ClassTag
 
 import org.apache.celeborn.client.read.CelebornInputStream
 import org.apache.celeborn.common.CelebornConf
+import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
@@ -51,56 +52,132 @@ class BlazeCelebornShuffleReader[K, C](
     with Logging {
 
   override protected def readBlocks(): Iterator[InputStream] = {
-    // force disable decompression because compression is skipped in shuffle writer
-    val reader = new CelebornShuffleReader[K, C](
-      handle,
-      startPartition,
-      endPartition,
-      startMapIndex.getOrElse(0),
-      endMapIndex.getOrElse(Int.MaxValue),
-      context,
-      conf,
-      BlazeCelebornShuffleReader.createBypassingIncRecordsReadMetrics(metrics),
-      shuffleIdTracker,
-      false) {
+    val reader = if (BlazeCelebornShuffleReader.fieldShuffleCompressionEnabled != null) {
+      new CelebornShuffleReader[K, C](
+        handle,
+        startPartition,
+        endPartition,
+        startMapIndex.getOrElse(0),
+        endMapIndex.getOrElse(Int.MaxValue),
+        context,
+        conf,
+        BlazeCelebornShuffleReader.createBypassingIncRecordsReadMetrics(metrics),
+        shuffleIdTracker) {
 
-      override def newSerializerInstance(dep: ShuffleDependency[K, _, C]): SerializerInstance = {
-        new SerializerInstance {
-          override def serialize[T: ClassTag](t: T): ByteBuffer =
-            throw new UnsupportedOperationException(
-              "BlazeCelebornShuffleReader.newSerializerInstance")
+        override def newSerializerInstance(
+            dep: ShuffleDependency[K, _, C]): SerializerInstance = {
+          new SerializerInstance {
+            override def serialize[T: ClassTag](t: T): ByteBuffer =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
 
-          override def deserialize[T: ClassTag](bytes: ByteBuffer): T =
-            throw new UnsupportedOperationException(
-              "BlazeCelebornShuffleReader.newSerializerInstance")
+            override def deserialize[T: ClassTag](bytes: ByteBuffer): T =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
 
-          override def deserialize[T: ClassTag](bytes: ByteBuffer, loader: ClassLoader): T =
-            throw new UnsupportedOperationException(
-              "BlazeCelebornShuffleReader.newSerializerInstance")
+            override def deserialize[T: ClassTag](bytes: ByteBuffer, loader: ClassLoader): T =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
 
-          override def serializeStream(s: OutputStream): SerializationStream =
-            throw new UnsupportedOperationException(
-              "BlazeCelebornShuffleReader.newSerializerInstance")
+            override def serializeStream(s: OutputStream): SerializationStream =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
 
-          override def deserializeStream(s: InputStream): DeserializationStream = {
-            new DeserializationStream {
-              override def asKeyValueIterator: Iterator[(Any, Any)] = Iterator.single((null, s))
+            override def deserializeStream(s: InputStream): DeserializationStream = {
+              new DeserializationStream {
+                override def asKeyValueIterator: Iterator[(Any, Any)] = Iterator.single((null, s))
 
-              override def readObject[T: ClassTag](): T =
-                throw new UnsupportedOperationException()
+                override def readObject[T: ClassTag](): T =
+                  throw new UnsupportedOperationException()
 
-              override def close(): Unit = s.close()
+                override def close(): Unit = s.close()
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // Celeborn >=0.6.0 CELEBORN-2027
+      // force disable decompression because compression is skipped in shuffle writer
+      new CelebornShuffleReader[K, C](
+        handle,
+        startPartition,
+        endPartition,
+        startMapIndex.getOrElse(0),
+        endMapIndex.getOrElse(Int.MaxValue),
+        context,
+        conf,
+        BlazeCelebornShuffleReader.createBypassingIncRecordsReadMetrics(metrics),
+        shuffleIdTracker,
+        false) {
+
+        override def newSerializerInstance(
+            dep: ShuffleDependency[K, _, C]): SerializerInstance = {
+          new SerializerInstance {
+            override def serialize[T: ClassTag](t: T): ByteBuffer =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
+
+            override def deserialize[T: ClassTag](bytes: ByteBuffer): T =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
+
+            override def deserialize[T: ClassTag](bytes: ByteBuffer, loader: ClassLoader): T =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
+
+            override def serializeStream(s: OutputStream): SerializationStream =
+              throw new UnsupportedOperationException(
+                "BlazeCelebornShuffleReader.newSerializerInstance")
+
+            override def deserializeStream(s: InputStream): DeserializationStream = {
+              new DeserializationStream {
+                override def asKeyValueIterator: Iterator[(Any, Any)] = Iterator.single((null, s))
+
+                override def readObject[T: ClassTag](): T =
+                  throw new UnsupportedOperationException()
+
+                override def close(): Unit = s.close()
+              }
             }
           }
         }
       }
     }
 
-    reader.read().map { kv => kv._2.asInstanceOf[CelebornInputStream] }
+    reader.read().map { kv =>
+      val celebornInputStream = kv._2.asInstanceOf[CelebornInputStream]
+      BlazeCelebornShuffleReader.setShuffleCompressionEnabledToFalse(celebornInputStream)
+      celebornInputStream
+    }
   }
 }
 
 object BlazeCelebornShuffleReader {
+
+  private lazy val fieldShuffleCompressionEnabled =
+    try {
+      FieldUtils.getField(
+        Class.forName(
+          "org.apache.celeborn.client.read.CelebornInputStream$CelebornInputStreamImpl"),
+        "shuffleCompressionEnabled",
+        true)
+    } catch {
+      case _: ClassNotFoundException => null
+    }
+
+  private def setShuffleCompressionEnabledToFalse(
+      celebornInputStream: CelebornInputStream): Unit = {
+    // force disable decompression because compression is skipped in shuffle writer
+    if (fieldShuffleCompressionEnabled != null) {
+      FieldUtils.writeField(
+        celebornInputStream,
+        "shuffleCompressionEnabled",
+        Boolean.box(false).asInstanceOf[Object],
+        true)
+    }
+  }
+
   def createBypassingIncRecordsReadMetrics(
       metrics: ShuffleReadMetricsReporter): ShuffleReadMetricsReporter = {
 
