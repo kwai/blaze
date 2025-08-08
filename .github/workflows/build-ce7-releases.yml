@@ -1,7 +1,6 @@
 name: Build Centos7 Releases
 
 on:
-  pull_request:
   workflow_dispatch:
   push:
     branches: ["master"]
@@ -16,7 +15,7 @@ jobs:
         scalaver: [ 2.12, 2.13 ]
         blazever: [5.0.0]
         exclude:
-          # Only build scala-2.13 for spark-3.5
+          # Only build on scala-2.13 for spark-3.5
           - sparkver: spark-3.0
             scalaver: '2.13'
           - sparkver: spark-3.1
@@ -27,6 +26,7 @@ jobs:
             scalaver: '2.13'
           - sparkver: spark-3.4
             scalaver: '2.13'
+
     steps:
       - uses: actions/checkout@v4
       - uses: s4u/setup-maven-action@main
