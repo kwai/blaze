@@ -12,8 +12,20 @@ jobs:
     strategy:
       matrix:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
+        scalaver: [ 2.12, 2.13 ]
         blazever: [5.0.0]
-
+        exclude:
+          # Only build scala-2.13 for spark-3.5
+          - sparkver: spark-3.0
+            scalaver: '2.13'
+          - sparkver: spark-3.1
+            scalaver: '2.13'
+          - sparkver: spark-3.2
+            scalaver: '2.13'
+          - sparkver: spark-3.3
+            scalaver: '2.13'
+          - sparkver: spark-3.4
+            scalaver: '2.13'
     steps:
       - uses: actions/checkout@v4
       - uses: s4u/setup-maven-action@main
@@ -22,12 +34,12 @@ jobs:
       - uses: prompt/actions-commit-hash@v3
         id: commit
 
-      - name: Cache blaze-engine-${{ matrix.sparkver }}
+      - name: Cache blaze-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         id: cache
         uses: actions/cache@v3
         with:
-          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
-          key: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
+          path: target-docker/blaze-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
+          key: blaze-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
 
       - uses: ScribeMD/rootless-docker@0.2.2
         if: steps.cache.outputs.cache-hit != 'true'
@@ -37,14 +49,14 @@ jobs:
         with:
           key: docker-centos7-${{ hashFiles('dev/docker-build/centos7/Dockerfile') }}
 
-      - name: Build blaze-engine-${{ matrix.sparkver }}
+      - name: Build blaze-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         run: |
           sed -i 's/docker-compose -f/docker compose -f/g' ./release-docker.sh
-          SHIM=${{ matrix.sparkver }} MODE=release ./release-docker.sh
+          SHIM=${{ matrix.sparkver }} MODE=release SCALA_VERSION=${{ matrix.scalaver }} ./release-docker.sh
 
-      - name: Upload blaze-engine-${{ matrix.sparkver }}
+      - name: Upload blaze-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
-          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
+          name: blaze-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target-docker/blaze-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ matrix.blazever }}-SNAPSHOT.jar
           overwrite: true
