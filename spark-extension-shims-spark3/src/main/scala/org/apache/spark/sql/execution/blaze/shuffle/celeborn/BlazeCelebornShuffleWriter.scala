@@ -16,7 +16,7 @@
 package org.apache.spark.sql.execution.blaze.shuffle.celeborn
 
 import org.apache.celeborn.client.ShuffleClient
-import org.apache.spark.TaskContext
+import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
@@ -24,6 +24,7 @@ import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
 import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
 import org.apache.spark.shuffle.celeborn.SparkUtils
+import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.execution.blaze.shuffle.BlazeRssShuffleWriterBase
 import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
 import org.blaze.sparkver
@@ -40,13 +41,14 @@ class BlazeCelebornShuffleWriter[K, V](
   private val numMappers = handle.numMappers
   private val encodedAttemptId = BlazeCelebornShuffleManager.getEncodedAttemptNumber(taskContext)
   private var celebornPartitionWriter: CelebornPartitionWriter = _
+  private var mapId = -1
 
   override def getRssPartitionWriter(
       _handle: ShuffleHandle,
-      mapId: Int,
+      _mapId: Int,
       metrics: ShuffleWriteMetricsReporter,
       numPartitions: Int): RssPartitionWriterBase = {
-
+    mapId = _mapId
     val shuffleId = SparkUtils.celebornShuffleId(shuffleClient, handle, taskContext, true)
     shuffleIdTracker.track(handle.shuffleId, shuffleId)
     celebornPartitionWriter = new CelebornPartitionWriter(
@@ -67,5 +69,9 @@ class BlazeCelebornShuffleWriter[K, V](
   override def rssStop(success: Boolean): Option[MapStatus] = {
     celebornShuffleWriter.write(Iterator.empty) // force flush
     celebornShuffleWriter.stop(success)
+    val blockManagerId = SparkEnv.get.blockManager.shuffleServerId
+    Some(
+      Shims.get
+        .getMapStatus(blockManagerId, celebornPartitionWriter.getPartitionLengthMap, mapId))
   }
 }
