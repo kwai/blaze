@@ -47,11 +47,12 @@ object BlazeHiveConverters extends Logging {
       hiveExec.partitionPruningPred)
     logPlanConversion(
       exec,
-      "relation" -> relation.getClass,
-      "relation.location" -> relation.tableMeta.location,
-      "output" -> output,
-      "requestedAttributes" -> requestedAttributes,
-      "partitionPruningPred" -> partitionPruningPred)
+      Seq(
+        "relation" -> relation.getClass,
+        "relation.location" -> relation.tableMeta.location,
+        "output" -> output,
+        "requestedAttributes" -> requestedAttributes,
+        "partitionPruningPred" -> partitionPruningPred))
 
     addRenameColumnsExec(NativePaimonTableScanExec(hiveExec))
   }
