@@ -19,4 +19,5 @@ services:
       SHIM: "${SHIM}"
       MODE: "${MODE}"
       JAVA_VERSION: "${JAVA_VERSION}"
-    command: "bash -c 'source ~/.bashrc && cd /blaze && mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION}'"
+      SCALA_VERSION: "${SCALA_VERSION}"
+    command: "bash -c 'source ~/.bashrc && cd /blaze && mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION} -Pscala-${SCALA_VERSION}'"

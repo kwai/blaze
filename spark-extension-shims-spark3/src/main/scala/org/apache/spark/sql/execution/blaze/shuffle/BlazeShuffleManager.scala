@@ -89,7 +89,7 @@ class BlazeShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
       new BlazeBlockStoreShuffleReader(
         handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-        blocksByAddress,
+        blocksByAddress.map(tup => (tup._1, tup._2.toSeq)),
         context,
         metrics,
         SparkEnv.get.blockManager,

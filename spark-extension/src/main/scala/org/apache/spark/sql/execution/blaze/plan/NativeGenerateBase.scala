@@ -110,7 +110,7 @@ abstract class NativeGenerateBase(
             .newBuilder()
             .setSerialized(ByteString.copyFrom(NativeConverters.serializeExpression(
               bound.asInstanceOf[Generator with Serializable],
-              StructType(paramsFields))))
+              StructType(paramsFields.toSeq))))
             .setReturnSchema(NativeConverters.convertSchema(udtf.elementSchema)))
         .addAllChild(children.map(NativeConverters.convertExpr).asJava)
         .build()

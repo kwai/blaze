@@ -71,6 +71,7 @@ abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
     .groupBy(_.filePath)
     .mapValues(_.foldLeft(0L)(_ + _.length))
     .map(identity) // make this map serializable
+    .toMap
 
   protected def nativePruningPredicateFilters: Seq[pb.PhysicalExprNode] =
     basedFileScan.dataFilters
