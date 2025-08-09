@@ -44,7 +44,6 @@ import org.apache.spark.sql.execution.command.DataWritingCommandExec
 import org.apache.spark.sql.execution.joins.BroadcastNestedLoopJoinExec
 import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 
 object BlazeConvertStrategy extends Logging {
   import BlazeConverters._
@@ -135,8 +134,6 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: FileSourceScanExec =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
-      case e if BlazeHiveConverters.isNativePaimonTableScan(e) =>
-        e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: ProjectExec if isNative(e.child) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
       case e: FilterExec if isNative(e.child) =>
@@ -180,6 +177,9 @@ object BlazeConvertStrategy extends Logging {
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e if e.getTagValue(convertToNonNativeTag).contains(true) =>
+        e.setTagValue(convertStrategyTag, AlwaysConvert)
+
+      case e if BlazeConverters.extConvertSupported(e) =>
         e.setTagValue(convertStrategyTag, AlwaysConvert)
 
       case e =>

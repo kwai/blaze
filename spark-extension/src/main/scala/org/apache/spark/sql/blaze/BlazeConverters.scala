@@ -15,7 +15,9 @@
  */
 package org.apache.spark.sql.blaze
 
+import java.util.ServiceLoader
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.commons.lang3.reflect.MethodUtils
@@ -77,7 +79,6 @@ import org.apache.spark.sql.execution.blaze.plan.NativeOrcScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeParquetScanBase
 import org.apache.spark.sql.execution.blaze.plan.NativeSortBase
 import org.apache.spark.sql.execution.LeafExecNode
-import org.apache.spark.sql.hive.blaze.BlazeHiveConverters
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.blaze.plan.NativeHiveTableScanBase
 import org.apache.spark.sql.types.LongType
@@ -93,8 +94,6 @@ import org.blaze.sparkver
 object BlazeConverters extends Logging {
   def enableScan: Boolean =
     getBooleanConf("spark.blaze.enable.scan", defaultValue = true)
-  def enablePaimonScan: Boolean =
-    getBooleanConf("spark.blaze.enable.paimon.scan", defaultValue = false)
   def enableProject: Boolean =
     getBooleanConf("spark.blaze.enable.project", defaultValue = true)
   def enableFilter: Boolean =
@@ -136,6 +135,11 @@ object BlazeConverters extends Logging {
   def enableScanOrc: Boolean =
     getBooleanConf("spark.blaze.enable.scan.orc", defaultValue = true)
 
+  private val extConvertProviders = ServiceLoader.load(classOf[BlazeConvertProvider]).asScala
+  def extConvertSupported(exec: SparkPlan): Boolean = {
+    extConvertProviders.exists(_.isSupported(exec))
+  }
+
   // scalafix:off
   // necessary imports for cross spark versions build
   import org.apache.spark.sql.catalyst.plans._
@@ -171,9 +175,6 @@ object BlazeConverters extends Logging {
       case e: BroadcastExchangeExec => tryConvert(e, convertBroadcastExchangeExec)
       case e: FileSourceScanExec if enableScan => // scan
         tryConvert(e, convertFileSourceScanExec)
-      case e
-          if enablePaimonScan && BlazeHiveConverters.isNativePaimonTableScan(e) => // scan paimon
-        tryConvert(e, BlazeHiveConverters.convertPaimonTableScanExec)
       case e: ProjectExec if enableProject => // project
         tryConvert(e, convertProjectExec)
       case e: FilterExec if enableFilter => // filter
@@ -246,20 +247,24 @@ object BlazeConverters extends Logging {
 
       case exec: ForceNativeExecutionWrapperBase => exec
       case exec =>
-        Shims.get.convertMoreSparkPlan(exec) match {
-          case Some(exec) =>
-            exec.setTagValue(convertibleTag, true)
-            exec.setTagValue(convertStrategyTag, AlwaysConvert)
-            exec
+        extConvertProviders.find(h => h.isEnabled && h.isSupported(exec)) match {
+          case Some(provider) => tryConvert(exec, provider.convert)
           case None =>
-            if (Shims.get.isNative(exec)) { // for QueryStageInput and CustomShuffleReader
-              exec.setTagValue(convertibleTag, true)
-              exec.setTagValue(convertStrategyTag, AlwaysConvert)
-            } else {
-              exec.setTagValue(convertibleTag, false)
-              exec.setTagValue(convertStrategyTag, NeverConvert)
+            Shims.get.convertMoreSparkPlan(exec) match {
+              case Some(exec) =>
+                exec.setTagValue(convertibleTag, true)
+                exec.setTagValue(convertStrategyTag, AlwaysConvert)
+                exec
+              case None =>
+                if (Shims.get.isNative(exec)) { // for QueryStageInput and CustomShuffleReader
+                  exec.setTagValue(convertibleTag, true)
+                  exec.setTagValue(convertStrategyTag, AlwaysConvert)
+                } else {
+                  exec.setTagValue(convertibleTag, false)
+                  exec.setTagValue(convertStrategyTag, NeverConvert)
+                }
+                exec
             }
-            exec
         }
     }
   }
