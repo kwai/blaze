@@ -11,46 +11,23 @@ on:
         type: string
 
 jobs:
-  start-celeborn:
-    name: Start Celeborn ${{ inputs.celebornver }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/cache@v4
-        id: cache-celeborn-bin
-        with:
-          path: celeborn-bin-${{ inputs.celebornver }}
-          key: celeborn-bin-${{ inputs.celebornver }}
-
-      - name: Setup Celeborn ${{ inputs.celebornver }}
-        id: setup-celeborn-bin
-        if: steps.cache-celeborn-bin.outputs.cache-hit != 'true'
-        run: |
-          wget -c ${{ inputs.celebornurl }} && \
-          mkdir -p celeborn-bin-${{ inputs.celebornver }} && \
-          cd celeborn-bin-${{ inputs.celebornver }} && tar -xf ../apache-celeborn-*.tgz --strip-component=1 && \
-          mv ./conf/celeborn-env.sh.template ./conf/celeborn-env.sh && \
-          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g' > ./conf/celeborn-env.sh" && \
-          bash -c "echo -e 'celeborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf"
-
-      - name: Start Celeborn ${{ inputs.celebornver }}
-        run: |
-          cd celeborn-bin-${{ inputs.celebornver }} && \
-          bash ./sbin/start-master.sh && \
-          bash ./sbin/start-worker.sh
-
   test-spark-35-celeborn:
     name: Test spark-3.5 celeborn-${{ inputs.celebornver }}
-    needs: [ start-celeborn ]
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       extrablazebuildopt: -Pceleborn-${{ inputs.celebornver }} -DcelebornScope=compile
       extrablazeidentifier: celeborn-${{ inputs.celebornver }}
+      extracmds: |
+        wget -c ${{ inputs.celebornurl }} && \
+        mkdir -p celeborn-bin-${{ inputs.celebornver }} && \
+        cd celeborn-bin-${{ inputs.celebornver }} && tar -xf ../apache-celeborn-*.tgz --strip-component=1 && \
+        mv ./conf/celeborn-env.sh.template ./conf/celeborn-env.sh && \
+        bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g' > ./conf/celeborn-env.sh" && \
+        bash -c "echo -e 'celeborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
+        bash ./sbin/start-master.sh && \
+        bash ./sbin/start-worker.sh
       extrasparkconf: >-
         --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
         --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
