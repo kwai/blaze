@@ -1,0 +1,17 @@
+name: TPC-DS-Celeborn
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-celeborn-060:
+    name: Test celeborn-0.6
+    uses: ./.github/workflows/tpcds-celeborn-reusable.yml
+    with:
+      celebornver: 0.6
+      celebornurl: https://archive.apache.org/dist/celeborn/celeborn-0.6.0/apache-celeborn-0.6.0-bin.tgz

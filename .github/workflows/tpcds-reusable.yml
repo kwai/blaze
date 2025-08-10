@@ -13,6 +13,18 @@ on:
         required: false
         type: string
         default: '8'
+      extrablazebuildopt:
+        required: false
+        type: string
+        default: ''
+      extrablazeidentifier:
+        required: false
+        type: string
+        default: ''
+      extrasparkconf:
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build-validator:
@@ -79,12 +91,12 @@ jobs:
         run: cargo +nightly test --workspace --all-features
 
       - name: Build ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
-        run: mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }}
+        run: mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
 
       - name: Upload ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
+          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
           path: target/blaze-engine-${{ inputs.sparkver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
@@ -126,7 +138,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}
+          name: blaze-engine-${{ inputs.sparkver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -154,6 +166,8 @@ jobs:
           ls -la
           export RUST_LOG=ERROR
           export RUST_BACKTRACE=1
+          export SPARK_PRINT_LAUNCH_COMMAND=1
           SPARK_HOME=spark-bin-${{ inputs.sparkver }} dev/run-tpcds-test \
+            ${{ inputs.extrasparkconf }} \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
