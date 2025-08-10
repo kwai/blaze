@@ -53,7 +53,7 @@
       <groupId>org.apache.celeborn</groupId>
       <artifactId>celeborn-client-spark-3-shaded_${scalaVersion}</artifactId>
       <version>${celebornVersion}</version>
-      <scope>provided</scope>
+      <scope>${celebornScope}</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.uniffle</groupId>
