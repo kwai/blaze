@@ -51,10 +51,9 @@ jobs:
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       extrablazebuildopt: -Pceleborn-${{ inputs.celebornver }} -DcelebornScope=compile
       extrablazeidentifier: celeborn-${{ inputs.celebornver }}
-      extrasparkconf: |
-        --conf spark.jars=celeborn-bin-${{ inputs.celebornver }}/spark/celeborn-client-spark*.jar \
-        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager \
-        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
-        --conf spark.celeborn.master.endpoints=localhost:9097 \
-        --conf spark.celeborn.client.spark.shuffle.writer=hash \
+      extrasparkconf: >
+        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+        --conf spark.celeborn.master.endpoints=localhost:9097
+        --conf spark.celeborn.client.spark.shuffle.writer=hash
         --conf spark.celeborn.client.push.replicate.enabled=false
