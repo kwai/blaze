@@ -22,6 +22,9 @@
     <protobufVersion>3.21.9</protobufVersion>
     <paimonVersion>1.1.1</paimonVersion>
     <celebornVersion>0.6.0</celebornVersion>
+    <celebornScope>provided</celebornScope>
+    <uniffleVersion>0.9.2</uniffleVersion>
+    <uniffleScope>provided</uniffleScope>
 
     <javaVersion>8</javaVersion>
     <maven.version>3.8.1</maven.version>

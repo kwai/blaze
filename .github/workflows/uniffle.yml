@@ -1,0 +1,37 @@
+name: TPC-DS-Uniffle
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: uniffle-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-uniffle:
+    strategy:
+      fail-fast: false
+      matrix:
+        unifflever: [ "0.9.2" ]
+        hadoopver: [ "2.8.5" ]
+        sparkver: [ "spark-3.5" ]
+        sparkurl: [ "https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz" ]
+    uses: ./.github/workflows/tpcds-reusable.yml
+    name: Test Uniffle ${{ matrix.unifflever }}
+    with:
+      unifflever: ${{ matrix.unifflever }}
+      uniffleurl: https://archive.apache.org/dist/uniffle/${{ matrix.unifflever }}/apache-uniffle-${{ matrix.unifflever }}-incubating-bin.tar.gz
+      hadoopver: ${{ matrix.hadoopver }}
+      hadoopurl: https://archive.apache.org/dist/hadoop/common/hadoop-${{ matrix.hadoopver }}/hadoop-${{ matrix.hadoopver }}.tar.gz
+      extrablazebuildopt: -DuniffleVersion=${{ matrix.unifflever }} -DuniffleScope=compile
+      extrablazeidentifier: uniffle-${{ matrix.unifflever }}
+      sparkver: ${{ matrix.sparkver }}
+      sparkurl: ${{ matrix.sparkurl }}
+      extrasparkconf: >-
+        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
+        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+        --conf spark.rss.coordinator.quorum=localhost:19999
+        --conf spark.rss.enabled=true
+        --conf spark.rss.storage.type=MEMORY_LOCALFILE
+      queries: '["q1,q2,q3,q4,q5,q6,q7,q8,q9"]'

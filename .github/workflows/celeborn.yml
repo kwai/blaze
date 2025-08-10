@@ -1,0 +1,33 @@
+name: TPC-DS-Celeborn
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: celeborn-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-celeborn:
+    strategy:
+      fail-fast: false
+      matrix:
+        celebornver: [ 0.6.0, 0.5.4 ]
+        sparkver: [ "spark-3.5" ]
+        sparkurl: [ "https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz" ]
+    uses: ./.github/workflows/tpcds-reusable.yml
+    name: Test Celeborn ${{ matrix.celebornver }}
+    with:
+      celebornver: ${{ matrix.celebornver }}
+      celebornurl: https://archive.apache.org/dist/celeborn/celeborn-${{ matrix.celebornver }}/apache-celeborn-${{ matrix.celebornver }}-bin.tgz
+      extrablazebuildopt: -DcelebornVersion=${{ matrix.celebornver }} -DcelebornScope=compile
+      extrablazeidentifier: celeborn-${{ matrix.celebornver }}
+      sparkver: ${{ matrix.sparkver }}
+      sparkurl: ${{ matrix.sparkurl }}
+      extrasparkconf: >-
+        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+        --conf spark.celeborn.client.spark.shuffle.writer=hash
+        --conf spark.celeborn.client.push.replicate.enabled=false
+      queries: '["q1,q2,q3,q4,q5,q6,q7,q8,q9"]'
