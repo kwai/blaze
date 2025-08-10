@@ -1,0 +1,42 @@
+name: TPC-DS-Celeborn
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-celeborn-06:
+    name: Test celeborn-0.6
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark-3.5
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+      celebornver: 0.6
+      celebornurl: https://archive.apache.org/dist/celeborn/celeborn-0.6.0/apache-celeborn-0.6.0-bin.tgz
+      extrablazebuildopt: -DcelebornVersion=0.6.0 -DcelebornScope=compile
+      extrablazeidentifier: celeborn-0.6
+      extrasparkconf: >-
+        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+        --conf spark.celeborn.client.spark.shuffle.writer=hash
+        --conf spark.celeborn.client.push.replicate.enabled=false
+
+  test-celeborn-05:
+    name: Test celeborn-0.5
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark-3.5
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+      celebornver: 0.5
+      celebornurl: https://archive.apache.org/dist/celeborn/celeborn-0.5.4/apache-celeborn-0.5.4-bin.tgz
+      extrablazebuildopt: -DcelebornVersion=0.5.4 -DcelebornScope=compile
+      extrablazeidentifier: celeborn-0.5
+      extrasparkconf: >-
+        --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+        --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+        --conf spark.celeborn.client.spark.shuffle.writer=hash
+        --conf spark.celeborn.client.push.replicate.enabled=false
