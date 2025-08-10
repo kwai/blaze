@@ -192,11 +192,9 @@ jobs:
       - name: Start Celeborn-${{ inputs.celebornver }}
         if: ${{ inputs.celebornver != '' && inputs.celebornurl != '' }}
         run: |
-          mkdir -p /tmp/celeborn/data && \
+          mkdir -p /tmp/celeborn/data && mkdir -p /tmp/celeborn/logs && \
           cd celeborn-bin-${{ inputs.celebornver }} && \
-          rm -rf logs/* && \
-          mv -f ./conf/celeborn-env.sh.template ./conf/celeborn-env.sh && \
-          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g' > ./conf/celeborn-env.sh" && \
+          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g\nCELEBORN_LOG_DIR=/tmp/celeborn/logs' > ./conf/celeborn-env.sh" && \
           bash -c "echo -e 'celeborn.worker.storage.dirs /tmp/celeborn\nceleborn.worker.storage.workingDir data\nceleborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
           bash ./sbin/start-master.sh && \
           bash ./sbin/start-worker.sh
