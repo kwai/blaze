@@ -9,8 +9,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test-celeborn-06:
-    name: Test celeborn-0.6
+  test-celeborn-060:
+    name: Test celeborn-0.6.0
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
@@ -25,8 +25,8 @@ jobs:
         --conf spark.celeborn.client.spark.shuffle.writer=hash
         --conf spark.celeborn.client.push.replicate.enabled=false
 
-  test-celeborn-05:
-    name: Test celeborn-0.5
+  test-celeborn-054:
+    name: Test celeborn-0.5.4
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
