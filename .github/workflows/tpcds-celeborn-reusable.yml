@@ -24,6 +24,5 @@ jobs:
       extrasparkconf: >-
         --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
         --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
-        --conf spark.celeborn.master.endpoints=localhost:9097
         --conf spark.celeborn.client.spark.shuffle.writer=hash
         --conf spark.celeborn.client.push.replicate.enabled=false
