@@ -4,14 +4,41 @@ on:
   workflow_dispatch:
   pull_request:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  test-celeborn-060:
-    name: Test celeborn-0.6
-    uses: ./.github/workflows/tpcds-celeborn-reusable.yml
-    with:
-      celebornver: 0.6
-      celebornurl: https://archive.apache.org/dist/celeborn/celeborn-0.6.0/apache-celeborn-0.6.0-bin.tgz
+  test-celeborn:
+    name: Test Celeborn ${{ matrix.celeborn.ver }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        celeborn:
+          - ver: "0.6"
+            url: "https://archive.apache.org/dist/celeborn/celeborn-0.6.0/apache-celeborn-0.6.0-bin.tgz"
+          - ver: "0.5"
+            url: "https://archive.apache.org/dist/celeborn/celeborn-0.5.4/apache-celeborn-0.5.4-bin.tgz"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run TPC-DS test with Celeborn
+        uses: ./.github/workflows/tpcds-reusable.yml
+        with:
+          celebornver: ${{ matrix.celeborn.ver }}
+          celebornurl: ${{ matrix.celeborn.url }}
+          sparkver: spark-3.5
+          sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+          extrablazebuildopt: -Pceleborn-${{ matrix.celeborn.ver }} -DcelebornScope=compile
+          extrablazeidentifier: celeborn-${{ matrix.celeborn.ver }}
+          extracmds: |
+            wget -c ${{ matrix.celeborn.url }} && \
+            mkdir -p celeborn-bin-${{ matrix.celeborn.ver }} && \
+            cd celeborn-bin-${{ matrix.celeborn.ver }} && tar -xf ../apache-celeborn-*.tgz --strip-component=1 && \
+            mv ./conf/celeborn-env.sh.template ./conf/celeborn-env.sh && \
+            bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g' > ./conf/celeborn-env.sh" && \
+            bash -c "echo -e 'celeborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
+            bash ./sbin/start-master.sh && \
+            bash ./sbin/start-worker.sh
+          extrasparkconf: >-
+            --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
+            --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
+            --conf spark.celeborn.master.endpoints=localhost:9097
+            --conf spark.celeborn.client.spark.shuffle.writer=hash
+            --conf spark.celeborn.client.push.replicate.enabled=false
