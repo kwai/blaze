@@ -197,3 +197,11 @@ jobs:
             ${{ inputs.extrasparkconf }} \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
+
+      - name: Upload Celeborn logs
+        if: ${{ failure() && inputs.celebornver != '' && inputs.celebornurl != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: celeborn-logs-${{ inputs.celebornver }}
+          path: |
+            celeborn-bin-${{ inputs.celebornver }}/logs/*
