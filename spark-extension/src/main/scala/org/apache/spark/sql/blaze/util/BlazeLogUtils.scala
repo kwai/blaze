@@ -21,7 +21,7 @@ import org.apache.spark.sql.execution.SparkPlan
 
 object BlazeLogUtils extends Logging {
 
-  def logPlanConversion(plan: SparkPlan, fields: => Seq[(String, Any)] = Nil): Unit = {
+  def logDebugPlanConversion(plan: SparkPlan, fields: => Seq[(String, Any)] = Nil): Unit = {
     if (log.isDebugEnabled) {
       val header = s"Converting ${plan.nodeName}: ${Shims.get.simpleStringWithNodeId(plan)}"
       val body = fields.map { case (k, v) => s"  $k: $v" }.mkString("\n")

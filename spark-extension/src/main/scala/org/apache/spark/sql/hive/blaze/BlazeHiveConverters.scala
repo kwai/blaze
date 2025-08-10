@@ -17,7 +17,7 @@ package org.apache.spark.sql.hive.blaze
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConverters.addRenameColumnsExec
-import org.apache.spark.sql.blaze.util.BlazeLogUtils.logPlanConversion
+import org.apache.spark.sql.blaze.util.BlazeLogUtils.logDebugPlanConversion
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.hive.execution.blaze.plan.NativePaimonTableScanExec
@@ -45,7 +45,7 @@ object BlazeHiveConverters extends Logging {
       hiveExec.output,
       hiveExec.requestedAttributes,
       hiveExec.partitionPruningPred)
-    logPlanConversion(
+    logDebugPlanConversion(
       exec,
       Seq(
         "relation" -> relation.getClass,
