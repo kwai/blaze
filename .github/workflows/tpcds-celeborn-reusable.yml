@@ -1,4 +1,4 @@
-name: TPC-DS-Celeborn
+name: TPC-DS-Celeborn-Reusable
 
 on:
   workflow_call:
@@ -51,7 +51,7 @@ jobs:
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       extrablazebuildopt: -Pceleborn-${{ inputs.celebornver }} -DcelebornScope=compile
       extrablazeidentifier: celeborn-${{ inputs.celebornver }}
-      extrasparkconf: >
+      extrasparkconf: >-
         --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
         --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
         --conf spark.celeborn.master.endpoints=localhost:9097
