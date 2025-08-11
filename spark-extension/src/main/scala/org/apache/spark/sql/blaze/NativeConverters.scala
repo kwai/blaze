@@ -87,6 +87,10 @@ object NativeConverters extends Logging {
     BlazeConverters.getBooleanConf("spark.blaze.udf.brickhouse.enabled", defaultValue = true)
   def decimalArithOpEnabled: Boolean =
     BlazeConverters.getBooleanConf("spark.blaze.decimal.arithOp.enabled", defaultValue = false)
+  def hashConvertFunctionsEnabled: Boolean =
+    BlazeConverters.getBooleanConf(
+      "spark.blaze.enable.hashconvert.functions",
+      defaultValue = true)
 
   def scalarTypeSupported(dataType: DataType): Boolean = {
     dataType match {
@@ -836,9 +840,9 @@ object NativeConverters extends Logging {
         buildExtScalarFunction("Sha384", Seq(unpackBinaryTypeCast(_1)), StringType)
       case Sha2(_1, Literal(512, _)) =>
         buildExtScalarFunction("Sha512", Seq(unpackBinaryTypeCast(_1)), StringType)
-      case Murmur3Hash(children, 42) =>
+      case Murmur3Hash(children, 42) if hashConvertFunctionsEnabled =>
         buildExtScalarFunction("Murmur3Hash", children, IntegerType)
-      case XxHash64(children, 42L) =>
+      case XxHash64(children, 42L) if hashConvertFunctionsEnabled =>
         buildExtScalarFunction("XxHash64", children, LongType)
 
       case Year(child) => buildExtScalarFunction("Year", child :: Nil, IntegerType)
