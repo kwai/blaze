@@ -208,10 +208,10 @@ jobs:
       - name: Start Celeborn-${{ inputs.celebornver }}
         if: ${{ inputs.celebornver != '' && inputs.celebornurl != '' }}
         run: |
-          mkdir -p /tmp/celeborn/data && mkdir -p /tmp/celeborn/logs && \
+          mkdir -p /tmp/rss/data && mkdir -p /tmp/rss/logs && \
           cd celeborn-bin-${{ inputs.celebornver }} && \
-          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g\nCELEBORN_LOG_DIR=/tmp/celeborn/logs' > ./conf/celeborn-env.sh" && \
-          bash -c "echo -e 'celeborn.worker.storage.dirs /tmp/celeborn\nceleborn.worker.storage.workingDir data\nceleborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
+          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g\nCELEBORN_LOG_DIR=/tmp/rss/logs' > ./conf/celeborn-env.sh" && \
+          bash -c "echo -e 'celeborn.worker.storage.dirs /tmp/rss\nceleborn.worker.storage.workingDir data\nceleborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
           bash ./sbin/start-master.sh && \
           bash ./sbin/start-worker.sh
 
@@ -249,11 +249,11 @@ jobs:
       - name: Start Uniffle-${{ inputs.unifflever }}
         if: ${{ inputs.unifflever != '' && inputs.uniffleurl != '' }}
         run: |
-          mkdir -p /tmp/uniffle/data && mkdir -p /tmp/uniffle/logs && \
+          mkdir -p /tmp/rss/data && mkdir -p /tmp/rss/logs && \
           cd uniffle-bin-${{ inputs.unifflever }} && \
-          bash -c "echo -e 'XMX_SIZE=16g\nHADOOP_HOME=../hadoop-bin-${{ inputs.hadoopver }}\nRSS_LOG_DIR=/tmp/uniffle/logs' > ./bin/rss-env.sh" && \
+          bash -c "echo -e 'XMX_SIZE=16g\nHADOOP_HOME=../hadoop-bin-${{ inputs.hadoopver }}\nRSS_LOG_DIR=/tmp/rss/logs' > ./bin/rss-env.sh" && \
           bash -c "echo -e 'rss.coordinator.shuffle.nodes.max 1\nrss.rpc.server.port 19999' > ./conf/coordinator.conf" && \
-          bash -c "echo -e 'rss.server.app.expired.withoutHeartbeat 7200000\nrss.server.heartbeat.delay 3000\nrss.rpc.server.port 19997\nrss.rpc.server.type GRPC_NETTY\nrss.jetty.http.port 19996\nrss.server.netty.port 19995\nrss.storage.basePath /tmp/uniffle/data\nrss.storage.type MEMORY_LOCALFILE\nrss.coordinator.quorum localhost:19999\nrss.server.flush.thread.alive 10\nrss.server.single.buffer.flush.threshold 64m' > ./conf/server.conf" && \
+          bash -c "echo -e 'rss.server.app.expired.withoutHeartbeat 7200000\nrss.server.heartbeat.delay 3000\nrss.rpc.server.port 19997\nrss.rpc.server.type GRPC_NETTY\nrss.jetty.http.port 19996\nrss.server.netty.port 19995\nrss.storage.basePath /tmp/rss/data\nrss.storage.type MEMORY_LOCALFILE\nrss.coordinator.quorum localhost:19999\nrss.server.flush.thread.alive 10\nrss.server.single.buffer.flush.threshold 64m' > ./conf/server.conf" && \
           bash ./bin/start-coordinator.sh && bash ./bin/start-shuffle-server.sh && \
           sleep 60
 
@@ -267,3 +267,11 @@ jobs:
             ${{ inputs.extrasparkconf }} \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
+
+      - name: Upload RSS log
+        if: ${{ failure() && (inputs.celebornver != '' || inputs.unifflever != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rss-log-${{ inputs.extrablazeidentifier }}
+          path: |
+            /tmp/rss/logs/*
