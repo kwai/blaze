@@ -15,7 +15,7 @@
 use std::{
     fmt,
     fs::{File, OpenOptions},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
     sync::{
         Arc,
@@ -278,12 +278,20 @@ fn binary_search(rows: &Arc<Rows>, target: Row, from_index: isize, to_index: isi
 }
 
 pub fn open_shuffle_file<P: AsRef<Path>>(path: P) -> std::io::Result<File> {
-    OpenOptions::new()
+    let path_ref = path.as_ref();
+    let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        // Set the shuffle file permissions to 0644 to keep it consistent with the permissions of
-        // the built-in shuffler manager in Spark.
         .mode(0o644)
-        .open(path)
+        .open(path_ref)?;
+
+    let metadata = file.metadata()?;
+    let permissions = metadata.mode();
+    println!(
+        "Opened file at {:?} with permissions {:o}",
+        path_ref, permissions
+    );
+
+    Ok(file)
 }
