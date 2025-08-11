@@ -452,14 +452,14 @@
     <profile>
       <id>uniffle-0.9</id>
       <properties>
-        <celebornVersion>0.9.2</celebornVersion>
+        <uniffleVersion>0.9.2</uniffleVersion>
       </properties>
     </profile>
 
     <profile>
       <id>paimon-1.1</id>
       <properties>
-        <celebornVersion>1.1.1</celebornVersion>
+        <paimonVersion>1.1.1</paimonVersion>
       </properties>
     </profile>
   </profiles>
