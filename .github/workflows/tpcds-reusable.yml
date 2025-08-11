@@ -254,8 +254,7 @@ jobs:
           bash -c "echo -e 'XMX_SIZE=16g\nHADOOP_HOME=../hadoop-bin-${{ inputs.hadoopver }}\nRSS_LOG_DIR=/tmp/rss/logs' > ./bin/rss-env.sh" && \
           bash -c "echo -e 'rss.coordinator.shuffle.nodes.max 1\nrss.rpc.server.port 19999' > ./conf/coordinator.conf" && \
           bash -c "echo -e 'rss.server.app.expired.withoutHeartbeat 7200000\nrss.server.heartbeat.delay 3000\nrss.rpc.server.port 19997\nrss.rpc.server.type GRPC_NETTY\nrss.jetty.http.port 19996\nrss.server.netty.port 19995\nrss.storage.basePath /tmp/rss/data\nrss.storage.type MEMORY_LOCALFILE\nrss.coordinator.quorum localhost:19999\nrss.server.flush.thread.alive 10\nrss.server.single.buffer.flush.threshold 64m' > ./conf/server.conf" && \
-          bash ./bin/start-coordinator.sh && bash ./bin/start-shuffle-server.sh && \
-          sleep 60
+          bash ./bin/start-coordinator.sh && bash ./bin/start-shuffle-server.sh
 
       - name: Run
         run: |

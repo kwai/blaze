@@ -34,4 +34,5 @@ jobs:
         --conf spark.rss.coordinator.quorum=localhost:19999
         --conf spark.rss.enabled=true
         --conf spark.rss.storage.type=MEMORY_LOCALFILE
+        --conf spark.rss.client.type=GRPC_NETTY
       queries: '["q1,q2,q3,q4,q5,q6,q7,q8,q9"]'
