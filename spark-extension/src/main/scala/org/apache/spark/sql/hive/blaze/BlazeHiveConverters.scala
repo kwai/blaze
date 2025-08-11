@@ -17,7 +17,7 @@ package org.apache.spark.sql.hive.blaze
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.blaze.BlazeConverters.addRenameColumnsExec
-import org.apache.spark.sql.blaze.Shims
+import org.apache.spark.sql.blaze.util.BlazeLogUtils.logDebugPlanConversion
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.hive.execution.blaze.plan.NativePaimonTableScanExec
@@ -45,12 +45,14 @@ object BlazeHiveConverters extends Logging {
       hiveExec.output,
       hiveExec.requestedAttributes,
       hiveExec.partitionPruningPred)
-    logDebug(s"Converting HiveTableScanExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-    logDebug(s"  relation: ${relation.getClass}")
-    logDebug(s"  relation.location: ${relation.tableMeta.location}")
-    logDebug(s"  output: $output")
-    logDebug(s"  requestedAttributes: $requestedAttributes")
-    logDebug(s"  partitionPruningPred: $partitionPruningPred")
+    logDebugPlanConversion(
+      exec,
+      Seq(
+        "relation" -> relation.getClass,
+        "relation.location" -> relation.tableMeta.location,
+        "output" -> output,
+        "requestedAttributes" -> requestedAttributes,
+        "partitionPruningPred" -> partitionPruningPred))
 
     addRenameColumnsExec(NativePaimonTableScanExec(hiveExec))
   }
