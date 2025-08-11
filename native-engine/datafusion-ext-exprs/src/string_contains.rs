@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Display, Formatter},
-    hash::{Hash, Hasher},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -32,20 +32,15 @@ use datafusion::{
 };
 use datafusion_ext_commons::df_execution_err;
 
-use crate::down_cast_any_ref;
-
-#[derive(Debug, Hash)]
+#[derive(Debug, Eq, Hash)]
 pub struct StringContainsExpr {
     expr: PhysicalExprRef,
     infix: String,
 }
 
-impl PartialEq<dyn Any> for StringContainsExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
-        down_cast_any_ref(other)
-            .downcast_ref::<Self>()
-            .map(|x| self.expr.eq(&x.expr) && self.infix == x.infix)
-            .unwrap_or(false)
+impl PartialEq for StringContainsExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.expr.eq(&other.expr) && self.infix == other.infix
     }
 }
 
@@ -113,9 +108,8 @@ impl PhysicalExpr for StringContainsExpr {
         Ok(Arc::new(Self::new(children[0].clone(), self.infix.clone())))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        let mut s = state;
-        self.hash(&mut s);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
 

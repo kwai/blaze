@@ -15,7 +15,8 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
-    hash::Hasher,
+    hash::{Hash, Hasher},
+    io::Write,
     sync::Arc,
 };
 
@@ -27,6 +28,7 @@ use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
     physical_expr::PhysicalExprRef,
+    physical_expr_common::physical_expr::DynEq,
     physical_plan::PhysicalExpr,
 };
 use once_cell::sync::OnceCell;
@@ -67,15 +69,25 @@ impl Debug for SparkScalarSubqueryWrapperExpr {
     }
 }
 
-impl PartialEq<dyn Any> for SparkScalarSubqueryWrapperExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
+impl Hash for SparkScalarSubqueryWrapperExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.serialized.hash(state);
+    }
+}
+
+impl PartialEq for SparkScalarSubqueryWrapperExpr {
+    fn eq(&self, other: &Self) -> bool {
+        other.serialized == self.serialized
+            && other.return_type == self.return_type
+            && other.return_nullable == self.return_nullable
+    }
+}
+
+impl DynEq for SparkScalarSubqueryWrapperExpr {
+    fn dyn_eq(&self, other: &dyn Any) -> bool {
         other
             .downcast_ref::<Self>()
-            .map(|other| {
-                other.serialized == self.serialized
-                    && other.return_type == self.return_type
-                    && other.return_nullable == self.return_nullable
-            })
+            .map(|other| other.eq(self))
             .unwrap_or(false)
     }
 }
@@ -123,7 +135,7 @@ impl PhysicalExpr for SparkScalarSubqueryWrapperExpr {
         Ok(self.clone())
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        state.write(&self.serialized);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }

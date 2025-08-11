@@ -31,11 +31,13 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
         SendableRecordBatchStream, Statistics,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
     },
 };
+use datafusion_datasource::PartitionedFile;
 use datafusion_ext_commons::{batch_size, df_execution_err, hadoop_fs::FsProvider};
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures_util::TryStreamExt;
@@ -48,7 +50,7 @@ use orc_rust::{
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{BlazeSchemaMapping, internal_file_reader::InternalFileReader},
+    scan::{create_blaze_schema_mapper, internal_file_reader::InternalFileReader},
 };
 
 /// Execution plan for scanning one or more Orc partitions
@@ -73,7 +75,7 @@ impl OrcExec {
     ) -> Self {
         let metrics = ExecutionPlanMetricsSet::new();
 
-        let (projected_schema, projected_statistics, _projected_output_ordering) =
+        let (projected_schema, _constraints, projected_statistics, _projected_output_ordering) =
             base_config.project();
 
         Self {
@@ -92,13 +94,7 @@ impl DisplayAs for OrcExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> fmt::Result {
         let limit = self.base_config.limit;
         let projection = self.base_config.projection.clone();
-        let file_group = self
-            .base_config
-            .file_groups
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
+        let file_group = &self.base_config.file_groups;
 
         write!(
             f,
@@ -126,7 +122,8 @@ impl ExecutionPlan for OrcExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 Partitioning::UnknownPartitioning(self.base_config.file_groups.len()),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -162,7 +159,7 @@ impl ExecutionPlan for OrcExec {
 
         let force_positional_evolution = conf::ORC_FORCE_POSITIONAL_EVOLUTION.value()?;
 
-        let opener = OrcOpener {
+        let opener: Arc<dyn FileOpener> = Arc::new(OrcOpener {
             projection,
             batch_size: batch_size(),
             table_schema: self.base_config.file_schema.clone(),
@@ -170,7 +167,7 @@ impl ExecutionPlan for OrcExec {
             partition_index: partition,
             metrics: self.metrics.clone(),
             force_positional_evolution,
-        };
+        });
 
         let file_stream = Box::pin(FileStream::new(
             &self.base_config,
@@ -193,7 +190,7 @@ impl ExecutionPlan for OrcExec {
 }
 
 fn execute_orc_scan(
-    mut stream: Pin<Box<FileStream<OrcOpener>>>,
+    mut stream: Pin<Box<FileStream>>,
     exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
     Ok(exec_ctx
@@ -219,7 +216,7 @@ struct OrcOpener {
 }
 
 impl FileOpener for OrcOpener {
-    fn open(&self, file_meta: FileMeta) -> Result<FileOpenFuture> {
+    fn open(&self, file_meta: FileMeta, _file: PartitionedFile) -> Result<FileOpenFuture> {
         let reader = OrcFileReaderRef {
             inner: Arc::new(InternalFileReader::try_new(
                 self.fs_provider.clone(),
@@ -290,10 +287,10 @@ impl AsyncChunkReader for OrcFileReaderRef {
         offset_from_start: u64,
         length: u64,
     ) -> BoxFuture<'_, std::io::Result<Bytes>> {
-        let offset_from_start = offset_from_start as usize;
-        let length = length as usize;
+        let offset_from_start = offset_from_start;
+        let length = length;
         let range = offset_from_start..(offset_from_start + length);
-        self.metrics.bytes_scanned.add(length);
+        self.metrics.bytes_scanned.add(length as usize);
         async move { self.inner.read_fully(range).map_err(|e| e.into()) }.boxed()
     }
 }
@@ -370,10 +367,7 @@ impl SchemaAdapter {
         }
 
         Ok((
-            Arc::new(BlazeSchemaMapping::new(
-                self.projected_schema.clone(),
-                field_mappings,
-            )),
+            create_blaze_schema_mapper(&self.projected_schema, &field_mappings),
             projection,
         ))
     }

@@ -29,7 +29,7 @@ mod tests {
         common::JoinSide,
         error::Result,
         physical_expr::expressions::Column,
-        physical_plan::{ExecutionPlan, common, joins::utils::*, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, common, joins::utils::*, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -83,12 +83,12 @@ mod tests {
     ) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a, b, c);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     fn build_table_from_batches(batches: Vec<RecordBatch>) -> Arc<dyn ExecutionPlan> {
         let schema = batches.first().unwrap().schema();
-        Arc::new(MemoryExec::try_new(&[batches], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[batches], schema, None).unwrap())
     }
 
     fn build_date_table(
@@ -113,7 +113,7 @@ mod tests {
         .unwrap();
 
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     fn build_date64_table(
@@ -138,7 +138,7 @@ mod tests {
         .unwrap();
 
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     /// returns a table with 3 columns of i32 in memory
@@ -161,7 +161,7 @@ mod tests {
             ],
         )
         .unwrap();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     fn build_join_schema_for_test(

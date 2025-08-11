@@ -15,12 +15,15 @@
 use std::{fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{Array, ArrayRef, AsArray, ListArray, RecordBatch, RecordBatchOptions, new_null_array},
+    array::{Array, ArrayRef, AsArray, ListArray},
     datatypes::{DataType, Schema, SchemaRef},
 };
+use arrow_schema::Field;
 use datafusion::{
     common::Result,
-    datasource::schema_adapter::{SchemaAdapter, SchemaAdapterFactory, SchemaMapper},
+    datasource::schema_adapter::{
+        SchemaAdapter, SchemaAdapterFactory, SchemaMapper, SchemaMapping,
+    },
 };
 use datafusion_ext_commons::df_execution_err;
 
@@ -30,8 +33,12 @@ pub mod internal_file_reader;
 pub struct BlazeSchemaAdapterFactory;
 
 impl SchemaAdapterFactory for BlazeSchemaAdapterFactory {
-    fn create(&self, schema: SchemaRef) -> Box<dyn SchemaAdapter> {
-        Box::new(BlazeSchemaAdapter::new(schema))
+    fn create(
+        &self,
+        projected_table_schema: SchemaRef,
+        _table_schema: SchemaRef,
+    ) -> Box<dyn SchemaAdapter> {
+        Box::new(BlazeSchemaAdapter::new(projected_table_schema))
     }
 }
 
@@ -72,77 +79,27 @@ impl SchemaAdapter for BlazeSchemaAdapter {
             }
         }
 
-        Ok((
-            Arc::new(BlazeSchemaMapping {
-                table_schema: self.table_schema.clone(),
-                field_mappings,
-            }),
-            projection,
-        ))
-    }
-}
-
-#[derive(Debug)]
-pub struct BlazeSchemaMapping {
-    table_schema: SchemaRef,
-    field_mappings: Vec<Option<usize>>,
-}
-
-impl BlazeSchemaMapping {
-    pub fn new(table_schema: SchemaRef, field_mappings: Vec<Option<usize>>) -> Self {
-        Self {
-            table_schema,
+        let schema_mapper: Arc<dyn SchemaMapper> = Arc::new(SchemaMapping::new(
+            self.table_schema.clone(),
             field_mappings,
-        }
+            Arc::new(|col, field| schema_adapter_cast_column(col, field)),
+        ));
+        Ok((schema_mapper, projection))
     }
 }
 
-impl SchemaMapper for BlazeSchemaMapping {
-    fn map_batch(&self, batch: RecordBatch) -> Result<RecordBatch> {
-        let batch_rows = batch.num_rows();
-        let batch_cols = batch.columns().to_vec();
-
-        let cols = self
-            .table_schema
-            .fields()
-            .iter()
-            .zip(&self.field_mappings)
-            .map(|(field, file_idx)| match file_idx {
-                Some(batch_idx) => {
-                    schema_adapter_cast_column(&batch_cols[*batch_idx], field.data_type())
-                }
-                None => Ok(new_null_array(field.data_type(), batch_rows)),
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
-        let schema = self.table_schema.clone();
-        let record_batch = RecordBatch::try_new_with_options(schema, cols, &options)?;
-        Ok(record_batch)
-    }
-
-    fn map_partial_batch(&self, batch: RecordBatch) -> Result<RecordBatch> {
-        let batch_cols = batch.columns().to_vec();
-        let schema = batch.schema();
-
-        let mut cols = vec![];
-        let mut fields = vec![];
-        for (i, f) in schema.fields().iter().enumerate() {
-            let table_field = self.table_schema.field_with_name(f.name());
-            if let Ok(tf) = table_field {
-                cols.push(schema_adapter_cast_column(&batch_cols[i], tf.data_type())?);
-                fields.push(tf.clone());
-            }
-        }
-
-        let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
-        let schema = Arc::new(Schema::new(fields));
-        let record_batch = RecordBatch::try_new_with_options(schema, cols, &options)?;
-        Ok(record_batch)
-    }
+pub fn create_blaze_schema_mapper(
+    table_schema: &SchemaRef,
+    field_mappings: &[Option<usize>],
+) -> Arc<dyn SchemaMapper> {
+    Arc::new(SchemaMapping::new(
+        table_schema.clone(),
+        field_mappings.to_vec(),
+        Arc::new(|col, field| schema_adapter_cast_column(col, field)),
+    ))
 }
 
-fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<ArrayRef> {
+fn schema_adapter_cast_column(col: &ArrayRef, field: &Field) -> Result<ArrayRef> {
     macro_rules! handle_decimal {
         ($s:ident, $t:ident, $tnative:ty, $prec:expr, $scale:expr) => {{
             use arrow::{array::*, datatypes::*};
@@ -165,26 +122,28 @@ fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<Ar
             ))
         }};
     }
-    match data_type {
-        DataType::Decimal128(prec, scale) => match col.data_type() {
+
+    let col_dt = col.data_type();
+    let cast_dt = field.data_type();
+
+    match cast_dt {
+        DataType::Decimal128(prec, scale) => match col_dt {
             DataType::Int8 => handle_decimal!(Int8, Decimal128, i128, *prec, *scale),
             DataType::Int16 => handle_decimal!(Int16, Decimal128, i128, *prec, *scale),
             DataType::Int32 => handle_decimal!(Int32, Decimal128, i128, *prec, *scale),
             DataType::Int64 => handle_decimal!(Int64, Decimal128, i128, *prec, *scale),
             DataType::Decimal128(..) => {
-                datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), data_type)
+                datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), cast_dt)
             }
             _ => df_execution_err!(
-                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
-                col.data_type(),
-                data_type,
+                "schema_adapter_cast_column unsupported type: {col_dt:?} => {cast_dt:?}",
             ),
         },
-        DataType::List(to_field) => match col.data_type() {
+        DataType::List(to_field) => match col_dt {
             DataType::List(_from_field) => {
                 let col = col.as_list::<i32>();
                 let from_inner = col.values();
-                let to_inner = schema_adapter_cast_column(from_inner, to_field.data_type())?;
+                let to_inner = schema_adapter_cast_column(from_inner, &to_field)?;
                 Ok(Arc::new(ListArray::try_new(
                     to_field.clone(),
                     col.offsets().clone(),
@@ -193,11 +152,9 @@ fn schema_adapter_cast_column(col: &ArrayRef, data_type: &DataType) -> Result<Ar
                 )?))
             }
             _ => df_execution_err!(
-                "schema_adapter_cast_column unsupported type: {:?} => {:?}",
-                col.data_type(),
-                data_type,
+                "schema_adapter_cast_column unsupported type: {col_dt:?} => {cast_dt:?}",
             ),
         },
-        _ => datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), data_type),
+        _ => datafusion_ext_commons::arrow::cast::cast_scan_input_array(col.as_ref(), cast_dt),
     }
 }

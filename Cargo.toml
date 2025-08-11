@@ -51,15 +51,18 @@ datafusion-ext-exprs = { path = "./native-engine/datafusion-ext-exprs" }
 datafusion-ext-functions = { path = "./native-engine/datafusion-ext-functions" }
 datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
 
-# datafusion: branch=v42-blaze
-datafusion = { version = "42.0.0" }
+# datafusion: branch=v49.0.0-blaze
+datafusion = { version = "49.0.0" }
+datafusion-datasource = { version = "49.0.0" }
+datafusion-datasource-parquet = { version = "49.0.0" }
 
-orc-rust = { version = "0.4.1" }
+# orc-rust branch=v0.6.0-blaze
+orc-rust = { version = "0.6.0" }
 
-# arrow: branch=v53-blaze
-arrow = { version = "53.0.0", features = ["ffi"]}
-arrow-schema = { version = "53.0.0", features = ["serde"] }
-parquet = { version = "53.0.0" }
+# arrow: branch=v55.2.0-blaze
+arrow = { version = "55.2.0", features = ["ffi"]}
+arrow-schema = { version = "55.2.0", features = ["serde"] }
+parquet = { version = "55.2.0" }
 
 # serde_json: branch=v1.0.96-blaze
 serde_json = { version = "1.0.96" }
@@ -83,7 +86,7 @@ jni = "0.20.0"
 log = "0.4.27"
 lz4_flex = "0.11.5"
 num = "0.4.2"
-object_store = "0.11.1"
+object_store = "0.12.3"
 once_cell = "1.21.3"
 panic-message = "0.3.0"
 parking_lot = "0.12.4"
@@ -102,27 +105,30 @@ zstd = "0.13.3"
 
 [patch.crates-io]
 # datafusion: branch=v42-blaze
-datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "b7876646a02401cc064657ccf17de27cfe6240ee"}
-orc-rust = { git = "https://github.com/blaze-init/datafusion-orc.git", rev = "172183facb1d05d6ac0b4ec234207a52387db2a3"}
+datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-datasource = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-datasource-parquet = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-execution = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
+orc-rust = { git = "https://github.com/blaze-init/datafusion-orc.git", rev = "e10b240"}
 
 # arrow: branch=v53-blaze
-arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-buffer = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-cast = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-data = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-ord = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-row = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-schema = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-select = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-arrow-string = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
-parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "1fbdc9f980aa34c7758da9db79a64248f24daf1e"}
+arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-buffer = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-cast = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-data = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-ipc = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-ord = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-row = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-schema = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-select = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+arrow-string = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
+parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
 
 # serde_json: branch=v1.0.96-blaze
 serde_json = { git = "https://github.com/blaze-init/json", branch = "v1.0.96-blaze" }

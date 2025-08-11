@@ -29,8 +29,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExpr, expressions::Column},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -132,7 +133,8 @@ impl ExecutionPlan for GenerateExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -357,7 +359,7 @@ mod test {
         assert_batches_eq,
         common::Result,
         physical_expr::expressions::Column,
-        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, common, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -401,7 +403,7 @@ mod test {
         ];
         assert_batches_eq!(input, &[input_batch.clone()]);
 
-        let input = Arc::new(MemoryExec::try_new(
+        let input = Arc::new(TestMemoryExec::try_new(
             &[vec![input_batch.clone()]],
             input_batch.schema(),
             None,

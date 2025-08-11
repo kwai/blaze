@@ -23,8 +23,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -99,7 +100,8 @@ impl ExecutionPlan for ExpandExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -197,7 +199,7 @@ mod test {
         common::{Result, ScalarValue},
         logical_expr::Operator,
         physical_expr::expressions::{binary, col, lit},
-        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, common, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -217,7 +219,7 @@ mod test {
     fn build_table_int(a: (&str, &Vec<i32>)) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     // build f32 table
@@ -234,7 +236,7 @@ mod test {
     fn build_table_float(a: (&str, &Vec<f32>)) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_f32(a);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     // build str table
@@ -251,7 +253,7 @@ mod test {
     fn build_table_string(a: (&str, &Vec<String>)) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_str(a);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     // build boolean table
@@ -268,7 +270,7 @@ mod test {
     fn build_table_boolean(a: (&str, &Vec<bool>)) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_bool(a);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     #[tokio::test]

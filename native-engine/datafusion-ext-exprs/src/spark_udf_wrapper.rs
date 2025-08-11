@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
-    hash::Hasher,
+    hash::{Hash, Hasher},
     sync::Arc,
 };
 
@@ -32,13 +32,12 @@ use datafusion::{
     error::Result,
     logical_expr::ColumnarValue,
     physical_expr::{PhysicalExprRef, physical_exprs_bag_equal},
+    physical_expr_common::physical_expr::DynEq,
     physical_plan::PhysicalExpr,
 };
 use datafusion_ext_commons::{arrow::cast::cast, df_execution_err};
 use jni::objects::GlobalRef;
 use once_cell::sync::OnceCell;
-
-use crate::down_cast_any_ref;
 
 pub struct SparkUDFWrapperExpr {
     pub serialized: Vec<u8>,
@@ -51,16 +50,20 @@ pub struct SparkUDFWrapperExpr {
     expr_string: String,
 }
 
-impl PartialEq<dyn Any> for SparkUDFWrapperExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
-        down_cast_any_ref(other)
+impl PartialEq for SparkUDFWrapperExpr {
+    fn eq(&self, other: &Self) -> bool {
+        physical_exprs_bag_equal(&self.params, &other.params)
+            && self.serialized == other.serialized
+            && self.return_type == other.return_type
+            && self.return_nullable == other.return_nullable
+    }
+}
+
+impl DynEq for SparkUDFWrapperExpr {
+    fn dyn_eq(&self, other: &dyn Any) -> bool {
+        other
             .downcast_ref::<Self>()
-            .map(|x| {
-                physical_exprs_bag_equal(&self.params, &x.params)
-                    && self.serialized == x.serialized
-                    && self.return_type == x.return_type
-                    && self.return_nullable == x.return_nullable
-            })
+            .map(|other| other.eq(self))
             .unwrap_or(false)
     }
 }
@@ -106,6 +109,12 @@ impl Display for SparkUDFWrapperExpr {
 impl Debug for SparkUDFWrapperExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "UDFWrapper({})", self.expr_string)
+    }
+}
+
+impl Hash for SparkUDFWrapperExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.serialized.hash(state);
     }
 }
 
@@ -189,8 +198,8 @@ impl PhysicalExpr for SparkUDFWrapperExpr {
         )?))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        state.write(&self.serialized);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
 

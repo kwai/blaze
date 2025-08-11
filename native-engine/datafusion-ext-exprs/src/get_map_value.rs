@@ -14,8 +14,8 @@
 
 use std::{
     any::Any,
-    fmt::Debug,
-    hash::{Hash, Hasher},
+    fmt::{Debug, Formatter},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -33,10 +33,8 @@ use datafusion::{
 use datafusion_ext_commons::{df_execution_err, df_unimplemented_err};
 use itertools::Itertools;
 
-use crate::down_cast_any_ref;
-
 /// expression to get value of a key in map array.
-#[derive(Debug, Hash)]
+#[derive(Debug, Eq, Hash)]
 pub struct GetMapValueExpr {
     arg: PhysicalExprRef,
     key: ScalarValue,
@@ -56,12 +54,9 @@ impl GetMapValueExpr {
     }
 }
 
-impl PartialEq<dyn Any> for GetMapValueExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
-        down_cast_any_ref(other)
-            .downcast_ref::<Self>()
-            .map(|x| self.arg.eq(&x.arg) && self.key == x.key)
-            .unwrap_or(false)
+impl PartialEq for GetMapValueExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.arg.eq(&other.arg) && self.key == other.key
     }
 }
 
@@ -140,9 +135,8 @@ impl PhysicalExpr for GetMapValueExpr {
         Ok(Arc::new(Self::new(children[0].clone(), self.key.clone())))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        let mut s = state;
-        self.hash(&mut s);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
 
