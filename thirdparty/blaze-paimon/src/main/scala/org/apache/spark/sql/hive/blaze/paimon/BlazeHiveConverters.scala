@@ -16,8 +16,9 @@
 package org.apache.spark.sql.hive.blaze
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.blaze.BlazeConvertProvider
 import org.apache.spark.sql.blaze.BlazeConverters
-import org.apache.spark.sql.blaze.{BlazeConvertProvider, Shims}
+import org.apache.spark.sql.blaze.util.BlazeLogUtils
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.hive.execution.blaze.plan.NativePaimonTableScanExec
@@ -52,14 +53,14 @@ class PaimonConvertProvider extends BlazeConvertProvider with Logging {
       "paimon MOR/MOW mode is not supported")
     val (relation, output, requestedAttributes, partitionPruningPred) =
       (exec.relation, exec.output, exec.requestedAttributes, exec.partitionPruningPred)
-    if (log.isDebugEnabled) {
-      logDebug(s"Converting HiveTableScanExec: ${Shims.get.simpleStringWithNodeId(exec)}")
-      logDebug(s"  relation: ${relation.getClass}")
-      logDebug(s"  relation.location: ${relation.tableMeta.location}")
-      logDebug(s"  output: $output")
-      logDebug(s"  requestedAttributes: $requestedAttributes")
-      logDebug(s"  partitionPruningPred: $partitionPruningPred")
-    }
+    BlazeLogUtils.logDebugPlanConversion(
+      exec,
+      Seq(
+        "relation" -> relation.getClass,
+        "relation.location" -> relation.tableMeta.location,
+        "output" -> output,
+        "requestedAttributes" -> requestedAttributes,
+        "partitionPruningPred" -> partitionPruningPred))
 
     BlazeConverters.addRenameColumnsExec(NativePaimonTableScanExec(exec))
   }
