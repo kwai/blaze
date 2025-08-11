@@ -37,10 +37,7 @@ use crate::{
         MemConsumer, MemConsumerInfo, MemManager,
         spill::{OwnedSpillBufReader, Spill, try_new_spill},
     },
-    shuffle::{
-        Partitioning, ShuffleRepartitioner, buffered_data::BufferedData,
-        fs_utils::open_shuffle_file,
-    },
+    shuffle::{Partitioning, ShuffleRepartitioner, buffered_data::BufferedData, open_shuffle_file},
 };
 
 pub struct SortShuffleRepartitioner {

@@ -14,6 +14,9 @@
 
 use std::{
     fmt,
+    fs::{File, OpenOptions},
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -44,7 +47,6 @@ pub mod single_repartitioner;
 pub mod sort_repartitioner;
 
 pub mod buffered_data;
-mod fs_utils;
 mod rss;
 pub mod rss_single_repartitioner;
 pub mod rss_sort_repartitioner;
@@ -273,4 +275,15 @@ fn binary_search(rows: &Arc<Rows>, target: Row, from_index: isize, to_index: isi
         }
     }
     return low as usize; // key not found.
+}
+
+pub fn open_shuffle_file<P: AsRef<Path>>(path: P) -> std::io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        // Set the shuffle file permissions to 0644 to keep it consistent with the permissions of
+        // the built-in shuffler manager in Spark.
+        .mode(0o644)
+        .open(path)
 }

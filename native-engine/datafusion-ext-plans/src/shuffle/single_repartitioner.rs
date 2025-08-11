@@ -28,7 +28,7 @@ use crate::{
         ipc_compression::IpcCompressionWriter,
         timer_helper::{TimedWriter, TimerHelper},
     },
-    shuffle::{ShuffleRepartitioner, fs_utils::open_shuffle_file},
+    shuffle::{ShuffleRepartitioner, open_shuffle_file},
 };
 
 pub struct SingleShuffleRepartitioner {
