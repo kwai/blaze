@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::{Seek, Write},
     sync::Arc,
 };
@@ -28,7 +28,7 @@ use crate::{
         ipc_compression::IpcCompressionWriter,
         timer_helper::{TimedWriter, TimerHelper},
     },
-    shuffle::ShuffleRepartitioner,
+    shuffle::{ShuffleRepartitioner, fs_utils::open_shuffle_file},
 };
 
 pub struct SingleShuffleRepartitioner {
@@ -54,13 +54,8 @@ impl SingleShuffleRepartitioner {
     ) -> Result<&'a mut IpcCompressionWriter<TimedWriter<File>>> {
         if output_data.is_none() {
             *output_data = Some(IpcCompressionWriter::new(
-                self.output_io_time.wrap_writer(
-                    OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(&self.output_data_file)?,
-                ),
+                self.output_io_time
+                    .wrap_writer(open_shuffle_file(&self.output_data_file)?),
             ));
         }
         Ok(output_data.as_mut().unwrap())
@@ -81,33 +76,21 @@ impl ShuffleRepartitioner for SingleShuffleRepartitioner {
 
         // write index file
         if let Some(output_writer) = output_data.as_mut() {
-            let mut output_index = self.output_io_time.wrap_writer(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&self.output_index_file)?,
-            );
+            let mut output_index = self
+                .output_io_time
+                .wrap_writer(open_shuffle_file(&self.output_index_file)?);
             output_writer.finish_current_buf()?;
             let offset = output_writer.inner_mut().0.stream_position()?;
             output_index.write_all(&[0u8; 8])?;
             output_index.write_all(&(offset as i64).to_le_bytes()[..])?;
         } else {
             // write empty data file and index file
-            let _output_data = self.output_io_time.wrap_writer(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&self.output_data_file)?,
-            );
-            let mut output_index = self.output_io_time.wrap_writer(
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&self.output_index_file)?,
-            );
+            let _output_data = self
+                .output_io_time
+                .wrap_writer(open_shuffle_file(&self.output_data_file)?);
+            let mut output_index = self
+                .output_io_time
+                .wrap_writer(open_shuffle_file(&self.output_index_file)?);
             output_index.write_all(&[0u8; 16])?;
         }
         Ok(())

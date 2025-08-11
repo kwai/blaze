@@ -44,6 +44,7 @@ pub mod single_repartitioner;
 pub mod sort_repartitioner;
 
 pub mod buffered_data;
+mod fs_utils;
 mod rss;
 pub mod rss_single_repartitioner;
 pub mod rss_sort_repartitioner;
