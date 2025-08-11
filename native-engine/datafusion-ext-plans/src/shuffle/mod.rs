@@ -15,7 +15,7 @@
 use std::{
     fmt,
     fs::{File, OpenOptions},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::unix::fs::PermissionsExt,
     path::Path,
     sync::{
         Arc,
@@ -283,15 +283,11 @@ pub fn open_shuffle_file<P: AsRef<Path>>(path: P) -> std::io::Result<File> {
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o644)
         .open(path_ref)?;
 
-    let metadata = file.metadata()?;
-    let permissions = metadata.mode();
-    println!(
-        "Opened file at {:?} with permissions {:o}",
-        path_ref, permissions
-    );
+    // Set the shuffle file permissions to 0644 to keep it consistent with the
+    // permissions of the built-in shuffler manager in Spark.
+    std::fs::set_permissions(path_ref, std::fs::Permissions::from_mode(0o644))?;
 
     Ok(file)
 }

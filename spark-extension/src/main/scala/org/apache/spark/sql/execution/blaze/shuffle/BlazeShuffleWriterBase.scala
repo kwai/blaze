@@ -84,9 +84,6 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
     val dataSize = Files.size(tempDataFilePath)
     metrics.incBytesWritten(dataSize)
 
-    printFileAndPermission(tempDataFilename)
-    printFileAndPermission(tempIndexFilename)
-
     mapStatus = Some(
       Shims.get.commit(
         dep,
@@ -96,24 +93,9 @@ abstract class BlazeShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter
         partitionLengths,
         dataSize,
         context))
-
-    printFileAndPermission(dataFile.getPath)
-    printFileAndPermission(dataFile.getPath.replace(".data", ".index"))
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
     mapStatus.filter(_ => success)
-  }
-
-  // scalafix:off
-  private def printFileAndPermission(file: String): Unit = {
-    try {
-      val path = Paths.get(file)
-      val posixPermissions = Files.getPosixFilePermissions(path)
-      println(s"Shuffle File: $file, Permissions: $posixPermissions")
-    } catch {
-      case e: Exception =>
-        logWarning(s"Failed to get permissions for file $file: ${e.getMessage}")
-    }
   }
 }
