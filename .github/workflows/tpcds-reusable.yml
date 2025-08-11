@@ -115,7 +115,7 @@ jobs:
         run: cargo +nightly test --workspace --all-features
 
       - name: Build ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
-        run: mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
+        run: ./build/mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
 
       - name: Upload ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
