@@ -59,9 +59,9 @@ jobs:
           java-version: ${{ inputs.javaver }}
           cache: 'maven'
 
-      - uses: arduino/setup-protoc@v2
+      - uses: arduino/setup-protoc@v3
         with:
-          version: "21.7"
+          version: "27.4"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
