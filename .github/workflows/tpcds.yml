@@ -52,6 +52,14 @@ jobs:
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '8'
 
+  test-spark-35-jdk11:
+    name: Test spark-3.5 JDK11
+    uses: ./.github/workflows/tpcds-reusable.yml
+    with:
+      sparkver: spark-3.5
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+      javaver: '11'
+
   test-spark-35-jdk17:
     name: Test spark-3.5 JDK17
     uses: ./.github/workflows/tpcds-reusable.yml
