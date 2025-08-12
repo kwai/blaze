@@ -316,12 +316,12 @@ impl ExecutionContext {
             );
         }
 
-        let output_schema = self.output_schema();
+        let input_schema = input.schema();
         let key_converter = RowConverter::new(
             keys.iter()
                 .map(|k| {
                     Ok(SortField::new_with_options(
-                        k.expr.data_type(&output_schema)?,
+                        k.expr.data_type(&input_schema)?,
                         k.options,
                     ))
                 })
