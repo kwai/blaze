@@ -32,8 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
         with:
-          # TODO: wait https://github.com/blaze-init/tpcds-validator/pull/1 merged
-          repository: turboFei/tpcds-validator
+          repository: blaze-init/tpcds-validator
 
       - uses: actions/setup-java@v4
         if: steps.cache-tpcds-validator.outputs.cache-hit != 'true'
