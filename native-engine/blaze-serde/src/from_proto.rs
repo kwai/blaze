@@ -15,12 +15,13 @@
 //! Serde code to convert from protocol buffers to Rust data structures.
 
 use std::{
+    any::Any,
     convert::{TryFrom, TryInto},
     sync::Arc,
 };
 
 use arrow::{
-    array::{ArrayRef, RecordBatch},
+    array::ArrayRef,
     compute::SortOptions,
     datatypes::{DataType, Field, FieldRef, SchemaRef},
     row::{RowConverter, SortField},
@@ -29,11 +30,12 @@ use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use datafusion::{
     common::{Result, ScalarValue, stats::Precision},
     datasource::{
+        file_format::file_compression_type::FileCompressionType,
         listing::{FileRange, PartitionedFile},
         object_store::ObjectStoreUrl,
-        physical_plan::FileScanConfig,
+        physical_plan::{FileGroup, FileOpener, FileScanConfig, FileSource},
     },
-    logical_expr::{ColumnarValue, Operator, ScalarUDF, Volatility},
+    logical_expr::{Operator, ScalarUDF, Volatility},
     physical_expr::{
         PhysicalExprRef, ScalarFunctionExpr,
         expressions::{LikeExpr, SCAndExpr, SCOrExpr, in_list},
@@ -44,10 +46,10 @@ use datafusion::{
             BinaryExpr, CaseExpr, CastExpr, Column, IsNotNullExpr, IsNullExpr, Literal,
             NegativeExpr, NotExpr, PhysicalSortExpr,
         },
+        metrics::ExecutionPlanMetricsSet,
     },
     prelude::create_udf,
 };
-use datafusion_ext_commons::downcast_any;
 use datafusion_ext_exprs::{
     bloom_filter_might_contain::BloomFilterMightContainExpr, cast::TryCastExpr,
     get_indexed_field::GetIndexedFieldExpr, get_map_value::GetMapValueExpr,
@@ -88,7 +90,7 @@ use datafusion_ext_plans::{
     window::{WindowExpr, WindowFunction, WindowRankType},
     window_exec::WindowExec,
 };
-use object_store::{ObjectMeta, path::Path};
+use object_store::{ObjectMeta, ObjectStore, path::Path};
 use parking_lot::Mutex as SyncMutex;
 
 use crate::{
@@ -794,7 +796,7 @@ impl From<protobuf::ScalarFunction> for Arc<ScalarUDF> {
             ScalarFunction::CharacterLength => f::unicode::character_length(),
             ScalarFunction::Chr => f::string::chr(),
             ScalarFunction::ConcatWithSeparator => f::string::concat_ws(),
-            ScalarFunction::InitCap => f::string::initcap(),
+            ScalarFunction::InitCap => f::unicode::initcap(),
             ScalarFunction::Left => f::unicode::left(),
             ScalarFunction::Lpad => f::unicode::lpad(),
             ScalarFunction::Random => f::math::random(),
@@ -870,34 +872,18 @@ fn try_parse_physical_expr(
             ExprType::InList(e) => {
                 let expr = try_parse_physical_expr_box_required(&e.expr, input_schema)?;
                 let dt = expr.data_type(input_schema)?;
-                in_list(
-                    expr,
-                    e.list
-                        .iter()
-                        .map(|x| {
-                            Ok::<_, PlanSerDeError>({
-                                match try_parse_physical_expr(x, input_schema)? {
-                                    // cast list values to expr type
-                                    e if downcast_any!(e, Literal).is_ok()
-                                        && e.data_type(input_schema)? != dt =>
-                                    {
-                                        match TryCastExpr::new(e, dt.clone()).evaluate(
-                                            &RecordBatch::new_empty(input_schema.clone()),
-                                        )? {
-                                            ColumnarValue::Scalar(scalar) => {
-                                                Arc::new(Literal::new(scalar))
-                                            }
-                                            ColumnarValue::Array(_) => unreachable!(),
-                                        }
-                                    }
-                                    other => other,
-                                }
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    &e.negated,
-                    &input_schema,
-                )?
+                let list_exprs = e
+                    .list
+                    .iter()
+                    .map(|x| -> Result<PhysicalExprRef, PlanSerDeError> {
+                        let e = try_parse_physical_expr(x, input_schema)?;
+                        if e.data_type(input_schema)? != dt {
+                            return Ok(Arc::new(TryCastExpr::new(e, dt.clone())));
+                        }
+                        Ok(e)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                in_list(expr, list_exprs, &e.negated, &input_schema)?
             }
             ExprType::Case(e) => Arc::new(CaseExpr::try_new(
                 e.expr
@@ -945,7 +931,7 @@ fn try_parse_physical_expr(
                         args.iter()
                             .map(|e| e.data_type(input_schema))
                             .collect::<Result<Vec<_>, _>>()?,
-                        Arc::new(convert_required!(e.return_type)?),
+                        convert_required!(e.return_type)?,
                         Volatility::Volatile,
                         fun,
                     ))
@@ -957,7 +943,11 @@ fn try_parse_physical_expr(
                     scalar_udf.name(),
                     scalar_udf.clone(),
                     args,
-                    convert_required!(e.return_type)?,
+                    Arc::new(Field::new(
+                        "result",
+                        convert_required!(e.return_type)?,
+                        true,
+                    )),
                 ))
             }
             ExprType::SparkUdfWrapperExpr(e) => Arc::new(SparkUDFWrapperExpr::try_new(
@@ -1190,7 +1180,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
         Ok(PartitionedFile {
             object_meta: ObjectMeta {
                 location: Path::from(format!("/{}", BASE64_URL_SAFE_NO_PAD.encode(&val.path))),
-                size: val.size as usize,
+                size: val.size,
                 last_modified: Default::default(),
                 e_tag: None,
                 version: None,
@@ -1203,6 +1193,7 @@ impl TryFrom<&protobuf::PartitionedFile> for PartitionedFile {
             range: val.range.as_ref().map(|v| v.try_into()).transpose()?,
             statistics: None,
             extensions: None,
+            metadata_size_hint: None,
         })
     }
 }
@@ -1243,6 +1234,7 @@ impl From<&protobuf::ColumnStats> for ColumnStatistics {
                 .as_ref()
                 .map(|m| Precision::Exact(m.try_into().unwrap()))
                 .unwrap_or(Precision::Absent),
+            sum_value: Precision::Absent,
             distinct_count: Precision::Exact(cs.distinct_count as usize),
         }
     }
@@ -1290,34 +1282,87 @@ impl TryInto<FileScanConfig> for &protobuf::FileScanExecConf {
                 .map(|_| ColumnStatistics::new_unknown())
                 .collect();
         }
+        let statistics = Arc::new(statistics);
 
         let file_groups = (0..self.num_partitions)
             .map(|i| {
                 if i == self.partition_index {
-                    Ok(self
-                        .file_group
-                        .as_ref()
-                        .expect("missing FileScanConfig.file_group")
-                        .try_into()?)
+                    let file_group = FileGroup::new(
+                        self.file_group
+                            .as_ref()
+                            .expect("missing FileScanConfig.file_group")
+                            .try_into()?,
+                    );
+                    Ok(file_group.with_statistics(statistics.clone()))
                 } else {
-                    Ok(vec![])
+                    Ok(FileGroup::new(vec![]))
                 }
             })
             .collect::<Result<Vec<_>, PlanSerDeError>>()?;
+
+        struct UnusedFileSource(Statistics);
+        impl FileSource for UnusedFileSource {
+            fn create_file_opener(
+                &self,
+                _object_store: Arc<dyn ObjectStore>,
+                _base_config: &FileScanConfig,
+                _partition: usize,
+            ) -> Arc<dyn FileOpener> {
+                unimplemented!()
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn with_batch_size(&self, _batch_size: usize) -> Arc<dyn FileSource> {
+                unimplemented!()
+            }
+
+            fn with_schema(&self, _schema: SchemaRef) -> Arc<dyn FileSource> {
+                unimplemented!()
+            }
+
+            fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
+                unimplemented!()
+            }
+
+            fn with_statistics(&self, _statistics: Statistics) -> Arc<dyn FileSource> {
+                unimplemented!()
+            }
+
+            fn metrics(&self) -> &ExecutionPlanMetricsSet {
+                unimplemented!()
+            }
+
+            fn statistics(&self) -> Result<Statistics> {
+                Ok(self.0.clone())
+            }
+
+            fn file_type(&self) -> &str {
+                "unused"
+            }
+        }
 
         Ok(FileScanConfig {
             object_store_url: ObjectStoreUrl::local_filesystem(), // not used
             file_schema: schema,
             file_groups,
-            statistics,
+            constraints: Default::default(),
             projection,
             limit: self.limit.as_ref().map(|sl| sl.limit as usize),
             table_partition_cols: partition_schema
                 .fields()
                 .iter()
                 .map(|field| Field::new(field.name().clone(), field.data_type().clone(), true))
+                .map(Arc::new)
                 .collect(),
             output_ordering: vec![],
+            file_compression_type: FileCompressionType::UNCOMPRESSED, // unused
+            new_lines_in_values: false,
+            file_source: Arc::new(UnusedFileSource(statistics.as_ref().clone())),
+            batch_size: None,
+            expr_adapter_factory: None,
         })
     }
 }

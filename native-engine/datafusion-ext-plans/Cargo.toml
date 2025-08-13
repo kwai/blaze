@@ -12,6 +12,8 @@ arrow = { workspace = true }
 arrow-schema = { workspace = true }
 blaze-jni-bridge = { workspace = true }
 datafusion = { workspace = true }
+datafusion-datasource = { workspace = true }
+datafusion-datasource-parquet = { workspace = true }
 datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::{
+    fmt::{Debug, Formatter},
+    sync::Arc,
+};
 
 use arrow_schema::SchemaRef;
 use datafusion::{
@@ -54,6 +57,12 @@ struct SinglePartitionStream(SchemaRef, Arc<Mutex<SendableRecordBatchStream>>);
 impl SinglePartitionStream {
     fn new(stream: SendableRecordBatchStream) -> Self {
         Self(stream.schema(), Arc::new(Mutex::new(stream)))
+    }
+}
+
+impl Debug for SinglePartitionStream {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SinglePartitionStream")
     }
 }
 

@@ -10,8 +10,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream, Statistics, metrics::ExecutionPlanMetricsSet,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream, Statistics,
+        execution_plan::{Boundedness, EmissionType},
+        metrics::ExecutionPlanMetricsSet,
     },
 };
 use futures::StreamExt;
@@ -62,7 +64,8 @@ impl ExecutionPlan for LimitExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -136,7 +139,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         common::{Result, stats::Precision},
-        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, common, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -171,7 +174,7 @@ mod test {
     ) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a, b, c);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     #[tokio::test]

@@ -24,8 +24,8 @@ use datafusion::{
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::{EquivalenceProperties, Partitioning::UnknownPartitioning},
     physical_plan::{
-        DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionMode, ExecutionPlan,
-        PlanProperties,
+        DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, PlanProperties,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -90,7 +90,8 @@ impl ExecutionPlan for UnionExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 UnknownPartitioning(self.num_partitions),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }

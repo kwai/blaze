@@ -40,8 +40,9 @@ use datafusion::{
         EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr, expressions::Column,
     },
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -168,7 +169,8 @@ impl ExecutionPlan for SortExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -1413,7 +1415,7 @@ mod test {
         assert_batches_eq,
         common::Result,
         physical_expr::{PhysicalSortExpr, expressions::Column},
-        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, common, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -1448,7 +1450,7 @@ mod test {
     ) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a, b, c);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     #[tokio::test]
@@ -1498,8 +1500,8 @@ mod fuzztest {
     };
     use datafusion::{
         common::{Result, stats::Precision},
-        physical_expr::{PhysicalSortExpr, expressions::Column},
-        physical_plan::{ExecutionPlan, memory::MemoryExec},
+        physical_expr::{LexOrdering, PhysicalSortExpr, expressions::Column},
+        physical_plan::{ExecutionPlan, test::TestMemoryExec},
         prelude::{SessionConfig, SessionContext},
     };
 
@@ -1573,7 +1575,7 @@ mod fuzztest {
             },
         ];
 
-        let input = Arc::new(MemoryExec::try_new(
+        let input = Arc::new(TestMemoryExec::try_new(
             &[batches.clone()],
             schema.clone(),
             None,
@@ -1583,13 +1585,13 @@ mod fuzztest {
         let a = concat_batches(&schema, &output)?;
         let a_row_count = sort.clone().statistics()?.num_rows;
 
-        let input = Arc::new(MemoryExec::try_new(
+        let input = Arc::new(TestMemoryExec::try_new(
             &[batches.clone()],
             schema.clone(),
             None,
         )?);
         let sort = Arc::new(datafusion::physical_plan::sorts::sort::SortExec::new(
-            sort_exprs.clone(),
+            LexOrdering::new(sort_exprs.iter().cloned()).unwrap(),
             input,
         ));
         let output = datafusion::physical_plan::collect(sort.clone(), task_ctx.clone()).await?;

@@ -330,7 +330,7 @@ pub fn make_eq_comparator(
     right: &dyn Array,
     ignores_null: bool,
 ) -> Result<DynEqComparator, ArrowError> {
-    use arrow::{datatypes as arrow_schema, datatypes::DataType::*};
+    use arrow::datatypes::DataType::*;
 
     macro_rules! primitive_helper {
         ($t:ty, $left:expr, $right:expr) => {
