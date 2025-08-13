@@ -70,11 +70,6 @@
       <artifactId>hadoop-shim</artifactId>
       <version>${revision}</version>
     </dependency>
-    <dependency>
-      <groupId>org.scalatest</groupId>
-      <artifactId>scalatest_${scalaVersion}</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
 
   <build>

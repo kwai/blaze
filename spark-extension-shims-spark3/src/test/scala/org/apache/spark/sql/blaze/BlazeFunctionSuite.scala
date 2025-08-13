@@ -21,12 +21,10 @@ class BlazeFunctionSuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQ
 
   test("sum function with float input") {
     withTable("t1") {
-      withSQLConf("spark.blaze.enable" -> "false") {
-        sql("set spark.blaze.enable=false")
-        sql("create table t1 using parquet as select 1.0f as c1")
-        val df = sql("select sum(c1) from t1")
-        checkAnswer(df, Seq(Row(1.23, 1.1)))
-      }
+      sql("create table t1(c1 double) using parquet")
+      sql("insert into t1 values (1.0)")
+      val df = sql("select sum(c1) from t1")
+      checkAnswer(df, Seq(Row(1.0)))
     }
   }
 

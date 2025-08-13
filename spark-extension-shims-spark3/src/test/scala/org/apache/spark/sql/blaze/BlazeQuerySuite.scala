@@ -16,6 +16,7 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.blaze.util.BlazeTestUtils
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -88,8 +89,7 @@ class BlazeQuerySuite
   test("binary type in range partitioning") {
     withTable("t1", "t2") {
       sql("create table t1(c1 binary, c2 int) using parquet")
-      sql(
-        "insert into t1 values (to_binary('test1', 'utf-8'), 1), (to_binary('test2', 'utf-8'), 2)")
+      sql("insert into t1 values (cast('test1' as binary), 1), (cast('test2' as binary), 2)")
       val df = sql("select c2 from t1 order by c1")
       checkAnswer(df, Seq(Row(1), Row(2)))
     }
@@ -127,7 +127,7 @@ class BlazeQuerySuite
     withTable("t_struct_map") {
       sql("""
           |create table t_struct_map using parquet as
-          |select named_struct('id', 101, 'metrics', map('ctr', 0.123, 'cvr', 0.045)) as user_metrics
+          |select named_struct('id', 101, 'metrics', map('ctr', 0.123d, 'cvr', 0.045d)) as user_metrics
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ user_metrics FROM t_struct_map")
       checkAnswer(df, Seq(Row(Row(101, Map("ctr" -> 0.123, "cvr" -> 0.045)))))
@@ -139,8 +139,8 @@ class BlazeQuerySuite
       sql("""
           |create table t_map_struct_value using parquet as
           |select map(
-          |  'item1', named_struct('count', 3, 'score', 4.5),
-          |  'item2', named_struct('count', 7, 'score', 9.1)
+          |  'item1', named_struct('count', 3, 'score', 4.5d),
+          |  'item2', named_struct('count', 7, 'score', 9.1d)
           |) as map_struct_value
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ map_struct_value FROM t_map_struct_value")
@@ -170,8 +170,8 @@ class BlazeQuerySuite
       sql("""
           |create table t_array_struct_map using parquet as
           |select array(
-          |  named_struct('name', 'user1', 'features', map('f1', 1.0, 'f2', 2.0)),
-          |  named_struct('name', 'user2', 'features', map('f3', 3.5))
+          |  named_struct('name', 'user1', 'features', map('f1', 1.0d, 'f2', 2.0d)),
+          |  named_struct('name', 'user2', 'features', map('f3', 3.5d))
           |) as user_feature_array
           |""".stripMargin)
       val df = sql("SELECT /*+ repartition(10) */ user_feature_array FROM t_array_struct_map")
@@ -218,28 +218,30 @@ class BlazeQuerySuite
   }
 
   test("SPARK-32864: Support ORC forced positional evolution") {
-    Seq(true, false).foreach { forcePositionalEvolution =>
-      withEnvConf(
-        BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString) {
-        withTempPath { f =>
-          val path = f.getCanonicalPath
-          Seq[(Integer, Integer)]((1, 2), (3, 4), (5, 6), (null, null))
-            .toDF("c1", "c2")
-            .write
-            .orc(path)
-          val correctAnswer = Seq(Row(1, 2), Row(3, 4), Row(5, 6), Row(null, null))
-          checkAnswer(spark.read.orc(path), correctAnswer)
+    if (BlazeTestUtils.isSparkV32OrGreater) {
+      Seq(true, false).foreach { forcePositionalEvolution =>
+        withEnvConf(
+          BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString) {
+          withTempPath { f =>
+            val path = f.getCanonicalPath
+            Seq[(Integer, Integer)]((1, 2), (3, 4), (5, 6), (null, null))
+              .toDF("c1", "c2")
+              .write
+              .orc(path)
+            val correctAnswer = Seq(Row(1, 2), Row(3, 4), Row(5, 6), Row(null, null))
+            checkAnswer(spark.read.orc(path), correctAnswer)
 
-          withTable("t") {
-            sql(s"CREATE EXTERNAL TABLE t(c3 INT, c2 INT) USING ORC LOCATION '$path'")
+            withTable("t") {
+              sql(s"CREATE EXTERNAL TABLE t(c3 INT, c2 INT) USING ORC LOCATION '$path'")
 
-            val expected = if (forcePositionalEvolution) {
-              correctAnswer
-            } else {
-              Seq(Row(null, 2), Row(null, 4), Row(null, 6), Row(null, null))
+              val expected = if (forcePositionalEvolution) {
+                correctAnswer
+              } else {
+                Seq(Row(null, 2), Row(null, 4), Row(null, 6), Row(null, null))
+              }
+
+              checkAnswer(spark.table("t"), expected)
             }
-
-            checkAnswer(spark.table("t"), expected)
           }
         }
       }
@@ -247,34 +249,36 @@ class BlazeQuerySuite
   }
 
   test("SPARK-32864: Support ORC forced positional evolution with partitioned table") {
-    Seq(true, false).foreach { forcePositionalEvolution =>
-      withEnvConf(
-        BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString) {
-        withTempPath { f =>
-          val path = f.getCanonicalPath
-          Seq[(Integer, Integer, Integer)]((1, 2, 1), (3, 4, 2), (5, 6, 3), (null, null, 4))
-            .toDF("c1", "c2", "p")
-            .write
-            .partitionBy("p")
-            .orc(path)
-          val correctAnswer = Seq(Row(1, 2, 1), Row(3, 4, 2), Row(5, 6, 3), Row(null, null, 4))
-          checkAnswer(spark.read.orc(path), correctAnswer)
+    if (BlazeTestUtils.isSparkV32OrGreater) {
+      Seq(true, false).foreach { forcePositionalEvolution =>
+        withEnvConf(
+          BlazeConf.ORC_FORCE_POSITIONAL_EVOLUTION.key -> forcePositionalEvolution.toString) {
+          withTempPath { f =>
+            val path = f.getCanonicalPath
+            Seq[(Integer, Integer, Integer)]((1, 2, 1), (3, 4, 2), (5, 6, 3), (null, null, 4))
+              .toDF("c1", "c2", "p")
+              .write
+              .partitionBy("p")
+              .orc(path)
+            val correctAnswer = Seq(Row(1, 2, 1), Row(3, 4, 2), Row(5, 6, 3), Row(null, null, 4))
+            checkAnswer(spark.read.orc(path), correctAnswer)
 
-          withTable("t") {
-            sql(s"""
-                 |CREATE EXTERNAL TABLE t(c3 INT, c2 INT)
-                 |USING ORC
-                 |PARTITIONED BY (p int)
-                 |LOCATION '$path'
-                 |""".stripMargin)
-            sql("MSCK REPAIR TABLE t")
-            val expected = if (forcePositionalEvolution) {
-              correctAnswer
-            } else {
-              Seq(Row(null, 2, 1), Row(null, 4, 2), Row(null, 6, 3), Row(null, null, 4))
+            withTable("t") {
+              sql(s"""
+                     |CREATE TABLE t(c3 INT, c2 INT)
+                     |USING ORC
+                     |PARTITIONED BY (p int)
+                     |LOCATION '$path'
+                     |""".stripMargin)
+              sql("MSCK REPAIR TABLE t")
+              val expected = if (forcePositionalEvolution) {
+                correctAnswer
+              } else {
+                Seq(Row(null, 2, 1), Row(null, 4, 2), Row(null, 6, 3), Row(null, null, 4))
+              }
+
+              checkAnswer(spark.table("t"), expected)
             }
-
-            checkAnswer(spark.table("t"), expected)
           }
         }
       }
