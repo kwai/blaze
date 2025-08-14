@@ -447,12 +447,6 @@
 
     <profile>
       <id>celeborn-0.5</id>
-      <activation>
-        <property>
-          <name>celebornVersion</name>
-          <value>/^0\..5\..*$/</value>
-        </property>
-      </activation>
       <properties>
         <celebornVersion>0.5.4</celebornVersion>
         <celebornShimName>celeborn-0.5</celebornShimName>
@@ -461,12 +455,6 @@
 
     <profile>
       <id>celeborn-0.6</id>
-      <activation>
-        <property>
-          <name>celebornVersion</name>
-          <value>/^0\..6\..*$/</value>
-        </property>
-      </activation>
       <properties>
         <celebornVersion>0.6.0</celebornVersion>
         <celebornShimName>celeborn-0.6</celebornShimName>
