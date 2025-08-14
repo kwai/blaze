@@ -25,11 +25,13 @@
     <protobufVersion>3.21.9</protobufVersion>
     <paimonVersion>1.1.1</paimonVersion>
     <celebornVersion>0.6.0</celebornVersion>
+    <celebornShimName>celeborn-0.6</celebornShimName>
     <celebornScope>provided</celebornScope>
     <uniffleVersion>0.9.2</uniffleVersion>
 
     <javaVersion>8</javaVersion>
     <maven.version>3.8.1</maven.version>
+    <maven.plugin.build.helper.version>3.3.0</maven.plugin.build.helper.version>
     <maven.plugin.scala.version>4.9.2</maven.plugin.scala.version>
     <maven.plugin.shade.version>3.5.2</maven.plugin.shade.version>
     <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
@@ -298,6 +300,12 @@
           </execution>
         </executions>
       </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <version>${maven.plugin.build.helper.version}</version>
+      </plugin>
     </plugins>
   </build>
 
@@ -439,15 +447,29 @@
 
     <profile>
       <id>celeborn-0.5</id>
+      <activation>
+        <property>
+          <name>celebornVersion</name>
+          <value>/^0\..5\..*$/</value>
+        </property>
+      </activation>
       <properties>
         <celebornVersion>0.5.4</celebornVersion>
+        <celebornShimName>celeborn-0.5</celebornShimName>
       </properties>
     </profile>
 
     <profile>
       <id>celeborn-0.6</id>
+      <activation>
+        <property>
+          <name>celebornVersion</name>
+          <value>/^0\..6\..*$/</value>
+        </property>
+      </activation>
       <properties>
         <celebornVersion>0.6.0</celebornVersion>
+        <celebornShimName>celeborn-0.6</celebornShimName>
       </properties>
     </profile>
 
