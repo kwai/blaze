@@ -29,17 +29,17 @@
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-celeborn</artifactId>
+      <artifactId>blaze-celeborn_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-uniffle</artifactId>
+      <artifactId>blaze-uniffle_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-paimon</artifactId>
+      <artifactId>blaze-paimon_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
   </dependencies>
