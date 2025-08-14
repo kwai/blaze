@@ -13,18 +13,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        celebornver: [ "0.6.0", "0.5.4" ]
-        sparkver: [ "spark-3.5" ]
-        sparkurl: [ "https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz" ]
+        include:
+          - celebornver: "0.6.0"
+            celebornprofile: "celeborn-0.6"
+          - celebornver: "0.5.4"
+            celebornprofile: "celeborn-0.5"
     uses: ./.github/workflows/tpcds-reusable.yml
     name: Test Celeborn ${{ matrix.celebornver }}
     with:
       celebornver: ${{ matrix.celebornver }}
       celebornurl: https://archive.apache.org/dist/celeborn/celeborn-${{ matrix.celebornver }}/apache-celeborn-${{ matrix.celebornver }}-bin.tgz
-      extrablazebuildopt: -DcelebornVersion=${{ matrix.celebornver }} -DcelebornScope=compile
+      extrablazebuildopt: -DcelebornVersion=${{ matrix.celebornver }} -P${{ matrix.celebornprofile }} -DcelebornScope=compile
       extrablazeidentifier: celeborn-${{ matrix.celebornver }}
-      sparkver: ${{ matrix.sparkver }}
-      sparkurl: ${{ matrix.sparkurl }}
+      sparkver: "spark-3.5"
+      sparkurl: "https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz"
       extrasparkconf: >-
         --conf spark.shuffle.manager=org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
         --conf spark.serializer=org.apache.spark.serializer.KryoSerializer
