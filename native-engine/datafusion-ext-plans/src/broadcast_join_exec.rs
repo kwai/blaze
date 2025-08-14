@@ -33,8 +33,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         joins::utils::JoinOn,
         metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
         stream::RecordBatchStreamAdapter,
@@ -252,8 +253,10 @@ impl ExecutionPlan for BroadcastJoinExec {
                 match self.broadcast_side {
                     JoinSide::Left => self.right.output_partitioning().clone(),
                     JoinSide::Right => self.left.output_partitioning().clone(),
+                    JoinSide::None => unreachable!(),
                 },
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -348,6 +351,7 @@ async fn execute_join_with_map(
             RightAnti => Box::pin(LProbedRightAntiJoiner::new(join_params, map, sender)),
             Existence => Box::pin(LProbedExistenceJoiner::new(join_params, map, sender)),
         },
+        JoinSide::None => unreachable!(),
     };
 
     if !joiner.can_early_stop() {
@@ -428,6 +432,7 @@ async fn execute_join_with_smj_fallback(
             ),
             built_sorted,
         ),
+        JoinSide::None => unreachable!(),
     };
 
     // run sort merge join
@@ -497,10 +502,12 @@ async fn execute_join(
     let (probed_plan, built_plan) = match broadcast_side {
         JoinSide::Left => (right, left),
         JoinSide::Right => (left, right),
+        JoinSide::None => unreachable!(),
     };
     let map_keys = match broadcast_side {
         JoinSide::Left => join_params.left_keys.clone(),
         JoinSide::Right => join_params.right_keys.clone(),
+        JoinSide::None => unreachable!(),
     };
 
     let built_input = if is_built {

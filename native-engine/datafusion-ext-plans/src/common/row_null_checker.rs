@@ -438,15 +438,6 @@ mod tests {
 
     use super::*;
 
-    // Helper function to create a SortField for testing
-    fn create_test_sort_field(data_type: DataType, nulls_first: bool) -> SortField {
-        let sort_options = SortOptions {
-            descending: false,
-            nulls_first,
-        };
-        SortField::new_with_options(data_type, sort_options)
-    }
-
     #[test]
     fn test_primitive_null_detection() {
         // Create a SortField with Int32 data type

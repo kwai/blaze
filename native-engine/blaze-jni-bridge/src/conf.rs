@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::Result;
 
 use crate::{ensure_jni_bridge_inited, jni_call_static, jni_get_string, jni_new_string};
 

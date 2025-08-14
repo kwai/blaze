@@ -16,7 +16,7 @@ use std::{
     any::Any,
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
-    hash::Hasher,
+    hash::{Hash, Hasher},
     io::Cursor,
     sync::{Arc, Weak},
 };
@@ -29,6 +29,7 @@ use datafusion::{
     common::{Result, ScalarValue},
     logical_expr::ColumnarValue,
     physical_expr::{PhysicalExpr, PhysicalExprRef},
+    physical_expr_common::physical_expr::DynEq,
 };
 use datafusion_ext_commons::{
     arrow::cast::cast, df_execution_err, df_unimplemented_err, spark_bloom_filter::SparkBloomFilter,
@@ -79,14 +80,26 @@ impl Debug for BloomFilterMightContainExpr {
     }
 }
 
-impl PartialEq<dyn Any> for BloomFilterMightContainExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self.bloom_filter_expr.eq(&other.bloom_filter_expr)
-                && self.value_expr.eq(&other.value_expr)
-        } else {
-            false
-        }
+impl PartialEq for BloomFilterMightContainExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.bloom_filter_expr.eq(&other.bloom_filter_expr) && self.value_expr.eq(&other.value_expr)
+    }
+}
+
+impl DynEq for BloomFilterMightContainExpr {
+    fn dyn_eq(&self, other: &dyn Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .map(|other| other.eq(self))
+            .unwrap_or(false)
+    }
+}
+
+impl Hash for BloomFilterMightContainExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write(b"BloomFilterMightContainExpr");
+        self.bloom_filter_expr.dyn_hash(state);
+        self.value_expr.dyn_hash(state);
     }
 }
 
@@ -167,10 +180,8 @@ impl PhysicalExpr for BloomFilterMightContainExpr {
         )))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        state.write(b"BloomFilterMightContainExpr");
-        self.bloom_filter_expr.dyn_hash(state);
-        self.value_expr.dyn_hash(state);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
 

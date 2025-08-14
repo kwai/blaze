@@ -16,15 +16,20 @@
 package org.apache.spark.sql.hive.blaze
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.blaze.BlazeConverters.addRenameColumnsExec
-import org.apache.spark.sql.blaze.util.BlazeLogUtils.logDebugPlanConversion
+import org.apache.spark.sql.blaze.BlazeConvertProvider
+import org.apache.spark.sql.blaze.BlazeConverters
+import org.apache.spark.sql.blaze.util.BlazeLogUtils
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.hive.execution.blaze.plan.NativePaimonTableScanExec
 
-object BlazeHiveConverters extends Logging {
+class PaimonConvertProvider extends BlazeConvertProvider with Logging {
 
-  def isNativePaimonTableScan(exec: SparkPlan): Boolean = {
+  override def isEnabled: Boolean = {
+    BlazeConverters.getBooleanConf("spark.blaze.enable.paimon.scan", defaultValue = false)
+  }
+
+  override def isSupported(exec: SparkPlan): Boolean = {
     exec match {
       case e: HiveTableScanExec
           if e.relation.tableMeta.storage.serde.isDefined
@@ -34,18 +39,21 @@ object BlazeHiveConverters extends Logging {
     }
   }
 
-  def convertPaimonTableScanExec(exec: SparkPlan): SparkPlan = {
-    val hiveExec = exec.asInstanceOf[HiveTableScanExec]
+  override def convert(exec: SparkPlan): SparkPlan = {
+    exec match {
+      case hiveExec: HiveTableScanExec => convertPaimonTableScanExec(hiveExec)
+      case _ => exec
+    }
+  }
+
+  private def convertPaimonTableScanExec(exec: HiveTableScanExec): SparkPlan = {
     assert(
       PaimonUtil.isPaimonCowTable(
-        PaimonUtil.loadTable(hiveExec.relation.tableMeta.location.toString)),
+        PaimonUtil.loadTable(exec.relation.tableMeta.location.toString)),
       "paimon MOR/MOW mode is not supported")
-    val (relation, output, requestedAttributes, partitionPruningPred) = (
-      hiveExec.relation,
-      hiveExec.output,
-      hiveExec.requestedAttributes,
-      hiveExec.partitionPruningPred)
-    logDebugPlanConversion(
+    val (relation, output, requestedAttributes, partitionPruningPred) =
+      (exec.relation, exec.output, exec.requestedAttributes, exec.partitionPruningPred)
+    BlazeLogUtils.logDebugPlanConversion(
       exec,
       Seq(
         "relation" -> relation.getClass,
@@ -54,6 +62,6 @@ object BlazeHiveConverters extends Logging {
         "requestedAttributes" -> requestedAttributes,
         "partitionPruningPred" -> partitionPruningPred))
 
-    addRenameColumnsExec(NativePaimonTableScanExec(hiveExec))
+    BlazeConverters.addRenameColumnsExec(NativePaimonTableScanExec(exec))
   }
 }

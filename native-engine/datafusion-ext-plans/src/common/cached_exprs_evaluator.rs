@@ -34,14 +34,15 @@ use datafusion::{
         cast::as_boolean_array,
         tree_node::{Transformed, TreeNode},
     },
+    logical_expr::Operator,
     physical_expr::{
         PhysicalExpr, PhysicalExprRef,
-        expressions::{CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
+        expressions::{BinaryExpr, CaseExpr, Column, Literal, NoOp, SCAndExpr, SCOrExpr},
     },
-    physical_expr_common::utils::scatter,
+    physical_expr_common::{physical_expr::DynEq, utils::scatter},
     physical_plan::ColumnarValue,
 };
-use datafusion_ext_commons::{arrow::cast::cast, uda::UserDefinedArray};
+use datafusion_ext_commons::{arrow::cast::cast, downcast_any, uda::UserDefinedArray};
 use itertools::Itertools;
 use parking_lot::Mutex;
 
@@ -187,9 +188,9 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         dups: &mut HashSet<ExprKey>,
     ) {
         // ignore trivial leaf exprs
-        if expr.as_any().downcast_ref::<NoOp>().is_some()
-            || expr.as_any().downcast_ref::<Column>().is_some()
-            || expr.as_any().downcast_ref::<Literal>().is_some()
+        if matches!(downcast_any!(expr, NoOp), Ok(_))
+            || matches!(downcast_any!(expr, Column), Ok(_))
+            || matches!(downcast_any!(expr, Literal), Ok(_))
         {
             return;
         }
@@ -202,14 +203,16 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         }
 
         // traverse children, excluding exprs with short circuiting evaluation
-        if expr.as_any().downcast_ref::<CaseExpr>().is_some()
-            || expr.as_any().downcast_ref::<SCAndExpr>().is_some()
-            || expr.as_any().downcast_ref::<SCOrExpr>().is_some()
+        if matches!(downcast_any!(expr, CaseExpr), Ok(_))
+            || matches!(downcast_any!(expr, SCAndExpr), Ok(_))
+            || matches!(downcast_any!(expr, SCOrExpr), Ok(_))
+            || matches!(downcast_any!(expr, BinaryExpr), Ok(e) if e.op() == &Operator::And)
+            || matches!(downcast_any!(expr, BinaryExpr), Ok(e) if e.op() == &Operator::Or)
         {
             // short circuiting expression - only first child can be cached
             // first `when` expr can also be cached
             collect_dups(&expr.children()[0], current_count, expr_counts, dups);
-            if let Some(case_expr) = expr.as_any().downcast_ref::<CaseExpr>() {
+            if let Ok(case_expr) = downcast_any!(expr, CaseExpr) {
                 if case_expr.expr().is_some() {
                     let children = case_expr.children();
                     if children.len() >= 2 {
@@ -243,9 +246,9 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         cache: &Cache,
     ) -> Result<PhysicalExprRef> {
         // ignore trivial leaf exprs
-        if expr.as_any().downcast_ref::<NoOp>().is_some()
-            || expr.as_any().downcast_ref::<Column>().is_some()
-            || expr.as_any().downcast_ref::<Literal>().is_some()
+        if matches!(downcast_any!(expr, NoOp), Ok(_))
+            || matches!(downcast_any!(expr, Column), Ok(_))
+            || matches!(downcast_any!(expr, Literal), Ok(_))
         {
             return Ok(expr);
         }
@@ -255,9 +258,11 @@ fn transform_to_cached_exprs(exprs: &[PhysicalExprRef]) -> Result<(Vec<PhysicalE
         let current_cache_id = cached_expr_ids.get(&expr_key).cloned();
 
         // transform children
-        let transformed_expr = if expr.as_any().downcast_ref::<CaseExpr>().is_some()
-            || expr.as_any().downcast_ref::<SCAndExpr>().is_some()
-            || expr.as_any().downcast_ref::<SCOrExpr>().is_some()
+        let transformed_expr = if matches!(downcast_any!(expr, CaseExpr), Ok(_))
+            || matches!(downcast_any!(expr, SCAndExpr), Ok(_))
+            || matches!(downcast_any!(expr, SCOrExpr), Ok(_))
+            || matches!(downcast_any!(expr, BinaryExpr), Ok(e) if e.op() == &Operator::And)
+            || matches!(downcast_any!(expr, BinaryExpr), Ok(e) if e.op() == &Operator::Or)
         {
             // short circuiting expression - only first child can be cached
             // first `when` expr can also be cached
@@ -309,7 +314,7 @@ struct ExprKey(PhysicalExprRef);
 
 impl PartialEq for ExprKey {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_ref().eq(other.0.as_any())
+        self.0.as_ref().eq(other.0.as_ref())
     }
 }
 
@@ -338,12 +343,24 @@ impl Debug for CachedExpr {
     }
 }
 
-impl PartialEq<dyn Any> for CachedExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
+impl PartialEq for CachedExpr {
+    fn eq(&self, other: &Self) -> bool {
+        other.id == self.id
+    }
+}
+
+impl DynEq for CachedExpr {
+    fn dyn_eq(&self, other: &dyn Any) -> bool {
         other
             .downcast_ref::<Self>()
-            .map(|other| other.id == self.id)
+            .map(|other| other.eq(self))
             .unwrap_or(false)
+    }
+}
+
+impl Hash for CachedExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }
 
@@ -379,8 +396,8 @@ impl PhysicalExpr for CachedExpr {
         }))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        self.orig_expr.dyn_hash(state);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
 

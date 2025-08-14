@@ -20,7 +20,7 @@
 use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
-use arrow_schema::DataType;
+use arrow_schema::{DataType, TimeUnit};
 use blaze_jni_bridge::{
     conf,
     conf::{BooleanConf, IntConf},
@@ -29,25 +29,28 @@ use blaze_jni_bridge::{
 use bytes::Bytes;
 use datafusion::{
     datasource::physical_plan::{
-        FileMeta, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
+        FileMeta, FileOpener, FileScanConfig, FileStream, OnError, ParquetFileMetrics,
         ParquetFileReaderFactory,
-        parquet::{ParquetOpener, page_filter::PagePruningAccessPlanFilter},
     },
     error::{DataFusionError, Result},
     execution::context::TaskContext,
     parquet::{
-        arrow::async_reader::{AsyncFileReader, fetch_parquet_metadata},
+        arrow::{
+            arrow_reader::ArrowReaderOptions,
+            async_reader::{AsyncFileReader, fetch_parquet_metadata},
+        },
         errors::ParquetError,
         file::metadata::ParquetMetaData,
     },
     physical_expr::{EquivalenceProperties, PhysicalExprRef},
-    physical_optimizer::pruning::PruningPredicate,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, Partitioning, PlanProperties,
+        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
         SendableRecordBatchStream, Statistics,
-        metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        execution_plan::{Boundedness, EmissionType},
+        metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
+use datafusion_datasource_parquet::opener::ParquetOpener;
 use datafusion_ext_commons::{batch_size, hadoop_fs::FsProvider};
 use fmt::Debug;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
@@ -70,8 +73,6 @@ pub struct ParquetExec {
     projected_schema: SchemaRef,
     metrics: ExecutionPlanMetricsSet,
     predicate: Option<PhysicalExprRef>,
-    pruning_predicate: Option<Arc<PruningPredicate>>,
-    page_pruning_predicate: Option<Arc<PagePruningAccessPlanFilter>>,
     props: OnceCell<PlanProperties>,
 }
 
@@ -84,38 +85,7 @@ impl ParquetExec {
         predicate: Option<PhysicalExprRef>,
     ) -> Self {
         let metrics = ExecutionPlanMetricsSet::new();
-        let predicate_creation_errors =
-            MetricBuilder::new(&metrics).global_counter("num_predicate_creation_errors");
-
-        let file_schema = &base_config.file_schema;
-        let pruning_predicate = predicate
-            .clone()
-            .and_then(|predicate_expr| {
-                match PruningPredicate::try_new(predicate_expr, file_schema.clone()) {
-                    Ok(pruning_predicate) => Some(Arc::new(pruning_predicate)),
-                    Err(e) => {
-                        log::warn!("Could not create pruning predicate: {e}");
-                        predicate_creation_errors.add(1);
-                        None
-                    }
-                }
-            })
-            .filter(|p| {
-                // https://github.com/kwai/blaze/issues/1032
-                // predicate pruning is buggy for decimal type, so we need to
-                // temporarily disable predicate pruning for decimal type
-                matches!(
-                    expr_contains_decimal_type(p.predicate_expr(), file_schema),
-                    Ok(false)
-                )
-            })
-            .filter(|p| !p.always_true());
-
-        let page_pruning_predicate = predicate
-            .as_ref()
-            .map(|p| Arc::new(PagePruningAccessPlanFilter::new(p, file_schema.clone())));
-
-        let (projected_schema, projected_statistics, _projected_output_ordering) =
+        let (projected_schema, _constraints, projected_statistics, _projected_output_ordering) =
             base_config.project();
 
         Self {
@@ -125,8 +95,6 @@ impl ParquetExec {
             projected_statistics,
             metrics,
             predicate,
-            pruning_predicate,
-            page_pruning_predicate,
             props: OnceCell::new(),
         }
     }
@@ -135,23 +103,11 @@ impl ParquetExec {
 impl DisplayAs for ParquetExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> fmt::Result {
         let limit = self.base_config.limit;
-        let file_group = self
-            .base_config
-            .file_groups
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
-
+        let file_group = &self.base_config.file_groups;
+        let pred = &self.predicate;
         write!(
             f,
-            "ParquetExec: limit={:?}, file_group={:?}, predicate={}",
-            limit,
-            file_group,
-            self.pruning_predicate
-                .as_ref()
-                .map(|pre| format!("{}", pre.predicate_expr()))
-                .unwrap_or(format!("<empty>")),
+            "ParquetExec: limit={limit:?}, file_group={file_group:?}, predicate={pred:?}"
         )
     }
 }
@@ -178,7 +134,8 @@ impl ExecutionPlan for ParquetExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 Partitioning::UnknownPartitioning(self.base_config.file_groups.len()),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -214,24 +171,27 @@ impl ExecutionPlan for ParquetExec {
         let page_filtering_enabled = conf::PARQUET_ENABLE_PAGE_FILTERING.value()?;
         let bloom_filter_enabled = conf::PARQUET_ENABLE_BLOOM_FILTER.value()?;
 
-        let opener = ParquetOpener {
+        let opener: Arc<dyn FileOpener> = Arc::new(ParquetOpener {
             partition_index: partition,
             projection: Arc::from(projection),
             batch_size: batch_size(),
             limit: self.base_config.limit,
             predicate: self.predicate.clone(),
-            pruning_predicate: self.pruning_predicate.clone(),
-            page_pruning_predicate: self.page_pruning_predicate.clone(),
-            table_schema: self.base_config.file_schema.clone(),
+            logical_file_schema: self.base_config.file_schema.clone(),
+            partition_fields: self.base_config.table_partition_cols.to_vec(),
             metadata_size_hint: None,
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::new(FsReaderFactory::new(fs_provider)),
-            pushdown_filters: page_filtering_enabled,
-            reorder_filters: page_filtering_enabled,
+            pushdown_filters: false,
+            reorder_filters: false,
             enable_page_index: page_filtering_enabled,
             enable_bloom_filter: bloom_filter_enabled,
             schema_adapter_factory,
-        };
+            enable_row_group_stats_pruning: true,
+            coerce_int96: Some(TimeUnit::Millisecond),
+            file_decryption_properties: None,
+            expr_adapter_factory: None,
+        });
 
         let mut file_stream = FileStream::new(&self.base_config, partition, opener, &self.metrics)?;
         if conf::IGNORE_CORRUPTED_FILES.value()? {
@@ -252,7 +212,7 @@ impl ExecutionPlan for ParquetExec {
 }
 
 fn execute_parquet_scan(
-    mut stream: Pin<Box<FileStream<ParquetOpener>>>,
+    mut stream: Pin<Box<FileStream>>,
     exec_ctx: Arc<ExecutionContext>,
 ) -> Result<SendableRecordBatchStream> {
     Ok(exec_ctx
@@ -331,22 +291,15 @@ impl ParquetFileReader {
 }
 
 impl AsyncFileReader for ParquetFileReaderRef {
-    fn get_bytes_sync(
-        &mut self,
-        range: Range<usize>,
-    ) -> datafusion::parquet::errors::Result<Bytes> {
-        self.0
-            .get_internal_reader()
-            .read_fully(range)
-            .map_err(|e| ParquetError::External(Box::new(e)))
-    }
-
     fn get_bytes(
         &mut self,
-        range: Range<usize>,
+        range: Range<u64>,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Bytes>> {
         let inner = self.0.clone();
-        inner.metrics.bytes_scanned.add(range.end - range.start);
+        inner
+            .metrics
+            .bytes_scanned
+            .add((range.end - range.start) as usize);
         async move {
             tokio::task::spawn_blocking(move || {
                 inner
@@ -362,11 +315,11 @@ impl AsyncFileReader for ParquetFileReaderRef {
 
     fn get_byte_ranges(
         &mut self,
-        ranges: Vec<Range<usize>>,
+        ranges: Vec<Range<u64>>,
     ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Vec<Bytes>>> {
         let max_over_read_size = conf::PARQUET_MAX_OVER_READ_SIZE.value().unwrap_or(16384) as usize;
         let num_ranges = ranges.len();
-        let (sorted_range_indices, sorted_ranges): (Vec<usize>, Vec<Range<usize>>) = ranges
+        let (sorted_range_indices, sorted_ranges): (Vec<usize>, Vec<Range<u64>>) = ranges
             .into_iter()
             .enumerate()
             .sorted_unstable_by_key(|(_, r)| r.start)
@@ -380,7 +333,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
             }
 
             let last_merged_range = merged_ranges.last_mut().unwrap();
-            if range.start <= last_merged_range.end + max_over_read_size {
+            if range.start <= last_merged_range.end + max_over_read_size as u64 {
                 last_merged_range.end = range.end.max(last_merged_range.end);
             } else {
                 merged_ranges.push(range);
@@ -395,7 +348,10 @@ impl AsyncFileReader for ParquetFileReaderRef {
             tokio::task::spawn_blocking(move || {
                 let merged_bytes = &mut *merged_bytes_cloned.lock();
                 for range in merged_ranges_cloned {
-                    inner.metrics.bytes_scanned.add(range.len());
+                    inner
+                        .metrics
+                        .bytes_scanned
+                        .add((range.end - range.start) as usize);
                     if range.is_empty() {
                         merged_bytes.push(Bytes::new());
                         continue;
@@ -420,10 +376,11 @@ impl AsyncFileReader for ParquetFileReaderRef {
                 while merged_ranges[m].end <= range.start {
                     m += 1;
                 }
-                let len = range.len();
-                if len < merged_ranges[m].len() {
+                let len = range.end - range.start;
+                if len < merged_ranges[m].end - merged_ranges[m].start {
                     let offset = range.start - merged_ranges[m].start;
-                    sorted_range_bytes.push(merged_bytes[m].slice(offset..offset + len));
+                    sorted_range_bytes
+                        .push(merged_bytes[m].slice(offset as usize..(offset + len) as usize));
                 } else {
                     sorted_range_bytes.push(merged_bytes[m].clone());
                 }
@@ -438,16 +395,17 @@ impl AsyncFileReader for ParquetFileReaderRef {
         .boxed()
     }
 
-    fn get_metadata(
-        &mut self,
-    ) -> BoxFuture<'_, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
+    fn get_metadata<'a>(
+        &'a mut self,
+        _options: Option<&'a ArrowReaderOptions>,
+    ) -> BoxFuture<'a, datafusion::parquet::errors::Result<Arc<ParquetMetaData>>> {
         let metadata_cache_size = conf::PARQUET_METADATA_CACHE_SIZE.value().unwrap_or(5) as usize;
         type ParquetMetaDataSlot = tokio::sync::OnceCell<Arc<ParquetMetaData>>;
         type ParquetMetaDataCacheTable = Vec<(ObjectMeta, ParquetMetaDataSlot)>;
         static METADATA_CACHE: OnceCell<Mutex<ParquetMetaDataCacheTable>> = OnceCell::new();
 
         let inner = self.0.clone();
-        let meta_size = inner.get_meta().size;
+        let meta_size = inner.get_meta().size as usize;
         let size_hint = None;
         let cache_slot = (move || {
             let mut metadata_cache = METADATA_CACHE.get_or_init(|| Mutex::new(Vec::new())).lock();
@@ -480,7 +438,7 @@ impl AsyncFileReader for ParquetFileReaderRef {
                                 tokio::task::spawn_blocking(move || {
                                     inner
                                         .get_internal_reader()
-                                        .read_fully(range)
+                                        .read_fully(range.start as u64..range.end as u64)
                                         .map_err(|e| ParquetError::External(Box::new(e)))
                                 })
                                 .await
@@ -497,6 +455,13 @@ impl AsyncFileReader for ParquetFileReaderRef {
                 .await
         }
         .boxed()
+    }
+
+    fn get_bytes_sync(&mut self, range: Range<u64>) -> datafusion::parquet::errors::Result<Bytes> {
+        self.0
+            .get_internal_reader()
+            .read_fully(range)
+            .map_err(|e| ParquetError::External(Box::new(e)))
     }
 }
 

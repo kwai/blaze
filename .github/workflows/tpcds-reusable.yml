@@ -115,7 +115,10 @@ jobs:
         run: cargo +nightly test --workspace --all-features
 
       - name: Build ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
-        run: ./build/mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
+        run: |
+          sed -i 's/opt-level = 1/opt-level = 0/g' Cargo.toml # use opt-level 0
+          rm -f .build-checksum_*.cache
+          ./build/mvn package -Ppre -P${{ inputs.sparkver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
 
       - name: Upload ${{ inputs.sparkver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4

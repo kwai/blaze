@@ -11,6 +11,9 @@
     <module>spark-extension</module>
     <module>${shimPkg}</module>
     <module>hadoop-shim</module>
+    <module>thirdparty/blaze-celeborn</module>
+    <module>thirdparty/blaze-uniffle</module>
+    <module>thirdparty/blaze-paimon</module>
     <module>dev/mvn-build-helper/assembly</module>
     <module>dev/mvn-build-helper/proto</module>
   </modules>
@@ -23,11 +26,13 @@
     <paimonVersion>1.1.1</paimonVersion>
     <celebornVersion>0.6.0</celebornVersion>
     <celebornScope>provided</celebornScope>
+    <uniffleVersion>0.9.2</uniffleVersion>
 
     <javaVersion>8</javaVersion>
     <maven.version>3.8.1</maven.version>
     <maven.plugin.scala.version>4.9.2</maven.plugin.scala.version>
     <maven.plugin.shade.version>3.5.2</maven.plugin.shade.version>
+    <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
   </properties>
 
   <dependencyManagement>
@@ -429,6 +434,34 @@
       </activation>
       <properties>
         <javaVersion>17</javaVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>celeborn-0.5</id>
+      <properties>
+        <celebornVersion>0.5.4</celebornVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>celeborn-0.6</id>
+      <properties>
+        <celebornVersion>0.6.0</celebornVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>uniffle-0.9</id>
+      <properties>
+        <uniffleVersion>0.9.2</uniffleVersion>
+      </properties>
+    </profile>
+
+    <profile>
+      <id>paimon-1.1</id>
+      <properties>
+        <paimonVersion>1.1.1</paimonVersion>
       </properties>
     </profile>
   </profiles>

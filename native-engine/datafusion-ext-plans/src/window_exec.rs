@@ -24,8 +24,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -132,7 +133,8 @@ impl ExecutionPlan for WindowExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -270,7 +272,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         physical_expr::{PhysicalSortExpr, expressions::Column},
-        physical_plan::{ExecutionPlan, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -309,7 +311,7 @@ mod test {
     ) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a, b, c);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     #[tokio::test]

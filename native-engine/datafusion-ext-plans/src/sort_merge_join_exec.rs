@@ -22,8 +22,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::{EquivalenceProperties, PhysicalExprRef, PhysicalSortExpr},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream, Statistics,
+        execution_plan::{Boundedness, EmissionType},
         joins::utils::JoinOn,
         metrics::{ExecutionPlanMetricsSet, MetricsSet, Time},
     },
@@ -246,7 +247,8 @@ impl ExecutionPlan for SortMergeJoinExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.right.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }

@@ -59,6 +59,8 @@ impl TryFrom<datafusion::prelude::JoinType> for JoinType {
             datafusion::prelude::JoinType::RightAnti => Ok(JoinType::RightAnti),
             datafusion::prelude::JoinType::LeftSemi => Ok(JoinType::LeftSemi),
             datafusion::prelude::JoinType::RightSemi => Ok(JoinType::RightSemi),
+            datafusion::prelude::JoinType::LeftMark => unreachable!(),
+            datafusion::prelude::JoinType::RightMark => unreachable!(),
         }
     }
 }

@@ -249,6 +249,8 @@ object NativeConverters extends Logging {
       override val children: Seq[Expression] = Nil)
       extends Unevaluable {
     val wrapped: PhysicalExprNode = _wrapped
+
+    override def toString(): String = s"$getClass() dataType:$dataType)"
   }
 
   def convertExpr(sparkExpr: Expression): pb.PhysicalExprNode = {
