@@ -96,9 +96,7 @@ import org.apache.spark.sql.execution.blaze.plan.NativeUnionExec
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowBase
 import org.apache.spark.sql.execution.blaze.plan.NativeWindowExec
 import org.apache.spark.sql.execution.blaze.plan._
-import org.apache.spark.sql.execution.blaze.shuffle.RssPartitionWriterBase
-import org.apache.spark.sql.execution.blaze.shuffle.celeborn.BlazeCelebornShuffleManager
-import org.apache.spark.sql.execution.blaze.shuffle.BlazeBlockStoreShuffleReaderBase
+import org.apache.spark.sql.execution.blaze.shuffle.{BlazeBlockStoreShuffleReaderBase, BlazeRssShuffleManagerBase, RssPartitionWriterBase}
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ReusedExchangeExec}
 import org.apache.spark.sql.execution.joins.blaze.plan.NativeBroadcastJoinExec
@@ -111,7 +109,6 @@ import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
-import org.apache.spark.sql.execution.blaze.shuffle.uniffle.BlazeUniffleShuffleManager
 import org.blaze.{protobuf => pb, sparkver}
 
 class ShimsImpl extends Shims with Logging {
@@ -438,9 +435,7 @@ class ShimsImpl extends Shims with Logging {
       input: pb.PhysicalPlanNode,
       nativeOutputPartitioning: pb.PhysicalRepartition.Builder): pb.PhysicalPlanNode = {
 
-    if (SparkEnv.get.shuffleManager
-        .isInstanceOf[BlazeCelebornShuffleManager] || SparkEnv.get.shuffleManager
-        .isInstanceOf[BlazeUniffleShuffleManager]) {
+    if (SparkEnv.get.shuffleManager.isInstanceOf[BlazeRssShuffleManagerBase]) {
       return pb.PhysicalPlanNode
         .newBuilder()
         .setRssShuffleWriter(
