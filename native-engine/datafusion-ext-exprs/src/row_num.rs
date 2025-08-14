@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Debug, Display, Formatter},
-    hash::Hasher,
+    hash::{Hash, Hasher},
     sync::{
         Arc,
         atomic::{AtomicI64, Ordering::SeqCst},
@@ -49,9 +49,17 @@ impl Debug for RowNumExpr {
     }
 }
 
-impl PartialEq<dyn Any> for RowNumExpr {
-    fn eq(&self, _other: &dyn Any) -> bool {
+impl PartialEq for RowNumExpr {
+    fn eq(&self, _other: &Self) -> bool {
         true
+    }
+}
+
+impl Eq for RowNumExpr {}
+
+impl Hash for RowNumExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        0.hash(state)
     }
 }
 
@@ -86,7 +94,7 @@ impl PhysicalExpr for RowNumExpr {
         Ok(Arc::new(Self::default()))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        state.write("RowNum".as_bytes())
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }

@@ -17,9 +17,7 @@ package org.apache.spark.sql.execution.blaze.plan
 
 import java.net.URI
 import java.security.PrivilegedExceptionAction
-
 import scala.collection.JavaConverters._
-
 import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.broadcast.Broadcast
@@ -40,9 +38,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.datasources.FilePartition
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.types.NullType
-import org.apache.spark.sql.types.StructField
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DecimalType, NullType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
@@ -73,8 +69,12 @@ abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
     .map(identity) // make this map serializable
     .toMap
 
+  // predicate pruning is buggy for decimal type, so we need to
+  // temporarily disable predicate pruning for decimal type
+  // see https://github.com/kwai/blaze/issues/1032
   protected def nativePruningPredicateFilters: Seq[pb.PhysicalExprNode] =
     basedFileScan.dataFilters
+      .filter(expr => expr.find(_.dataType.isInstanceOf[DecimalType]).isEmpty)
       .map(expr => NativeConverters.convertScanPruningExpr(expr))
 
   protected def nativeFileSchema: pb.Schema =

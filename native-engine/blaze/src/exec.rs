@@ -78,7 +78,13 @@ pub extern "system" fn Java_org_apache_spark_sql_blaze_JniBridge_callNative(
                 let batch_size = conf::BATCH_SIZE.value()? as usize;
                 MemManager::init((max_memory as f64 * memory_fraction) as usize);
 
-                let session_config = SessionConfig::new().with_batch_size(batch_size);
+                let mut session_config = SessionConfig::new().with_batch_size(batch_size);
+                session_config
+                    .options_mut()
+                    .execution
+                    .parquet
+                    .schema_force_view_types = false;
+
                 let runtime_config =
                     RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
                 let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);

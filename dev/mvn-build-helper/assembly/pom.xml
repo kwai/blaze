@@ -27,6 +27,21 @@
       <artifactId>${shimPkg}_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
+    <dependency>
+      <groupId>org.blaze</groupId>
+      <artifactId>blaze-celeborn</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.blaze</groupId>
+      <artifactId>blaze-uniffle</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.blaze</groupId>
+      <artifactId>blaze-paimon</artifactId>
+      <version>${revision}</version>
+    </dependency>
   </dependencies>
 
   <build>

@@ -25,8 +25,9 @@ use datafusion::{
     physical_expr::{EquivalenceProperties, PhysicalExprRef, expressions::Column},
     physical_plan,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
-        SendableRecordBatchStream, Statistics,
+        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
+        Statistics,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -84,7 +85,8 @@ impl ExecutionPlan for RssShuffleWriterExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 physical_plan::Partitioning::UnknownPartitioning(1),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }

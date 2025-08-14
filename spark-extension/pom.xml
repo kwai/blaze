@@ -45,11 +45,6 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.paimon</groupId>
-      <artifactId>paimon-core</artifactId>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
       <groupId>org.apache.arrow</groupId>
       <artifactId>arrow-c-data</artifactId>
     </dependency>

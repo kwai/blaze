@@ -29,8 +29,9 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
-        PlanProperties, SendableRecordBatchStream,
+        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+        SendableRecordBatchStream,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -114,7 +115,8 @@ impl ExecutionPlan for AggExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 self.input.output_partitioning().clone(),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }
@@ -419,7 +421,7 @@ mod test {
         assert_batches_sorted_eq,
         common::{Result, ScalarValue},
         physical_expr::{expressions as phys_expr, expressions::Column},
-        physical_plan::{ExecutionPlan, common, memory::MemoryExec},
+        physical_plan::{ExecutionPlan, test::TestMemoryExec},
         prelude::SessionContext,
     };
 
@@ -484,7 +486,7 @@ mod test {
     ) -> Arc<dyn ExecutionPlan> {
         let batch = build_table_i32(a, b, c, d, e, f, g, h);
         let schema = batch.schema();
-        Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+        Arc::new(TestMemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -661,7 +663,7 @@ mod test {
         let session_ctx = SessionContext::new();
         let task_ctx = session_ctx.task_ctx();
         let output_final = agg_exec_final.execute(0, task_ctx)?;
-        let batches = common::collect(output_final).await?;
+        let batches = datafusion::physical_plan::common::collect(output_final).await?;
         let expected = vec![
             "+---+--------------+--------------+--------------+--------------+----------------+----------------------+---------------------+--------------------------+-------------------------+------------------+",
             "| c | agg_expr_sum | agg_expr_avg | agg_expr_max | agg_expr_min | agg_expr_count | agg_expr_collectlist | agg_expr_collectset | agg_expr_collectlist_nil | agg_expr_collectset_nil | agg_agg_firstign |",
@@ -691,7 +693,7 @@ mod fuzztest {
     use datafusion::{
         common::Result,
         physical_expr::expressions as phys_expr,
-        physical_plan::memory::MemoryExec,
+        physical_plan::test::TestMemoryExec,
         prelude::{SessionConfig, SessionContext},
     };
 
@@ -753,7 +755,7 @@ mod fuzztest {
         }
 
         let schema = batches[0].schema();
-        let input = Arc::new(MemoryExec::try_new(
+        let input = Arc::new(TestMemoryExec::try_new(
             &[batches.clone()],
             schema.clone(),
             None,

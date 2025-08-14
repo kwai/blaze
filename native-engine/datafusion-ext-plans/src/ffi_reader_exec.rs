@@ -29,9 +29,10 @@ use datafusion::{
     execution::context::TaskContext,
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
+        DisplayAs, DisplayFormatType, ExecutionPlan,
         Partitioning::UnknownPartitioning,
         PlanProperties, SendableRecordBatchStream, Statistics,
+        execution_plan::{Boundedness, EmissionType},
         metrics::{ExecutionPlanMetricsSet, MetricsSet},
     },
 };
@@ -95,7 +96,8 @@ impl ExecutionPlan for FFIReaderExec {
             PlanProperties::new(
                 EquivalenceProperties::new(self.schema()),
                 UnknownPartitioning(self.num_partitions),
-                ExecutionMode::Bounded,
+                EmissionType::Both,
+                Boundedness::Bounded,
             )
         })
     }

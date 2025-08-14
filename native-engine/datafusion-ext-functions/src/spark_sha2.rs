@@ -14,11 +14,14 @@
 
 use std::{fmt::Write, sync::Arc};
 
-use arrow::array::StringArray;
+use arrow::{
+    array::StringArray,
+    datatypes::{DataType, Field},
+};
 use datafusion::{
     common::{Result, ScalarValue, cast::as_binary_array},
     functions::crypto::{sha224, sha256, sha384, sha512},
-    logical_expr::ScalarUDF,
+    logical_expr::{ScalarFunctionArgs, ScalarUDF},
     physical_plan::ColumnarValue,
 };
 use datafusion_ext_commons::df_execution_err;
@@ -53,7 +56,12 @@ fn wrap_digest_result_as_hex_string(
     args: &[ColumnarValue],
     digest: Arc<ScalarUDF>,
 ) -> Result<ColumnarValue> {
-    let value = digest.invoke(args)?;
+    let value = digest.inner().invoke_with_args(ScalarFunctionArgs {
+        args: args.to_vec(),
+        arg_fields: vec![Arc::new(Field::new("arg", DataType::Binary, true))],
+        number_rows: 0,
+        return_field: Arc::new(Field::new("result", DataType::Utf8, true)),
+    })?;
     Ok(match value {
         ColumnarValue::Array(array) => {
             let binary_array = as_binary_array(&array)?;

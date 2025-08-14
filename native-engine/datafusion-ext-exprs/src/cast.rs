@@ -15,7 +15,7 @@
 use std::{
     any::Any,
     fmt::{Display, Formatter},
-    hash::{Hash, Hasher},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -27,21 +27,16 @@ use datafusion::{
     scalar::ScalarValue,
 };
 
-use crate::down_cast_any_ref;
-
 /// cast expression compatible with spark
-#[derive(Debug, Hash)]
+#[derive(Debug, Eq, Hash)]
 pub struct TryCastExpr {
     pub expr: PhysicalExprRef,
     pub cast_type: DataType,
 }
 
-impl PartialEq<dyn Any> for TryCastExpr {
-    fn eq(&self, other: &dyn Any) -> bool {
-        down_cast_any_ref(other)
-            .downcast_ref::<Self>()
-            .map(|x| self.expr.eq(&x.expr) && self.cast_type == x.cast_type)
-            .unwrap_or(false)
+impl PartialEq for TryCastExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.expr.eq(&other.expr) && self.cast_type == other.cast_type
     }
 }
 
@@ -99,11 +94,11 @@ impl PhysicalExpr for TryCastExpr {
         )))
     }
 
-    fn dyn_hash(&self, state: &mut dyn Hasher) {
-        let mut s = state;
-        self.hash(&mut s);
+    fn fmt_sql(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fmt_sql not used")
     }
 }
+
 #[cfg(test)]
 mod test {
     use std::sync::Arc;

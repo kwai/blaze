@@ -47,5 +47,6 @@ done
 if [[ "$CHECK" == "true" ]]; then
   cargo fmt --check
 else
+  cargo fix --all --allow-dirty --allow-staged --allow-no-vcs
   cargo fmt --all -q --
 fi
