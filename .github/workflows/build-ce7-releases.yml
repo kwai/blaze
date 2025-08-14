@@ -2,6 +2,7 @@ name: Build Centos7 Releases
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: ["master"]
 
@@ -13,7 +14,6 @@ jobs:
       matrix:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
         blazever: [5.0.0]
-        osclassfier: [linux-x86_64]
 
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +23,18 @@ jobs:
       - uses: prompt/actions-commit-hash@v3
         id: commit
 
+      - name: Detect osclassfier
+        id: detect-osclassfier
+        run: |
+          osclassfier=$(./build/mvn help:evaluate -Dexpression=os.detected.classifier -q -DforceStdout -P${{ matrix.sparkver }})
+          echo "osclassfier=$osclassfier" >> $GITHUB_ENV
+
       - name: Cache blaze-engine-${{ matrix.sparkver }}
         id: cache
         uses: actions/cache@v3
         with:
-          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ matrix.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
-          key: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          key: blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
 
       - uses: ScribeMD/rootless-docker@0.2.2
         if: steps.cache.outputs.cache-hit != 'true'
@@ -46,6 +52,6 @@ jobs:
       - name: Upload blaze-engine-${{ matrix.sparkver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{matrix.sparkver}}-release-${{ matrix.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
-          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ matrix.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          name: blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target-docker/blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
           overwrite: true
