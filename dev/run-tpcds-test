@@ -36,7 +36,7 @@ parse_args_for_spark_submit "$@"
 
 # Resolve a jar location for the TPCDS data generator
 find_resource() {
-  local jar_file="tpcds-validator_2.12-0.1.0-SNAPSHOT-with-dependencies.jar"
+  local jar_file="tpcds-validator_${SCALA_VERSION:-2.12}-0.1.0-SNAPSHOT-with-dependencies.jar"
   local built_jar="$_DIR/../${jar_file}"
   if [[ -e "$built_jar" ]]; then
     RESOURCE=$built_jar

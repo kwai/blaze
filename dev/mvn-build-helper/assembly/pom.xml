@@ -4,7 +4,7 @@
 
   <parent>
     <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine</artifactId>
+    <artifactId>blaze-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../../../pom.xml</relativePath>
   </parent>
@@ -19,27 +19,27 @@
   <dependencies>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>spark-extension</artifactId>
+      <artifactId>spark-extension_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>${shimPkg}</artifactId>
+      <artifactId>${shimPkg}_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-celeborn</artifactId>
+      <artifactId>blaze-celeborn_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-uniffle</artifactId>
+      <artifactId>blaze-uniffle_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>blaze-paimon</artifactId>
+      <artifactId>blaze-paimon_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
   </dependencies>
@@ -125,7 +125,7 @@
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/blaze-engine-${shimName}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
+              <outputFile>../../../target/blaze-engine-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
             </configuration>
           </execution>
         </executions>

@@ -60,10 +60,11 @@ jobs:
       sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '11'
 
-  test-spark-35-jdk17:
-    name: Test spark-3.5 JDK17
+  test-spark-35-jdk17-scala-2-13:
+    name: Test spark-3.5 JDK17 Scala-2.13
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3-scala2.13.tgz
       javaver: '17'
+      scalaver: '2.13'
