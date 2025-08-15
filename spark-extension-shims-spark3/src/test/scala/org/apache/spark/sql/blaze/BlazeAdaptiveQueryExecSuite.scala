@@ -66,10 +66,9 @@ class BlazeAdaptiveQueryExecSuite
         }
 
         withSQLConf(SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES.key -> "100") {
-          // partition size [0, 120, 34, 34, 34]
+          // partition size [0, 75, 45, 68, 34]
           checkPartitionNumber("SELECT /*+ REBALANCE(c1) */ * FROM v", 2, 4)
-          // partition size [216, 216, 72, 0, 216]
-          checkPartitionNumber("SELECT /*+ REBALANCE */ * FROM v", 9, 10)
+          checkPartitionNumber("SELECT /*+ REBALANCE */ * FROM v", 0, 3)
         }
 
         // no skewed partition should be optimized

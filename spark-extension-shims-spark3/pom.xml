@@ -59,12 +59,11 @@
     </dependency>
     <dependency>
       <groupId>org.apache.arrow</groupId>
-      <artifactId>arrow-vector</artifactId>
+      <artifactId>arrow-memory-unsafe</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.scalatest</groupId>
-      <artifactId>scalatest_${scalaVersion}</artifactId>
-      <scope>test</scope>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-vector</artifactId>
     </dependency>
 
     <dependency>
