@@ -4,18 +4,18 @@
 
   <parent>
     <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine</artifactId>
+    <artifactId>blaze-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.blaze</groupId>
-  <artifactId>spark-extension</artifactId>
+  <artifactId>spark-extension_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>spark-version-annotation-macros</artifactId>
+      <artifactId>spark-version-annotation-macros_${scalaVersion}</artifactId>
       <version>${revision}</version>
       <scope>compile</scope>
     </dependency>
@@ -62,7 +62,7 @@
     </dependency>
     <dependency>
       <groupId>org.blaze</groupId>
-      <artifactId>hadoop-shim</artifactId>
+      <artifactId>hadoop-shim_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>

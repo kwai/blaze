@@ -16,7 +16,6 @@
 package org.apache.spark.sql.hive.execution.blaze.plan
 
 import scala.collection.JavaConverters._
-import scala.collection.Seq
 
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.broadcast.Broadcast
@@ -26,7 +25,6 @@ import org.apache.spark.sql.blaze.NativeHelper
 import org.apache.spark.sql.blaze.NativeSupports
 import org.apache.spark.sql.blaze.Shims
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.SparkPlan
@@ -52,7 +50,7 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
   override lazy val metrics: Map[String, SQLMetric] =
     NativeHelper.getNativeFileScanMetrics(sparkContext)
 
-  override val output: Seq[Attribute] = basedHiveScan.output
+  override val output = basedHiveScan.output.toSeq
   override val outputPartitioning: Partitioning = basedHiveScan.outputPartitioning
 
   protected val relation: HiveTableRelation = basedHiveScan.relation
@@ -65,6 +63,7 @@ abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     .groupBy(_.filePath)
     .mapValues(_.foldLeft(0L)(_ + _.length))
     .map(identity) // make this map serializable
+    .toMap
 
   // should not include partition columns
   protected def nativeFileSchema: pb.Schema =

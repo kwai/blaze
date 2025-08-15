@@ -310,7 +310,10 @@ impl TryInto<Arc<dyn ExecutionPlan>> for &protobuf::PhysicalPlanNode {
             }
             PhysicalPlanType::Sort(sort) => {
                 let input: Arc<dyn ExecutionPlan> = convert_box_required!(sort.input)?;
-                let exprs = try_parse_physical_sort_expr(&input, sort).unwrap();
+                let exprs = try_parse_physical_sort_expr(&input, sort).unwrap_or_else(|e| {
+                    panic!("Failed to parse physical sort expressions: {}", e);
+                });
+
                 // always preserve partitioning
                 Ok(Arc::new(SortExec::new(
                     input,
@@ -1052,7 +1055,7 @@ fn try_parse_physical_expr_box_required(
 fn try_parse_physical_sort_expr(
     input: &Arc<dyn ExecutionPlan>,
     sort: &Box<SortExecNode>,
-) -> Option<Vec<PhysicalSortExpr>> {
+) -> Result<Vec<PhysicalSortExpr>, PlanSerDeError> {
     let pyhsical_sort_expr = sort
         .expr
         .iter()
@@ -1088,9 +1091,8 @@ fn try_parse_physical_sort_expr(
                 )))
             }
         })
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
-    Some(pyhsical_sort_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pyhsical_sort_expr)
 }
 
 pub fn parse_protobuf_partitioning(
@@ -1130,7 +1132,9 @@ pub fn parse_protobuf_partitioning(
                     Ok(Some(Partitioning::SinglePartitioning()))
                 } else {
                     let sort = range_part.sort_expr.clone().unwrap();
-                    let exprs = try_parse_physical_sort_expr(&input, &sort).unwrap();
+                    let exprs = try_parse_physical_sort_expr(&input, &sort).unwrap_or_else(|e| {
+                        panic!("Failed to parse physical sort expressions: {}", e);
+                    });
 
                     let value_list: Vec<ScalarValue> = range_part
                         .list_value
