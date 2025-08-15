@@ -22,7 +22,7 @@
       <groupId>org.apache.celeborn</groupId>
       <artifactId>celeborn-client-spark-3-shaded_${scalaVersion}</artifactId>
       <version>${celebornVersion}</version>
-      <scope>provided</scope>
+      <scope>${celebornScope}</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.spark</groupId>
@@ -40,4 +40,27 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>add-celeborn-source</id>
+            <goals>
+              <goal>add-source</goal>
+            </goals>
+            <phase>generate-sources</phase>
+            <configuration>
+              <sources>
+                <source>src/main/${celebornShimName}</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

@@ -17,6 +17,42 @@ on:
         required: false
         type: string
         default: '2.12'
+      celebornver:
+        required: false
+        type: string
+        default: ''
+      celebornurl:
+        required: false
+        type: string
+        default: ''
+      extrablazebuildopt:
+        required: false
+        type: string
+        default: ''
+      extrablazeidentifier:
+        required: false
+        type: string
+        default: ''
+      extrasparkconf:
+        required: false
+        type: string
+        default: ''
+      queries:
+        required: false
+        type: string
+        default: |
+          [
+            "q1,q2,q3,q4,q5,q6,q7,q8,q9",
+            "q10,q11,q12,q13,q14a,q14b,q15,q16,q17,q18,q19",
+            "q20,q21,q22,q23a,q23b,q24a,q24b,q25,q26,q27,q28,q29",
+            "q31,q33,q34,q35,q36,q37,q38,q39a,q39b",
+            "q40,q41,q42,q43,q44,q45,q46,q47,q48,q49",
+            "q50,q51,q52,q53,q54,q55,q56,q57,q58,q59",
+            "q60,q61,q62,q63,q64,q65,q66,q67,q68,q69",
+            "q70,q71,q72,q73,q74,q75,q76,q77,q78,q79",
+            "q80,q81,q82,q83,q84,q85,q86,q87,q88,q89",
+            "q90,q91,q92,q93,q94,q95,q96,q97,q98,q99"
+          ]
 
 jobs:
   build-validator:
@@ -48,7 +84,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
           path: target/tpcds-validator_${{ inputs.scalaver }}-0.1.0-SNAPSHOT-with-dependencies.jar
           overwrite: true
 
@@ -86,12 +122,12 @@ jobs:
         run: |
           sed -i 's/opt-level = 1/opt-level = 0/g' Cargo.toml # use opt-level 0
           rm -f .build-checksum_*.cache
-          ./build/mvn package -Ppre -P${{ inputs.sparkver }} -Pscala-${{ inputs.scalaver }} -Pjdk-${{ inputs.javaver }}
+          ./build/mvn package -Ppre -P${{ inputs.sparkver }} -Pscala-${{ inputs.scalaver }} -Pjdk-${{ inputs.javaver }} ${{ inputs.extrablazebuildopt }}
 
       - name: Upload ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
           path: target/blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
@@ -102,18 +138,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        query: [
-          'q1,q2,q3,q4,q5,q6,q7,q8,q9',
-          'q10,q11,q12,q13,q14a,q14b,q15,q16,q17,q18,q19',
-          'q20,q21,q22,q23a,q23b,q24a,q24b,q25,q26,q27,q28,q29',
-          'q31,q33,q34,q35,q36,q37,q38,q39a,q39b',
-          'q40,q41,q42,q43,q44,q45,q46,q47,q48,q49',
-          'q50,q51,q52,q53,q54,q55,q56,q57,q58,q59',
-          'q60,q61,q62,q63,q64,q65,q66,q67,q68,q69',
-          'q70,q71,q72,q73,q74,q75,q76,q77,q78,q79',
-          'q80,q81,q82,q83,q84,q85,q86,q87,q88,q89',
-          'q90,q91,q92,q93,q94,q95,q96,q97,q98,q99'
-        ]
+        query: ${{ fromJson(inputs.queries) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -133,11 +158,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: tpcds-validator-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}${{ inputs.extrablazeidentifier }}
 
       - name: Checkout TPC-DS Data
         uses: actions/checkout@v4
@@ -156,6 +181,31 @@ jobs:
           java-version: ${{ inputs.javaver }}
           cache: 'maven'
 
+      - uses: actions/cache@v4
+        if: ${{ inputs.celebornver != '' && inputs.celebornurl != '' }}
+        id: cache-celeborn-bin
+        with:
+          path: celeborn-bin-${{ inputs.celebornver }}
+          key: celeborn-bin-${{ inputs.celebornver }}
+
+      - name: Setup Celeborn-${{ inputs.celebornver }}
+        id: setup-celeborn-bin
+        if: ${{ inputs.celebornver != '' && inputs.celebornurl != '' &&  steps.cache-celeborn-bin.outputs.cache-hit != 'true' }}
+        run: |
+          wget -c ${{ inputs.celebornurl }} && \
+          mkdir -p celeborn-bin-${{ inputs.celebornver }} && \
+          cd celeborn-bin-${{ inputs.celebornver }} && tar -xf ../apache-celeborn-*.tgz --strip-component=1
+
+      - name: Start Celeborn-${{ inputs.celebornver }}
+        if: ${{ inputs.celebornver != '' && inputs.celebornurl != '' }}
+        run: |
+          mkdir -p /tmp/celeborn/data && mkdir -p /tmp/celeborn/logs && \
+          cd celeborn-bin-${{ inputs.celebornver }} && \
+          bash -c "echo -e 'CELEBORN_MASTER_MEMORY=4g\nCELEBORN_WORKER_MEMORY=4g\nCELEBORN_WORKER_OFFHEAP_MEMORY=8g\nCELEBORN_LOG_DIR=/tmp/celeborn/logs' > ./conf/celeborn-env.sh" && \
+          bash -c "echo -e 'celeborn.worker.storage.dirs /tmp/celeborn\nceleborn.worker.storage.workingDir data\nceleborn.worker.commitFiles.threads 128\nceleborn.worker.sortPartition.threads 64' > ./conf/celeborn-defaults.conf" && \
+          bash ./sbin/start-master.sh && \
+          bash ./sbin/start-worker.sh
+
       - name: Run
         run: |
           ls -la
@@ -163,5 +213,6 @@ jobs:
           export RUST_BACKTRACE=1
           export SCALA_VERSION=${{ inputs.scalaver }}
           SPARK_HOME=spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }} dev/run-tpcds-test \
+            ${{ inputs.extrasparkconf }} \
             --data-location dev/tpcds_1g \
             --query-filter ${{ matrix.query }}
