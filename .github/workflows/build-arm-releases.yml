@@ -14,14 +14,28 @@ jobs:
       matrix:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
         blazever: [5.0.0]
+        javaver: [8]
 
     steps:
       - uses: actions/checkout@v4
-      - uses: s4u/setup-maven-action@main
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'adopt-hotspot'
+          java-version: ${{ matrix.javaver }}
+          cache: 'maven'
 
-      - uses: prompt/actions-commit-hash@v3
-        id: commit
+      - uses: arduino/setup-protoc@v2
+        with:
+          version: "21.7"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          rustflags: --allow warnings -C target-feature=+aes
+          components:
+            cargo
+            rustfmt
 
       - name: Detect osclassfier
         id: detect-osclassfier
