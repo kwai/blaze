@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ use arrow::{
     datatypes::SchemaRef,
 };
 use arrow_schema::DataType;
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     conf,
     conf::{BooleanConf, IntConf},
 };

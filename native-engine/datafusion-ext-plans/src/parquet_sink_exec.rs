@@ -21,7 +21,7 @@ use arrow::{
     datatypes::SchemaRef,
     record_batch::{RecordBatch, RecordBatchOptions},
 };
-use blaze_jni_bridge::{jni_call_static, jni_get_string, jni_new_global_ref, jni_new_string};
+use auron_jni_bridge::{jni_call_static, jni_get_string, jni_new_global_ref, jni_new_string};
 use datafusion::{
     common::{Result, ScalarValue, Statistics},
     execution::context::TaskContext,
@@ -239,7 +239,7 @@ fn execute_parquet_sink(
                         .await
                         .or_else(|e| df_execution_err!("closing parquet file error: {e}"))??;
                     jni_call_static!(
-                        BlazeNativeParquetSinkUtils.completeOutput(
+                        AuronNativeParquetSinkUtils.completeOutput(
                             jni_new_string!(&file_stat.path)?.as_obj(),
                             file_stat.num_rows as i64,
                             file_stat.num_bytes as i64,
@@ -426,7 +426,7 @@ impl PartWriter {
             log::info!("starts outputting dynamic partition: {part_values:?}");
         }
         let part_file = jni_get_string!(
-            jni_call_static!(BlazeNativeParquetSinkUtils.getTaskOutputPath() -> JObject)?
+            jni_call_static!(AuronNativeParquetSinkUtils.getTaskOutputPath() -> JObject)?
                 .as_obj()
                 .into()
         )?;

@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
     jni_new_string,
 };
@@ -88,7 +88,7 @@ impl FsDataInputWrapper {
         let _timer = self.io_time.timer();
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
-        jni_call!(BlazeFSDataInputWrapper(self.obj.as_obj())
+        jni_call!(AuronFSDataInputWrapper(self.obj.as_obj())
             .readFully(pos as i64, buf.as_obj()) -> ())?;
         Ok(())
     }
@@ -112,7 +112,7 @@ impl FsDataOutputWrapper {
     pub fn write_fully(&self, buf: &[u8]) -> Result<()> {
         let _timer = self.io_time.timer();
         let buf = jni_new_direct_byte_buffer!(buf)?;
-        jni_call!(BlazeFSDataOutputWrapper(self.obj.as_obj()).writeFully(buf.as_obj()) -> ())?;
+        jni_call!(AuronFSDataOutputWrapper(self.obj.as_obj()).writeFully(buf.as_obj()) -> ())?;
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ use arrow::{
     datatypes::{DataType, Field, Fields},
     ffi::{FFI_ArrowArray, from_ffi_and_data_type, to_ffi},
 };
-use blaze_jni_bridge::{conf, conf::BooleanConf, jni_call, jni_new_object, jni_new_string};
+use auron_jni_bridge::{conf, conf::BooleanConf, jni_call, jni_new_object, jni_new_string};
 use datafusion::{
     common::{Result, ScalarValue},
     physical_plan::ColumnarValue,
@@ -229,7 +229,7 @@ fn parse_fallback(json_path: &str, json_array: &UserDefinedArray) -> Result<Stri
         } else {
             let single_field = Fields::from(vec![Field::new("", DataType::Utf8, false)]);
             let json_path = jni_new_string!(json_path)?;
-            let fallback_wrapper = jni_new_object!(BlazeJsonFallbackWrapper(json_path.as_obj()))?;
+            let fallback_wrapper = jni_new_object!(AuronJsonFallbackWrapper(json_path.as_obj()))?;
             let export_array = StructArray::new(
                 single_field.clone(),
                 vec![Arc::new(fallback_jsons_array)],
@@ -237,7 +237,7 @@ fn parse_fallback(json_path: &str, json_array: &UserDefinedArray) -> Result<Stri
             );
             let (mut ffi_export_array, _) = to_ffi(&export_array.to_data())?;
             let mut ffi_import_array = FFI_ArrowArray::empty();
-            jni_call!(BlazeJsonFallbackWrapper(fallback_wrapper.as_obj()).parseJsons(
+            jni_call!(AuronJsonFallbackWrapper(fallback_wrapper.as_obj()).parseJsons(
                 &mut ffi_export_array as *mut FFI_ArrowArray as i64,
                 &mut ffi_import_array as *mut FFI_ArrowArray as i64,
             ) -> ())?;

@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 use std::io::Write;
 
 use arrow::record_batch::RecordBatch;
-use blaze_jni_bridge::{is_task_running, jni_call};
+use auron_jni_bridge::{is_task_running, jni_call};
 use bytesize::ByteSize;
 use count_write::CountWrite;
 use datafusion::{common::Result, physical_plan::metrics::Time};
@@ -188,7 +188,7 @@ impl BufferedData {
         }
 
         output_io_time.with_timer(
-            || jni_call!(BlazeRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ()),
+            || jni_call!(AuronRssPartitionWriterBase(rss_partition_writer.as_obj()).flush() -> ()),
         )?;
         log::info!("all buffered data drained to rss");
         Ok(())
