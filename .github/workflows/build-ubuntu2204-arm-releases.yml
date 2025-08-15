@@ -2,6 +2,7 @@ name: Build ubuntu2204-arm Releases
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: ["master"]
 
