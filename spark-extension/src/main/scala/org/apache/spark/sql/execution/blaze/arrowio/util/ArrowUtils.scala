@@ -132,7 +132,7 @@ object ArrowUtils {
         val fields = field.getChildren.asScala.map { child =>
           val dt = fromArrowField(child)
           StructField(child.getName, dt, child.isNullable)
-        }
+        }.toSeq
         StructType(fields)
       case arrowType => fromArrowType(arrowType)
     }
@@ -151,6 +151,6 @@ object ArrowUtils {
     StructType(schema.getFields.asScala.map { field =>
       val dt = fromArrowField(field)
       StructField(field.getName, dt, field.isNullable)
-    })
+    }.toSeq)
   }
 }
