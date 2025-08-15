@@ -68,7 +68,7 @@ parquet = { version = "55.2.0" }
 serde_json = { version = "1.0.96" }
 
 # other dependencies
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 base64 = "0.22.1"
 bigdecimal = "0.4.8"
 bitvec = "1.0.1"
