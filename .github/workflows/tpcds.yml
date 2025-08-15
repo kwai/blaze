@@ -37,33 +37,19 @@ jobs:
       sparkver: spark-3.3
       sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.3.4/spark-3.3.4-bin-hadoop3.tgz
 
-  test-spark-34:
+  test-spark-34-jdk11:
     name: Test spark-3.4
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.4
       sparkurl: https://mirrors.huaweicloud.com/apache/spark/spark-3.4.3/spark-3.4.3-bin-hadoop3.tgz
-
-  test-spark-35:
-    name: Test spark-3.5 JDK8
-    uses: ./.github/workflows/tpcds-reusable.yml
-    with:
-      sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
-      javaver: '8'
-
-  test-spark-35-jdk11:
-    name: Test spark-3.5 JDK11
-    uses: ./.github/workflows/tpcds-reusable.yml
-    with:
-      sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
       javaver: '11'
 
-  test-spark-35-jdk17:
-    name: Test spark-3.5 JDK17
+  test-spark-35-jdk17-scala-2-13:
+    name: Test spark-3.5 JDK17 Scala-2.13
     uses: ./.github/workflows/tpcds-reusable.yml
     with:
       sparkver: spark-3.5
-      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.6/spark-3.5.6-bin-hadoop3.tgz
+      sparkurl: https://archive.apache.org/dist/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3-scala2.13.tgz
       javaver: '17'
+      scalaver: '2.13'
