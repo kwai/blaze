@@ -1,0 +1,42 @@
+name: Build ARM Releases
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["master"]
+
+jobs:
+  build-snapshot:
+    name: Build Snapshot
+    runs-on: ubuntu-22.04-arm
+    strategy:
+      matrix:
+        sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
+        blazever: [5.0.0]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: s4u/setup-maven-action@main
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: prompt/actions-commit-hash@v3
+        id: commit
+
+      - name: Detect osclassfier
+        id: detect-osclassfier
+        run: |
+          osclassfier=$(./build/mvn help:evaluate -Dexpression=os.detected.classifier -q -DforceStdout -P${{ matrix.sparkver }})
+          echo "osclassfier=$osclassfier" >> $GITHUB_ENV
+
+      - name: Build blaze-engine-${{ matrix.sparkver }}
+        run: |
+          sed -i 's/opt-level = 1/opt-level = 0/g' Cargo.toml # use opt-level 0
+          rm -f .build-checksum_*.cache
+          build/mvn package -Prelease -P${{ matrix.sparkver }} -DskipTests
+
+      - name: Upload blaze-engine-${{ matrix.sparkver }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target/blaze-engine-${{matrix.sparkver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          overwrite: true
