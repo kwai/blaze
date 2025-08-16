@@ -231,3 +231,7 @@ class AuronShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
     shuffleBlockResolver.stop()
   }
 }
+
+class BlazeShuffleManager(conf: SparkConf) extends AuronShuffleManager(conf) {
+  logWarning("BlazeShuffleManager is deprecated, please use AuronShuffleManager instead.")
+}

@@ -138,3 +138,9 @@ class AuronUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
     uniffleShuffleManager.stop()
   }
 }
+
+class BlazeUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
+    extends AuronUniffleShuffleManager(conf, isDriver) {
+  logWarning(
+    "BlazeUniffleShuffleManager is deprecated, please use AuronUniffleShuffleManager instead.")
+}

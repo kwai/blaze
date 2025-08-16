@@ -135,23 +135,23 @@ public enum AuronConf {
     }
 
     public boolean booleanConf() {
-        return conf().getBoolean(key, (boolean) defaultValue);
+        return conf().getBoolean(key, conf().getBoolean(key.replace("auron.", "blaze."), (boolean) defaultValue));
     }
 
     public int intConf() {
-        return conf().getInt(key, (int) defaultValue);
+        return conf().getInt(key, conf().getInt(key.replace("auron.", "blaze."), (int) defaultValue));
     }
 
     public long longConf() {
-        return conf().getLong(key, (long) defaultValue);
+        return conf().getLong(key, conf().getLong(key.replace("auron.", "blaze."), (long) defaultValue));
     }
 
     public double doubleConf() {
-        return conf().getDouble(key, (double) defaultValue);
+        return conf().getDouble(key, conf().getDouble(key.replace("auron.", "blaze."), (double) defaultValue));
     }
 
     public String stringConf() {
-        return conf().get(key, (String) defaultValue);
+        return conf().get(key, conf().get(key.replace("auron.", "blaze."), (String) defaultValue));
     }
 
     public static boolean booleanConf(String confName) {

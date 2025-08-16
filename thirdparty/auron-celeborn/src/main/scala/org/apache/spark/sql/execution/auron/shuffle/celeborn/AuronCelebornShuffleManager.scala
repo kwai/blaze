@@ -150,6 +150,12 @@ class AuronCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
     celebornShuffleManager.stop()
 }
 
+class BlazeCelebornShuffleManager(conf: SparkConf, isDriver: Boolean)
+    extends AuronCelebornShuffleManager(conf, isDriver) {
+  logWarning(
+    "BlazeCelebornShuffleManager is deprecated, please use AuronCelebornShuffleManager instead.")
+}
+
 object AuronCelebornShuffleManager {
   def getEncodedAttemptNumber(context: TaskContext): Int =
     (context.stageAttemptNumber << 16) | context.attemptNumber

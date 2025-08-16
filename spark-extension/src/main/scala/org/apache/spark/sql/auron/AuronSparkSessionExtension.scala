@@ -43,6 +43,11 @@ class AuronSparkSessionExtension extends (SparkSessionExtensions => Unit) with L
   }
 }
 
+class BlazeSparkSessionExtension extends AuronSparkSessionExtension {
+  logWarning(
+    "BlazeSparkSessionExtension is deprecated, please use AuronSparkSessionExtension instead.")
+}
+
 object AuronSparkSessionExtension extends Logging {
   lazy val auronEnabledKey: ConfigEntry[Boolean] = SQLConf
     .buildConf("spark.auron.enable")
