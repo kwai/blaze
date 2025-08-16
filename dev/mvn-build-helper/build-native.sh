@@ -14,13 +14,13 @@ if [ -n "$2" ]; then
     features_arg="--features $2"
 fi
 
-libname=libblaze
+libname=libauron
 if [ "$(uname)" == "Darwin" ]; then
     libsuffix=dylib
 elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
     libsuffix=so
 elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW64_NT" ]; then
-    libname=blaze
+    libname=auron
     libsuffix=dll
 else
     echo "Unsupported platform $(uname)"

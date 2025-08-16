@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ use arrow::{
     datatypes::SchemaRef,
 };
 use async_trait::async_trait;
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     jni_call, jni_call_static, jni_get_byte_array_region, jni_get_direct_buffer, jni_get_string,
     jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
@@ -194,10 +194,10 @@ fn read_ipc(
                 let block_cloned = block.clone();
                 let mut reader = tokio::task::spawn_blocking(|| {
                     let block = block_cloned;
-                    if jni_call!(BlazeBlockObject(block.as_obj()).hasFileSegment() -> bool)? {
+                    if jni_call!(AuronBlockObject(block.as_obj()).hasFileSegment() -> bool)? {
                         return get_file_reader(block.as_obj());
                     }
-                    if jni_call!(BlazeBlockObject(block.as_obj()).hasByteBuffer() -> bool)? {
+                    if jni_call!(AuronBlockObject(block.as_obj()).hasByteBuffer() -> bool)? {
                         return get_byte_buffer_reader(block.as_obj());
                     }
                     get_channel_reader(block.as_obj())
@@ -210,7 +210,7 @@ fn read_ipc(
                         // throw FetchFailureException
                         let block = block.clone();
                         let errmsg = jni_new_string!(e.message().as_ref())?;
-                        jni_call!(BlazeBlockObject(block.as_obj())
+                        jni_call!(AuronBlockObject(block.as_obj())
                             .throwFetchFailed(errmsg.as_obj()) -> ())?; // always return error
                         Ok::<_, DataFusionError>(None)
                     })?
@@ -278,10 +278,10 @@ fn get_channel_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Rea
 }
 
 fn get_file_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
-    let path = jni_call!(BlazeBlockObject(block).getFilePath() -> JObject)?;
+    let path = jni_call!(AuronBlockObject(block).getFilePath() -> JObject)?;
     let path = jni_get_string!(path.as_obj().into())?;
-    let offset = jni_call!(BlazeBlockObject(block).getFileOffset() -> i64)?;
-    let length = jni_call!(BlazeBlockObject(block).getFileLength() -> i64)?;
+    let offset = jni_call!(AuronBlockObject(block).getFileOffset() -> i64)?;
+    let length = jni_call!(AuronBlockObject(block).getFileLength() -> i64)?;
     let mut file = File::open(&path)?;
     file.seek(SeekFrom::Start(offset as u64))?;
 
@@ -291,7 +291,7 @@ fn get_file_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read +
 }
 
 fn get_byte_buffer_reader(block: JObject) -> Result<IpcCompressionReader<Box<dyn Read + Send>>> {
-    let byte_buffer = jni_call!(BlazeBlockObject(block).getByteBuffer() -> JObject)?;
+    let byte_buffer = jni_call!(AuronBlockObject(block).getByteBuffer() -> JObject)?;
     if jni_call!(JavaBuffer(byte_buffer.as_obj()).isDirect() -> bool)? {
         let reader = DirectByteBufferReader::try_new(block, byte_buffer.as_obj())?;
         return Ok(IpcCompressionReader::new(Box::new(reader)));
@@ -309,7 +309,7 @@ struct ReadableByteChannelReader {
 }
 impl ReadableByteChannelReader {
     pub fn try_new(block: JObject) -> Result<Self> {
-        let channel = jni_call!(BlazeBlockObject(block).getChannel() -> JObject)?;
+        let channel = jni_call!(AuronBlockObject(block).getChannel() -> JObject)?;
         let global_ref = jni_new_global_ref!(channel.as_obj())?;
         Ok(Self {
             channel: global_ref,

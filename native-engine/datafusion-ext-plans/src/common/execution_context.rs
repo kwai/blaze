@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ use arrow::{
     row::{RowConverter, SortField},
 };
 use arrow_schema::Schema;
-use blaze_jni_bridge::{conf, conf::BooleanConf, is_task_running};
+use auron_jni_bridge::{conf, conf::BooleanConf, is_task_running};
 use datafusion::{
     common::{DataFusionError, Result},
     execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext},
@@ -383,7 +383,7 @@ impl ExecutionContext {
         input: SendableRecordBatchStream,
     ) -> SendableRecordBatchStream {
         let input_batch_statistics = self.input_stat_metrics.get_or_init(|| {
-            InputBatchStatistics::from_metrics_set_and_blaze_conf(
+            InputBatchStatistics::from_metrics_set_and_auron_conf(
                 self.execution_plan_metrics(),
                 self.partition_id,
             )
@@ -608,7 +608,7 @@ pub struct InputBatchStatistics {
 }
 
 impl InputBatchStatistics {
-    pub fn from_metrics_set_and_blaze_conf(
+    pub fn from_metrics_set_and_auron_conf(
         metrics_set: &ExecutionPlanMetricsSet,
         partition: usize,
     ) -> Result<Option<Self>> {

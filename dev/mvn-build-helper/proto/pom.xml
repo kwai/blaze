@@ -3,12 +3,12 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine_${scalaVersion}</artifactId>
+    <groupId>org.auron</groupId>
+    <artifactId>auron-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../../../pom.xml</relativePath>
   </parent>
-  <groupId>org.blaze</groupId>
+  <groupId>org.auron</groupId>
   <artifactId>proto</artifactId>
   <packaging>jar</packaging>
 
@@ -30,7 +30,7 @@
         <version>0.6.1</version>
         <extensions>true</extensions>
         <configuration>
-          <protoSourceRoot>../../../native-engine/blaze-serde/proto</protoSourceRoot>
+          <protoSourceRoot>../../../native-engine/auron-serde/proto</protoSourceRoot>
           <protocArtifact>com.google.protobuf:protoc:${protobufVersion}:exe:${os.detected.classifier}</protocArtifact>
           <checkStaleness>true</checkStaleness>
           <clearOutputDirectory>true</clearOutputDirectory>

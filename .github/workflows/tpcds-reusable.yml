@@ -52,8 +52,8 @@ jobs:
           path: target/tpcds-validator_${{ inputs.scalaver }}-0.1.0-SNAPSHOT-with-dependencies.jar
           overwrite: true
 
-  build-blaze-jar:
-    name: Build Blaze JAR
+  build-auron-jar:
+    name: Build Auron JAR
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,13 +91,13 @@ jobs:
       - name: Upload ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
-          path: target/blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
+          name: auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          path: target/auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
   run-tpcds-test:
     name: Run TPC-DS test ${{ matrix.query }}
-    needs: [build-validator, build-blaze-jar]
+    needs: [build-validator, build-auron-jar]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -133,7 +133,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: blaze-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -145,10 +145,10 @@ jobs:
           repository: blaze-init/tpcds_1g
           path: dev/tpcds_1g
 
-      - name: Install Blaze JAR
+      - name: Install Auron JAR
         run: |
           ls -la
-          cp blaze-engine-*${{ inputs.sparkver }}_${{ inputs.scalaver }}*.jar spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}/jars/
+          cp auron-engine-*${{ inputs.sparkver }}_${{ inputs.scalaver }}*.jar spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}/jars/
 
       - uses: actions/setup-java@v4
         with:

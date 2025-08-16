@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ use arrow::{
     datatypes::{DataType, SchemaRef},
     ffi::{FFI_ArrowArray, from_ffi_and_data_type},
 };
-use blaze_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
+use auron_jni_bridge::{jni_call, jni_call_static, jni_new_global_ref, jni_new_string};
 use datafusion::{
     error::Result,
     execution::context::TaskContext,
@@ -166,7 +166,7 @@ fn read_ffi(
                     let exporter_obj = exporter.0.clone();
                     let has_next = tokio::task::spawn_blocking(move || {
                         jni_call!(
-                            BlazeArrowFFIExporter(exporter_obj.as_obj())
+                            AuronArrowFFIExporter(exporter_obj.as_obj())
                                 .exportNextBatch(ffi_arrow_array_ptr) -> bool
                         )
                     })

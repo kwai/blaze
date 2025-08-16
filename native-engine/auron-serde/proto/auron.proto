@@ -1,0 +1,903 @@
+/*
+ * Copyright 2022 The Auron Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package plan.protobuf;
+
+option java_multiple_files = true;
+option java_package = "org.auron.protobuf";
+option java_outer_classname = "AuronProto";
+
+// PhysicalPlanNode is a nested type
+message PhysicalPlanNode {
+  oneof PhysicalPlanType {
+    DebugExecNode debug = 1;
+    ShuffleWriterExecNode shuffle_writer = 2;
+    IpcReaderExecNode ipc_reader = 3;
+    IpcWriterExecNode ipc_writer = 4;
+    ParquetScanExecNode parquet_scan = 5;
+    ProjectionExecNode projection = 6;
+    SortExecNode sort = 7;
+    FilterExecNode filter = 8;
+    UnionExecNode union = 9;
+    SortMergeJoinExecNode sort_merge_join = 10;
+    HashJoinExecNode hash_join = 11;
+    BroadcastJoinBuildHashMapExecNode broadcast_join_build_hash_map = 12;
+    BroadcastJoinExecNode broadcast_join = 13;
+    RenameColumnsExecNode rename_columns = 14;
+    EmptyPartitionsExecNode empty_partitions = 15;
+    AggExecNode agg = 16;
+    LimitExecNode limit = 17;
+    FFIReaderExecNode ffi_reader = 18;
+    CoalesceBatchesExecNode coalesce_batches = 19;
+    ExpandExecNode expand = 20;
+    RssShuffleWriterExecNode rss_shuffle_writer= 21;
+    WindowExecNode window = 22;
+    GenerateExecNode generate = 23;
+    ParquetSinkExecNode parquet_sink = 24;
+    OrcScanExecNode orc_scan = 25;
+  }
+}
+
+// physical expressions
+message PhysicalExprNode {
+  oneof ExprType {
+    // column references
+    PhysicalColumn column = 1;
+
+    ScalarValue literal = 2;
+
+    BoundReference bound_reference = 3;
+
+    // binary expressions
+    PhysicalBinaryExprNode binary_expr = 4;
+
+    // aggregate expressions
+    PhysicalAggExprNode agg_expr = 5;
+
+    // null checks
+    PhysicalIsNull is_null_expr = 6;
+    PhysicalIsNotNull is_not_null_expr = 7;
+    PhysicalNot not_expr = 8;
+
+    PhysicalCaseNode case_ = 9;
+    PhysicalCastNode cast = 10;
+    PhysicalSortExprNode sort = 11;
+    PhysicalNegativeNode negative = 12;
+    PhysicalInListNode in_list = 13;
+    PhysicalScalarFunctionNode scalar_function = 14;
+    PhysicalTryCastNode try_cast = 15;
+
+    // like/not like
+    PhysicalLikeExprNode like_expr = 20;
+
+    // sc_and/or
+    PhysicalSCAndExprNode sc_and_expr = 3000;
+    PhysicalSCOrExprNode sc_or_expr = 3001;
+
+    // spark udf wrapper
+    PhysicalSparkUDFWrapperExprNode spark_udf_wrapper_expr = 10000;
+
+    // spark scalar subquery wrapper
+    PhysicalSparkScalarSubqueryWrapperExprNode spark_scalar_subquery_wrapper_expr = 10001;
+
+    // GetIndexedField
+    PhysicalGetIndexedFieldExprNode get_indexed_field_expr = 10002;
+
+    // GetMapValue
+    PhysicalGetMapValueExprNode get_map_value_expr = 10003;
+
+    // CreateNamedStruct
+    PhysicalNamedStructExprNode named_struct = 11000;
+
+    // string expressions
+    StringStartsWithExprNode string_starts_with_expr = 20000;
+    StringEndsWithExprNode string_ends_with_expr = 20001;
+    StringContainsExprNode string_contains_expr = 20002;
+
+    // RowNum
+    RowNumExprNode row_num_expr = 20100;
+
+    // BloomFilterMightContain
+    BloomFilterMightContainExprNode bloom_filter_might_contain_expr = 20200;
+  }
+}
+
+enum WindowFunction {
+  ROW_NUMBER = 0;
+  RANK = 1;
+  DENSE_RANK = 2;
+}
+
+enum AggFunction {
+  MIN = 0;
+  MAX = 1;
+  SUM = 2;
+  AVG = 3;
+  COUNT = 4;
+  COLLECT_LIST = 5;
+  COLLECT_SET = 6;
+  FIRST = 7;
+  FIRST_IGNORES_NULL = 8;
+  BLOOM_FILTER = 9;
+  BRICKHOUSE_COLLECT = 1000;
+  BRICKHOUSE_COMBINE_UNIQUE = 1001;
+  UDAF = 1002;
+}
+
+message PhysicalAggExprNode {
+  AggFunction agg_function = 1;
+  AggUdaf udaf = 2;
+  repeated PhysicalExprNode children = 3;
+  ArrowType return_type = 4;
+}
+
+message AggUdaf {
+  bytes serialized = 1;
+  Schema input_schema = 2;
+}
+
+message PhysicalIsNull {
+  PhysicalExprNode expr = 1;
+}
+
+message PhysicalIsNotNull {
+  PhysicalExprNode expr = 1;
+}
+
+message PhysicalNot {
+  PhysicalExprNode expr = 1;
+}
+
+message PhysicalAliasNode {
+  PhysicalExprNode expr = 1;
+  string alias = 2;
+}
+
+message PhysicalBinaryExprNode {
+  PhysicalExprNode l = 1;
+  PhysicalExprNode r = 2;
+  string op = 3;
+}
+
+message PhysicalSortExprNode {
+  PhysicalExprNode expr = 1;
+  bool asc = 2;
+  bool nulls_first = 3;
+}
+
+message PhysicalWhenThen {
+  PhysicalExprNode when_expr = 1;
+  PhysicalExprNode then_expr = 2;
+}
+
+message PhysicalInListNode {
+  PhysicalExprNode expr = 1;
+  repeated PhysicalExprNode list = 2;
+  bool negated = 3;
+}
+
+message PhysicalCaseNode {
+  PhysicalExprNode expr = 1;
+  repeated PhysicalWhenThen when_then_expr = 2;
+  PhysicalExprNode else_expr = 3;
+}
+
+enum ScalarFunction {
+  Abs=0;
+  Acos=1;
+  Asin=2;
+  Atan=3;
+  Ascii=4;
+  Ceil=5;
+  Cos=6;
+  Digest=7;
+  Exp=8;
+  Floor=9;
+  Ln=10;
+  Log=11;
+  Log10=12;
+  Log2=13;
+  Round=14;
+  Signum=15;
+  Sin=16;
+  Sqrt=17;
+  Tan=18;
+  Trunc=19;
+  NullIf=20;
+  RegexpMatch=21;
+  BitLength=22;
+  Btrim=23;
+  CharacterLength=24;
+  Chr=25;
+  Concat=26;
+  ConcatWithSeparator=27;
+  DatePart=28;
+  DateTrunc=29;
+  InitCap=30;
+  Left=31;
+  Lpad=32;
+  Lower=33;
+  Ltrim=34;
+  MD5=35;
+  // NullIf=36;
+  OctetLength=37;
+  Random=38;
+  RegexpReplace=39;
+  Repeat=40;
+  Replace=41;
+  Reverse=42;
+  Right=43;
+  Rpad=44;
+  Rtrim=45;
+  // SHA224=46;
+  // SHA256=47;
+  // SHA384=48;
+  // SHA512=49;
+  SplitPart=50;
+  StartsWith=51;
+  Strpos=52;
+  Substr=53;
+  ToHex=54;
+  ToTimestamp=55;
+  ToTimestampMillis=56;
+  ToTimestampMicros=57;
+  ToTimestampSeconds=58;
+  Now=59;
+  Translate=60;
+  Trim=61;
+  Upper=62;
+  Coalesce=63;
+  SparkExtFunctions=10000;
+}
+
+message PhysicalScalarFunctionNode {
+  string name = 1;
+  ScalarFunction fun = 2;
+  repeated PhysicalExprNode args = 3;
+  ArrowType return_type = 4;
+}
+
+message PhysicalTryCastNode {
+  PhysicalExprNode expr = 1;
+  ArrowType arrow_type = 2;
+}
+
+message PhysicalCastNode {
+  PhysicalExprNode expr = 1;
+  ArrowType arrow_type = 2;
+}
+
+message PhysicalNegativeNode {
+  PhysicalExprNode expr = 1;
+}
+
+message PhysicalLikeExprNode {
+  bool negated = 1;
+  bool case_insensitive = 2;
+  PhysicalExprNode expr = 3;
+  PhysicalExprNode pattern = 4;
+}
+
+message PhysicalSCAndExprNode {
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
+}
+
+message PhysicalSCOrExprNode {
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
+}
+
+message PhysicalSparkUDFWrapperExprNode {
+  bytes serialized = 1;
+  ArrowType return_type = 2;
+  bool return_nullable = 3;
+  repeated PhysicalExprNode params = 4;
+  string expr_string = 5;
+}
+
+message PhysicalSparkScalarSubqueryWrapperExprNode {
+  bytes serialized = 1;
+  ArrowType return_type = 2;
+  bool return_nullable = 3;
+}
+
+message PhysicalGetIndexedFieldExprNode {
+  PhysicalExprNode expr = 1;
+  ScalarValue key = 2;
+}
+
+message PhysicalGetMapValueExprNode {
+  PhysicalExprNode expr = 1;
+  ScalarValue key = 2;
+}
+
+message PhysicalNamedStructExprNode {
+  repeated PhysicalExprNode values = 1;
+  ArrowType return_type = 2;
+}
+
+message StringStartsWithExprNode {
+  PhysicalExprNode expr = 1;
+  string prefix = 2;
+}
+
+message StringEndsWithExprNode {
+  PhysicalExprNode expr = 1;
+  string suffix = 2;
+}
+
+message StringContainsExprNode {
+  PhysicalExprNode expr = 1;
+  string infix = 2;
+}
+
+message RowNumExprNode {
+}
+
+message BloomFilterMightContainExprNode {
+  string uuid = 1;
+  PhysicalExprNode bloom_filter_expr = 2;
+  PhysicalExprNode value_expr = 3;
+}
+
+message FilterExecNode {
+  PhysicalPlanNode input = 1;
+  repeated PhysicalExprNode expr = 2;
+}
+
+message FileRange {
+  int64 start = 1;
+  int64 end = 2;
+}
+
+message PartitionedFile {
+  string path = 1;
+  uint64 size = 2;
+  uint64 last_modified_ns = 3;
+  repeated ScalarValue partition_values = 4;
+  FileRange range = 5;
+}
+
+message FileGroup {
+  repeated PartitionedFile files = 1;
+}
+
+message ScanLimit {
+  // wrap into a message to make it optional
+  uint32 limit = 1;
+}
+
+message ColumnStats {
+  ScalarValue min_value = 1;
+  ScalarValue max_value = 2;
+  uint32 null_count = 3;
+  uint32 distinct_count = 4;
+}
+
+message Statistics {
+  int64 num_rows = 1;
+  int64 total_byte_size = 2;
+  repeated ColumnStats column_stats = 3;
+  bool is_exact = 4;
+}
+
+message FileScanExecConf {
+  int64 num_partitions = 1;
+  int64 partition_index = 2;
+  FileGroup file_group = 3;
+  Schema schema = 4;
+  repeated uint32 projection = 6;
+  ScanLimit limit = 7;
+  Statistics statistics = 8;
+  Schema partition_schema = 9;
+}
+
+message ParquetScanExecNode {
+  FileScanExecConf base_conf = 1;
+  repeated PhysicalExprNode pruning_predicates = 2;
+  string fsResourceId = 3;
+}
+
+message OrcScanExecNode {
+  FileScanExecConf base_conf = 1;
+  repeated PhysicalExprNode pruning_predicates = 2;
+  string fsResourceId = 3;
+}
+
+enum PartitionMode {
+  COLLECT_LEFT = 0;
+  PARTITIONED = 1;
+}
+
+message SortMergeJoinExecNode {
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  repeated SortOptions sort_options = 5;
+  JoinType join_type = 6;
+}
+
+message HashJoinExecNode {
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  JoinType join_type = 5;
+  JoinSide build_side = 6;
+}
+
+message BroadcastJoinBuildHashMapExecNode {
+  PhysicalPlanNode input = 1;
+  repeated PhysicalExprNode keys =2;
+}
+
+message BroadcastJoinExecNode {
+  Schema schema = 1;
+  PhysicalPlanNode left = 2;
+  PhysicalPlanNode right = 3;
+  repeated JoinOn on = 4;
+  JoinType join_type = 5;
+  JoinSide broadcast_side = 6;
+  string cached_build_hash_map_id = 7;
+}
+
+message RenameColumnsExecNode {
+  PhysicalPlanNode input = 1;
+  repeated string renamed_column_names = 2;
+}
+
+message EmptyPartitionsExecNode {
+  Schema schema = 1;
+  uint32 num_partitions = 2;
+}
+
+enum JoinType {
+  INNER = 0;
+  LEFT = 1;
+  RIGHT = 2;
+  FULL = 3;
+  SEMI = 4;
+  ANTI = 5;
+  EXISTENCE = 6;
+}
+
+message SortOptions {
+  bool asc = 1;
+  bool nulls_first = 2;
+}
+message PhysicalColumn {
+  string name = 1;
+  uint32 index = 2;
+}
+
+message BoundReference {
+  uint64 index = 1;
+  ArrowType data_type = 2;
+  bool nullable = 3;
+}
+
+message JoinOn {
+  PhysicalExprNode left = 1;
+  PhysicalExprNode right = 2;
+}
+
+message ProjectionExecNode {
+  PhysicalPlanNode input = 1;
+  repeated PhysicalExprNode expr = 2;
+  repeated string expr_name = 3;
+  repeated ArrowType data_type = 4;
+}
+
+message UnionExecNode {
+  repeated UnionInput input = 1;
+  Schema schema = 2;
+  uint32 num_partitions = 3;
+  uint32 cur_partition = 4;
+}
+
+message UnionInput {
+  PhysicalPlanNode input = 1;
+  uint32 partition = 2;
+}
+
+message ShuffleWriterExecNode {
+  PhysicalPlanNode input = 1;
+  PhysicalRepartition output_partitioning = 2;
+  string output_data_file = 3;
+  string output_index_file = 4;
+}
+
+message RssShuffleWriterExecNode {
+  PhysicalPlanNode input = 1;
+  PhysicalRepartition output_partitioning = 2;
+  string rss_partition_writer_resource_id = 3;
+}
+
+message WindowExecNode {
+  PhysicalPlanNode input = 1;
+  repeated WindowExprNode window_expr = 2;
+  repeated PhysicalExprNode partition_spec = 3;
+  repeated PhysicalExprNode order_spec = 4;
+  WindowGroupLimit group_limit = 5;
+  bool output_window_cols = 6;
+}
+
+message WindowExprNode {
+  Field field = 1;
+  ArrowType return_type = 1000;
+  WindowFunctionType func_type = 2;
+  WindowFunction window_func = 3;
+  AggFunction agg_func = 4;
+  repeated PhysicalExprNode children = 5;
+}
+
+enum WindowFunctionType {
+  Window = 0;
+  Agg = 1;
+}
+
+message WindowGroupLimit {
+  uint32 k = 1;
+}
+
+message GenerateExecNode {
+  PhysicalPlanNode input = 1;
+  Generator generator = 2;
+  repeated string required_child_output = 3;
+  repeated Field generator_output = 4;
+  bool outer = 5;
+}
+
+message Generator {
+  GenerateFunction func = 1;
+  GenerateUdtf udtf = 2;
+  repeated PhysicalExprNode child = 3;
+}
+
+enum GenerateFunction {
+  Explode = 0;
+  PosExplode = 1;
+  JsonTuple = 2;
+  Udtf = 10000;
+}
+
+message GenerateUdtf {
+  bytes serialized = 1;
+  Schema return_schema = 2;
+}
+
+message ParquetSinkExecNode {
+  PhysicalPlanNode input = 1;
+  string fs_resource_id = 2;
+  int32 num_dyn_parts = 3;
+  repeated ParquetProp prop = 4;
+}
+
+message ParquetProp {
+  string key = 1;
+  string value = 2;
+}
+
+message IpcWriterExecNode {
+  PhysicalPlanNode input = 1;
+  string ipc_consumer_resource_id = 2;
+}
+
+message IpcReaderExecNode {
+  uint32 num_partitions = 1;
+  Schema schema = 2;
+  string ipc_provider_resource_id = 3;
+}
+
+message DebugExecNode {
+  PhysicalPlanNode input = 1;
+  string debug_id = 2;
+}
+
+message SortExecNode {
+  PhysicalPlanNode input = 1;
+  repeated PhysicalExprNode expr = 2;
+  FetchLimit fetch_limit = 3;
+}
+
+message FetchLimit {
+  // wrap into a message to make it optional
+  uint64 limit = 1;
+}
+
+message PhysicalRepartition {
+  oneof RepartitionType {
+    PhysicalSingleRepartition single_repartition = 1;
+    PhysicalHashRepartition hash_repartition = 2;
+    PhysicalRoundRobinRepartition round_robin_repartition = 3;
+    PhysicalRangeRepartition range_repartition = 4;
+  }
+}
+
+message PhysicalSingleRepartition {
+  uint64 partition_count = 1;
+}
+
+message PhysicalHashRepartition {
+  repeated PhysicalExprNode hash_expr = 1;
+  uint64 partition_count = 2;
+}
+
+message PhysicalRoundRobinRepartition {
+  uint64 partition_count = 1;
+}
+
+message PhysicalRangeRepartition {
+  SortExecNode sort_expr = 1;
+  uint64 partition_count = 2;
+  repeated ScalarValue list_value = 3;
+}
+
+
+
+message JoinFilter {
+  PhysicalExprNode expression = 1;
+  repeated ColumnIndex column_indices = 2;
+  Schema schema = 3;
+}
+
+message ColumnIndex {
+  uint32 index = 1;
+  JoinSide side = 2;
+}
+
+enum JoinSide {
+  LEFT_SIDE = 0;
+  RIGHT_SIDE = 1;
+}
+
+message AggExecNode {
+  PhysicalPlanNode input = 1;
+  AggExecMode exec_mode = 2;
+  repeated PhysicalExprNode grouping_expr = 3;
+  repeated PhysicalExprNode agg_expr = 4;
+  repeated AggMode mode = 5;
+  repeated string grouping_expr_name = 6;
+  repeated string agg_expr_name = 7;
+  uint64 initial_input_buffer_offset = 8;
+  bool supports_partial_skipping = 9;
+}
+
+enum AggExecMode {
+  HASH_AGG = 0;
+  SORT_AGG = 1;
+}
+
+enum AggMode {
+  PARTIAL = 0;
+  PARTIAL_MERGE = 1;
+  FINAL = 2;
+}
+
+message LimitExecNode {
+  PhysicalPlanNode input = 1;
+  uint64 limit = 2;
+}
+
+message FFIReaderExecNode {
+  uint32 num_partitions = 1;
+  Schema schema = 2;
+  string export_iter_provider_resource_id = 3;
+}
+
+message CoalesceBatchesExecNode {
+  PhysicalPlanNode input = 1;
+  uint64 batch_size = 2;
+}
+
+message ExpandExecNode {
+  PhysicalPlanNode input = 1;
+  Schema schema = 2;
+  repeated ExpandProjection projections = 3;
+}
+
+message ExpandProjection {
+  repeated PhysicalExprNode expr = 1;
+
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Task related
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Unique identifier for a materialized partition of data
+message PartitionId {
+  uint32 stage_id = 2;
+  uint32 partition_id = 4;
+  uint64 task_id = 5;
+}
+
+message TaskDefinition {
+  PartitionId task_id = 1;
+  PhysicalPlanNode plan = 2;
+  // Output partition for shuffle writer
+  PhysicalRepartition output_partitioning = 3;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Arrow Data Types
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+message Schema {
+  repeated Field columns = 1;
+}
+
+message Field {
+  // name of the field
+  string name = 1;
+  ArrowType arrow_type = 2;
+  bool nullable = 3;
+  // for complex data types like structs, unions
+  repeated Field children = 4;
+}
+
+message FixedSizeBinary {
+  int32 length = 1;
+}
+
+message Timestamp {
+  TimeUnit time_unit = 1;
+  string timezone = 2;
+}
+
+enum DateUnit {
+  Day = 0;
+  DateMillisecond = 1;
+}
+
+enum TimeUnit {
+  Second = 0;
+  Millisecond = 1;
+  Microsecond = 2;
+  Nanosecond = 3;
+}
+
+enum IntervalUnit {
+  YearMonth = 0;
+  DayTime = 1;
+  MonthDayNano = 2;
+}
+
+message Decimal {
+  uint64 whole = 1;
+  int64 fractional = 2;
+}
+
+message List {
+  Field field_type = 1;
+}
+
+message FixedSizeList {
+  Field field_type = 1;
+  int32 list_size = 2;
+}
+
+message Dictionary {
+  ArrowType key = 1;
+  ArrowType value = 2;
+}
+
+message Map {
+  Field key_type = 1;
+  Field value_type = 2;
+}
+
+message Struct {
+  repeated Field sub_field_types = 1;
+}
+
+enum UnionMode {
+  sparse = 0;
+  dense = 1;
+}
+
+message Union {
+  repeated Field union_types = 1;
+  UnionMode union_mode = 2;
+}
+
+message ScalarValue {
+  bytes ipc_bytes = 1;
+}
+
+// Contains all valid datafusion scalar type except for
+// List
+enum PrimitiveScalarType {
+  BOOL = 0;     // arrow::Type::BOOL
+  UINT8 = 1;    // arrow::Type::UINT8
+  INT8 = 2;     // arrow::Type::INT8
+  UINT16 = 3;   // represents arrow::Type fields in src/arrow/type.h
+  INT16 = 4;
+  UINT32 = 5;
+  INT32 = 6;
+  UINT64 = 7;
+  INT64 = 8;
+  FLOAT32 = 9;
+  FLOAT64 = 10;
+  UTF8 = 11;
+  LARGE_UTF8 = 12;
+  DATE32 = 13;
+  NULL = 14;
+  DECIMAL128 = 15;
+  DATE64 = 16;
+  TIMESTAMP_SECOND = 17;
+  TIMESTAMP_MILLISECOND = 18;
+  TIMESTAMP_MICROSECOND = 19;
+  TIMESTAMP_NANOSECOND = 20;
+  INTERVAL_YEARMONTH = 21;
+  INTERVAL_DAYTIME = 22;
+}
+
+// Broke out into multiple message types so that type
+// metadata did not need to be in separate message
+//All types that are of the empty message types contain no additional metadata
+// about the type
+message ArrowType {
+  oneof arrow_type_enum {
+    EmptyMessage NONE = 1;     // arrow::Type::NA
+    EmptyMessage BOOL =  2;     // arrow::Type::BOOL
+    EmptyMessage UINT8 = 3;    // arrow::Type::UINT8
+    EmptyMessage INT8 =  4;     // arrow::Type::INT8
+    EmptyMessage UINT16 =5;   // represents arrow::Type fields in src/arrow/type.h
+    EmptyMessage INT16 = 6;
+    EmptyMessage UINT32 =7;
+    EmptyMessage INT32 = 8;
+    EmptyMessage UINT64 =9;
+    EmptyMessage INT64 =10 ;
+    EmptyMessage FLOAT16 =11 ;
+    EmptyMessage FLOAT32 =12 ;
+    EmptyMessage FLOAT64 =13 ;
+    EmptyMessage UTF8 =14 ;
+    EmptyMessage LARGE_UTF8 = 32;
+    EmptyMessage BINARY =15 ;
+    int32 FIXED_SIZE_BINARY =16 ;
+    EmptyMessage LARGE_BINARY = 31;
+    EmptyMessage DATE32 =17 ;
+    EmptyMessage DATE64 =18 ;
+    TimeUnit DURATION = 19;
+    Timestamp TIMESTAMP =20 ;
+    TimeUnit TIME32 =21 ;
+    TimeUnit TIME64 =22 ;
+    IntervalUnit INTERVAL =23 ;
+    Decimal DECIMAL =24 ;
+    List LIST =25;
+    List LARGE_LIST = 26;
+    FixedSizeList FIXED_SIZE_LIST = 27;
+    Struct STRUCT =28;
+    Union UNION =29;
+    Dictionary DICTIONARY =30;
+    Map MAP =33;
+  }
+}
+
+//Useful for representing an empty enum variant in rust
+// E.G. enum example{One, Two(i32)}
+// maps to
+// message example{
+//    oneof{
+//        EmptyMessage One = 1;
+//        i32 Two = 2;
+//   }
+//}
+message EmptyMessage{}
