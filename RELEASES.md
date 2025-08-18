@@ -1,4 +1,4 @@
-# blaze-v5.0.0:
+# auron-v5.0.0:
 
 ## New Feature
 
@@ -23,219 +23,219 @@ Imptoved metric statistics.
 * Fixed a lot of bugs those might lead to query failure, see `What's Changed`.
 
 ## What's Changed
-* (celeborn shuffle read) force disable decompression because compressi… by @richox in https://github.com/kwai/blaze/pull/897
-* .gitignore file add target-docker folder ignore by @wsk1314zwr in https://github.com/kwai/blaze/pull/862
-* Add Blaze icon and issue navigation In IDEA by @cxzl25 in https://github.com/kwai/blaze/pull/699
-* Add comma to line in README file by @xleoken in https://github.com/kwai/blaze/pull/778
-* Add support of Apache Uniffle for remote shuffle service by @zuston in https://github.com/kwai/blaze/pull/796
-* Add support of building native with --features by @zuston in https://github.com/kwai/blaze/pull/797
-* Add support of mac aarch64 for tpcds data generator by @zuston in https://github.com/kwai/blaze/pull/792
-* Add support of memory profile by @zuston in https://github.com/kwai/blaze/pull/798
-* Add support of pprof dump for rust execution by @zuston in https://github.com/kwai/blaze/pull/793
-* Apply scalafix removeUnusedImports by @cxzl25 in https://github.com/kwai/blaze/pull/960
-* Apply spotless by @cxzl25 in https://github.com/kwai/blaze/pull/728
-* Automatic cancel previous CI tests when newly commit comes for per PR by @zuston in https://github.com/kwai/blaze/pull/794
-* Automatically use the protoc version downloaded by the maven plugin by @cxzl25 in https://github.com/kwai/blaze/pull/702
-* Avoid warning log `No such type of ValidateSparkPlan` by @cxzl25 in https://github.com/kwai/blaze/pull/948
-* Bump Paimon version from 0.9.0 to 1.0.0 by @harveyyue in https://github.com/kwai/blaze/pull/751
-* Bump async-trait from 0.1.83 to 0.1.84 by @dependabot in https://github.com/kwai/blaze/pull/740
-* Bump async-trait from 0.1.84 to 0.1.85 by @dependabot in https://github.com/kwai/blaze/pull/746
-* Bump async-trait from 0.1.85 to 0.1.86 by @dependabot in https://github.com/kwai/blaze/pull/810
-* Bump async-trait from 0.1.86 to 0.1.87 by @dependabot in https://github.com/kwai/blaze/pull/865
-* Bump async-trait from 0.1.87 to 0.1.88 by @dependabot in https://github.com/kwai/blaze/pull/887
-* Bump bigdecimal from 0.4.7 to 0.4.8 by @dependabot in https://github.com/kwai/blaze/pull/931
-* Bump bytes from 1.10.0 to 1.10.1 by @dependabot in https://github.com/kwai/blaze/pull/864
-* Bump bytes from 1.9.0 to 1.10.0 by @dependabot in https://github.com/kwai/blaze/pull/811
-* Bump bytesize from 1.3.0 to 1.3.2 by @dependabot in https://github.com/kwai/blaze/pull/819
-* Bump bytesize from 1.3.2 to 2.0.0 by @dependabot in https://github.com/kwai/blaze/pull/847
-* Bump bytesize from 2.0.0 to 2.0.1 by @dependabot in https://github.com/kwai/blaze/pull/859
-* Bump foldhash from 0.1.3 to 0.1.4 by @dependabot in https://github.com/kwai/blaze/pull/710
-* Bump foldhash from 0.1.4 to 0.1.5 by @dependabot in https://github.com/kwai/blaze/pull/886
-* Bump itertools from 0.13.0 to 0.14.0 by @dependabot in https://github.com/kwai/blaze/pull/733
-* Bump jemalloc_pprof from 0.6.0 to 0.7.0 by @dependabot in https://github.com/kwai/blaze/pull/863
-* Bump log from 0.4.22 to 0.4.25 by @dependabot in https://github.com/kwai/blaze/pull/764
-* Bump log from 0.4.25 to 0.4.26 by @dependabot in https://github.com/kwai/blaze/pull/846
-* Bump log from 0.4.26 to 0.4.27 by @dependabot in https://github.com/kwai/blaze/pull/909
-* Bump once_cell from 1.20.2 to 1.20.3 by @dependabot in https://github.com/kwai/blaze/pull/816
-* Bump once_cell from 1.20.3 to 1.21.0 by @dependabot in https://github.com/kwai/blaze/pull/874
-* Bump once_cell from 1.21.0 to 1.21.1 by @dependabot in https://github.com/kwai/blaze/pull/882
-* Bump once_cell from 1.21.1 to 1.21.2 by @dependabot in https://github.com/kwai/blaze/pull/924
-* Bump once_cell from 1.21.2 to 1.21.3 by @dependabot in https://github.com/kwai/blaze/pull/929
-* Bump poem from 1.3.59 to 3.1.6 by @dependabot in https://github.com/kwai/blaze/pull/799
-* Bump poem from 3.1.6 to 3.1.7 by @dependabot in https://github.com/kwai/blaze/pull/845
-* Bump poem from 3.1.7 to 3.1.8 by @dependabot in https://github.com/kwai/blaze/pull/918
-* Bump poem from 3.1.8 to 3.1.9 by @dependabot in https://github.com/kwai/blaze/pull/946
-* Bump prost from 0.13.3 to 0.13.4 by @dependabot in https://github.com/kwai/blaze/pull/688
-* Bump prost from 0.13.4 to 0.13.5 by @dependabot in https://github.com/kwai/blaze/pull/823
-* Bump rand from 0.8.5 to 0.9.0 by @dependabot in https://github.com/kwai/blaze/pull/801
-* Bump rand from 0.9.0 to 0.9.1 by @dependabot in https://github.com/kwai/blaze/pull/956
-* Bump serde from 1.0.216 to 1.0.217 by @dependabot in https://github.com/kwai/blaze/pull/800
-* Bump serde from 1.0.217 to 1.0.218 by @dependabot in https://github.com/kwai/blaze/pull/842
-* Bump serde from 1.0.217 to 1.0.219 by @dependabot in https://github.com/kwai/blaze/pull/893
-* Bump serde from 1.0.218 to 1.0.219 by @dependabot in https://github.com/kwai/blaze/pull/867
-* Bump smallvec from 2.0.0-alpha.10 to 2.0.0-alpha.11 by @dependabot in https://github.com/kwai/blaze/pull/900
-* Bump smallvec from 2.0.0-alpha.7 to 2.0.0-alpha.8 by @dependabot in https://github.com/kwai/blaze/pull/692
-* Bump smallvec from 2.0.0-alpha.8 to 2.0.0-alpha.9 by @dependabot in https://github.com/kwai/blaze/pull/698
-* Bump smallvec from 2.0.0-alpha.9 to 2.0.0-alpha.10 by @dependabot in https://github.com/kwai/blaze/pull/770
-* Bump sonic-rs from 0.3.16 to 0.3.17 by @dependabot in https://github.com/kwai/blaze/pull/694
-* Bump sonic-rs from 0.3.17 to 0.4.0 by @dependabot in https://github.com/kwai/blaze/pull/875
-* Bump sonic-rs from 0.4.0 to 0.4.1 by @dependabot in https://github.com/kwai/blaze/pull/932
-* Bump sonic-rs from 0.4.1 to 0.5.0 by @dependabot in https://github.com/kwai/blaze/pull/943
-* Bump tempfile from 3.14.0 to 3.15.0 by @dependabot in https://github.com/kwai/blaze/pull/741
-* Bump tempfile from 3.15.0 to 3.16.0 by @dependabot in https://github.com/kwai/blaze/pull/802
-* Bump tempfile from 3.16.0 to 3.17.1 by @dependabot in https://github.com/kwai/blaze/pull/828
-* Bump tempfile from 3.17.1 to 3.18.0 by @dependabot in https://github.com/kwai/blaze/pull/866
-* Bump tempfile from 3.18.0 to 3.19.0 by @dependabot in https://github.com/kwai/blaze/pull/884
-* Bump tempfile from 3.19.0 to 3.19.1 by @dependabot in https://github.com/kwai/blaze/pull/894
-* Bump tokio from 1.42.0 to 1.43.0 by @dependabot in https://github.com/kwai/blaze/pull/755
-* Bump tokio from 1.43.0 to 1.44.1 by @dependabot in https://github.com/kwai/blaze/pull/883
-* Bump tokio from 1.44.1 to 1.44.2 by @dependabot in https://github.com/kwai/blaze/pull/939
-* Bump tonic-build from 0.12.3 to 0.13.0 by @dependabot in https://github.com/kwai/blaze/pull/917
-* Bump uuid from 1.11.0 to 1.11.1 by @dependabot in https://github.com/kwai/blaze/pull/754
-* Bump uuid from 1.11.1 to 1.12.0 by @dependabot in https://github.com/kwai/blaze/pull/765
-* Bump uuid from 1.12.0 to 1.12.1 by @dependabot in https://github.com/kwai/blaze/pull/783
-* Bump uuid from 1.12.1 to 1.13.1 by @dependabot in https://github.com/kwai/blaze/pull/814
-* Bump uuid from 1.13.1 to 1.14.0 by @dependabot in https://github.com/kwai/blaze/pull/840
-* Bump uuid from 1.14.0 to 1.15.1 by @dependabot in https://github.com/kwai/blaze/pull/853
-* Bump zstd from 0.13.2 to 0.13.3 by @dependabot in https://github.com/kwai/blaze/pull/841
-* Cast function should convert scientific notation to correct decimal value by @harveyyue in https://github.com/kwai/blaze/pull/844
-* Dev repartitioning by @gy11233 in https://github.com/kwai/blaze/pull/693
-* Dev repartitioning by @gy11233 in https://github.com/kwai/blaze/pull/734
-* Duplicated project schema will cause index out of bounds exception in orc_exec by @harveyyue in https://github.com/kwai/blaze/pull/723
-* Expect sha2 function result will be consistent with spark by @harveyyue in https://github.com/kwai/blaze/pull/966
-* Fallback cast date type to SparkUDFWrapper function by @harveyyue in https://github.com/kwai/blaze/pull/838
-* Fix MacOS compile by @cxzl25 in https://github.com/kwai/blaze/pull/724
-* Fix OrcScan reads missing data column by @ASiegeLion in https://github.com/kwai/blaze/pull/716
-* Fix orc map type entries field naming issue by @harveyyue in https://github.com/kwai/blaze/pull/732
-* Fix result is empty when bloom filter is built by spark side for some situation by @xm0830 in https://github.com/kwai/blaze/pull/911
-* Fix some incorrect module name mapping in docker compose file by @harveyyue in https://github.com/kwai/blaze/pull/709
-* Fix the rootless-docker action failure when building the jar in github action by @zuston in https://github.com/kwai/blaze/pull/813
-* Fix udaf, add udaf enable conf by @gy11233 in https://github.com/kwai/blaze/pull/851
-* Move scala object HiveClientHelper from java to scala folder by @harveyyue in https://github.com/kwai/blaze/pull/822
-* NativeConverters adds aggregate function return type by @richox in https://github.com/kwai/blaze/pull/930
-* ProjectExec adds cast automatically when data types not matched by @richox in https://github.com/kwai/blaze/pull/916
-* Remove bug_report unnecessary information by @cxzl25 in https://github.com/kwai/blaze/pull/727
-* Scan parquet/orc config by @cxzl25 in https://github.com/kwai/blaze/pull/949
-* Support cast decimal data type with different precision and sale by @harveyyue in https://github.com/kwai/blaze/pull/839
-* Support long type for ceil function by @harveyyue in https://github.com/kwai/blaze/pull/825
-* Support more native parquet scan metrics by @harveyyue in https://github.com/kwai/blaze/pull/876
-* Support native scan hive paimon cow table by @harveyyue in https://github.com/kwai/blaze/pull/708
-* Support shuffle read records and total time metrics by @Flyangz in https://github.com/kwai/blaze/pull/873
-* Supports UDAF and other aggregate functions not implemented by @gy11233 in https://github.com/kwai/blaze/pull/848
-* Update rust toolchain to latest nightly by @wForget in https://github.com/kwai/blaze/pull/861
-* [BLAZE-287][FOLLOWUP] BlazeCelebornShuffleWriter should use mapped shuffle id for rerunning stage of fetch failure by @SteNicholas in https://github.com/kwai/blaze/pull/712
-* [BLAZE-700] Minor nit fix for hyperlink by @merrily01 in https://github.com/kwai/blaze/pull/701
-* [BLAZE-704] Specify name for spark ext function by @wForget in https://github.com/kwai/blaze/pull/705
-* [BLAZE-706] Fix year/month/day functions data type by @wForget in https://github.com/kwai/blaze/pull/703
-* [BLAZE-707][FOLLOWUP] NativePaimonTableScanExec should use shimed PartitionedFile and min partition number by @SteNicholas in https://github.com/kwai/blaze/pull/713
-* [BLAZE-725] Bump Spark from 3.5.3 to 3.5.4 by @SteNicholas in https://github.com/kwai/blaze/pull/726
-* [BLAZE-729] Fix a typo in the Shebang line of the shell script by @merrily01 in https://github.com/kwai/blaze/pull/730
-* [BLAZE-736] Write time should increment for mapperEnd in CelebornPart… by @HYBG-1126 in https://github.com/kwai/blaze/pull/739
-* [BLAZE-744] Bump Celeborn version from 0.5.2 to 0.5.3 by @SteNicholas in https://github.com/kwai/blaze/pull/745
-* [BLAZE-747] Enhance the ArrowFFIExporter.exportNextBatch method to execute conditionally by @merrily01 in https://github.com/kwai/blaze/pull/748
-* [BLAZE-747][FOLLOW-UP] Fix user changed in FFI NextBatch by @Flyangz in https://github.com/kwai/blaze/pull/769
-* [BLAZE-760] Fallback shuffle exchange when range partitioning with unsupported type by @wForget in https://github.com/kwai/blaze/pull/761
-* [BLAZE-762] Return null when log function input is negative by @wForget in https://github.com/kwai/blaze/pull/763
-* [BLAZE-773] Support long type for floor function by @wForget in https://github.com/kwai/blaze/pull/774
-* [BLAZE-775] Support float type for sum function by @wForget in https://github.com/kwai/blaze/pull/776
-* [BLAZE-786] Mark big decimal value convertion as unsupported by @wForget in https://github.com/kwai/blaze/pull/787
-* [BLAZE-790] Support LZ4_RAW compression codec for parquet by @SteNicholas in https://github.com/kwai/blaze/pull/791
-* [BLAZE-803] Support statistics of ExecutionPlan for LimitExec by @SteNicholas in https://github.com/kwai/blaze/pull/804
-* [BLAZE-805] Support statistics of ExecutionPlan for SortExec by @SteNicholas in https://github.com/kwai/blaze/pull/807
-* [BLAZE-808] Support statistics of ExecutionPlan for WindowExec by @SteNicholas in https://github.com/kwai/blaze/pull/809
-* [BLAZE-877] Bump Celeborn version from 0.5.3 to 0.5.4 by @SteNicholas in https://github.com/kwai/blaze/pull/878
-* [BLAZE-879] Bump Spark from 3.5.4 to 3.5.5 by @SteNicholas in https://github.com/kwai/blaze/pull/881
-* [BLAZE-891] Remove stop interface of RssPartitionWriterBase by @SteNicholas in https://github.com/kwai/blaze/pull/892
-* [BLAZE-895] Bump Paimon from 1.0.0 to 1.0.1 by @SteNicholas in https://github.com/kwai/blaze/pull/896
-* [BLAZE-902] Fix UnifflePartitionWriter invoke ShuffleWriteMetricsReporter#incWriteTime with nano seconds by @SteNicholas in https://github.com/kwai/blaze/pull/903
-* [BLAZE-905] Bytes written should increment in UnifflePartitionWriter#write by @SteNicholas in https://github.com/kwai/blaze/pull/906
-* [BLAZE-941] BlazeCelebornShuffleReader should add batch open stream time to fetch wait time by @SteNicholas in https://github.com/kwai/blaze/pull/942
-* add childOrderingRequired tag to DataWritingCommandExec by @richox in https://github.com/kwai/blaze/pull/963
-* add conf: spark.blaze.enable.scan.parquet/orc by @richox in https://github.com/kwai/blaze/pull/944
-* add expr string to SparkUDFWrapper by @lihao712 in https://github.com/kwai/blaze/pull/967
-* add malloc_conf for memory profiling by @Flyangz in https://github.com/kwai/blaze/pull/836
-* assert_eq key_rows sorted_row_indices by @cxzl25 in https://github.com/kwai/blaze/pull/954
-* bug fixes by @richox in https://github.com/kwai/blaze/pull/717
-* bug fixes by @richox in https://github.com/kwai/blaze/pull/777
-* clean rss shuffle writer api by @richox in https://github.com/kwai/blaze/pull/820
-* close inactive issues by @richox in https://github.com/kwai/blaze/pull/738
-* code refactoring and bug fixes by @richox in https://github..com/kwai/blaze/pull/952
-* complete UDAF fallback implementation by @richox in https://github.com/kwai/blaze/pull/888
-* convert scalar value using arrow ipc by @richox in https://github.com/kwai/blaze/pull/938
-* feat(spill): Align with the multi IO compression codec in spill by @zuston in https://github.com/kwai/blaze/pull/657
-* feat: Activate symbolize feature for heap profile by @zuston in https://github.com/kwai/blaze/pull/937
-* fix NPE while getting spill buf metrics by @richox in https://github.com/kwai/blaze/pull/904
-* fix SortExec error when sort key exprs are empty by @richox in https://github.com/kwai/blaze/pull/958
-* fix UDAF fallbacking with literal params by @richox in https://github.com/kwai/blaze/pull/922
-* fix agg failure: index out of bounds by @richox in https://github.com/kwai/blaze/pull/899
-* fix bloom_filter_might_contain + literal params by @richox in https://github.com/kwai/blaze/pull/914
-* fix build error and code style by @wForget in https://github.com/kwai/blaze/pull/781
-* fix celeborn shuffle writer memory leaking by @richox in https://github.com/kwai/blaze/pull/889
-* fix ci: add --all-opens for supporting jdk17 by @richox in https://github.com/kwai/blaze/pull/758
-* fix ci: cache spark binaries by @richox in https://github.com/kwai/blaze/pull/696
-* fix ci: trigger ci when opening PR by @richox in https://github.com/kwai/blaze/pull/711
-* fix ci: trigger ci when opening/changing PR by @richox in https://github.com/kwai/blaze/pull/714
-* fix ci: update to actions/upload-artifact@v4 by @richox in https://github.com/kwai/blaze/pull/756
-* fix ci: update to actions/upload-artifact@v4 by @richox in https://github.com/kwai/blaze/pull/757
-* fix ci: use cached spark-bin directory to walk around `permission denied` issue by @richox in https://github.com/kwai/blaze/pull/766
-* fix ci: use huaweicloud mirror to download spark binaries by @richox in https://github.com/kwai/blaze/pull/742
-* fix error when bloom filter is null by @richox in https://github.com/kwai/blaze/pull/925
-* fix error when copying BlazeColumnarArray by @richox in https://github.com/kwai/blaze/pull/926
-* fix error when subquery is not finished by @richox in https://github.com/kwai/blaze/pull/928
-* fix get_indexed_field nullable error by @lihao712 in https://github.com/kwai/blaze/pull/968
-* fix hanging in corner case: ArrowFFIExporter implements AutoCloseable by @richox in https://github.com/kwai/blaze/pull/831
-* fix http server startup by @Flyangz in https://github.com/kwai/blaze/pull/834
-* fix imprecise ScalarValue memory size by @richox in https://github.com/kwai/blaze/pull/962
-* fix inconsistent string to date casting by @richox in https://github.com/kwai/blaze/pull/912
-* fix incorrect WindowGroupLimit conversion by @lihao712 in https://github.com/kwai/blaze/pull/964
-* fix incorrect expression conversion: Days should be DayOfMonth by @richox in https://github.com/kwai/blaze/pull/691
-* fix missing ReturnType in convertMoreAggregateExpr by @richox in https://github.com/kwai/blaze/pull/934
-* fix mvn build helper by @richox in https://github.com/kwai/blaze/pull/735
-* fix native shuffle reader with HeapByteBuffer by @richox in https://github.com/kwai/blaze/pull/935
-* fix performance issues by @richox in https://github.com/kwai/blaze/pull/743
-* fix possible hanging in ffi reader by @richox in https://github.com/kwai/blaze/pull/860
-* fix possible panic in spawn_worker_thread_on_stream by @richox in https://github.com/kwai/blaze/pull/849
-* fix range repartitioning proto issue by @gy11233 in https://github.com/kwai/blaze/pull/752
-* fix rss bug: forced spilling an unspillable memory consumer by @richox in https://github.com/kwai/blaze/pull/898
-* fix some issues causing 137 oom by @richox in https://github.com/kwai/blaze/pull/815
-* fix spark_xxhash64 + literal error by @richox in https://github.com/kwai/blaze/pull/920
-* fix test failures by @richox in https://github.com/kwai/blaze/pull/720
-* fix union error with empty inputs by @lihao712 in https://github.com/kwai/blaze/pull/959
-* fix-ci: adjust memory configuration by @richox in https://github.com/kwai/blaze/pull/768
-* fix-ci: pull_request_target -> pull_request by @richox in https://github.com/kwai/blaze/pull/782
-* fix-ci: remote incorrect cache by @richox in https://github.com/kwai/blaze/pull/779
-* fix-ci: rust fmt by @richox in https://github.com/kwai/blaze/pull/780
-* fix-ci: use specified jdk version by @richox in https://github.com/kwai/blaze/pull/767
-* get_array_mem_size() prefers capacity to len by @lihao712 in https://github.com/kwai/blaze/pull/969
-* get_json_object support blank space after '.' in path by @xm0830 in https://github.com/kwai/blaze/pull/915
-* improve MetricNode: fix metric missing in Union children by @richox in https://github.com/kwai/blaze/pull/832
-* introduce spark version control with spark-version-annotation-macros,… by @richox in https://github.com/kwai/blaze/pull/908
-* keep same algorithm between put_long/put_binary and might_contain_long/might_contain_binary by @xm0830 in https://github.com/kwai/blaze/pull/913
-* minor fixes of OOM cases by @richox in https://github.com/kwai/blaze/pull/817
-* normalize shuffle write time to output io time by @richox in https://github.com/kwai/blaze/pull/953
-* optimize sort merge join and avoid oom by @lihao712 in https://github.com/kwai/blaze/pull/970
-* refactor aggregate `unfreeze_from_rows()` and fix UDAF fallbacking error by @richox in https://github.com/kwai/blaze/pull/940
-* refactor rss shuffle writer, fix incorrect map status by @richox in https://github.com/kwai/blaze/pull/901
-* remove eager shuffle reading by @richox in https://github.com/kwai/blaze/pull/858
-* rewrite UnionExec and support auto type casting by @richox in https://github.com/kwai/blaze/pull/927
-* set arrows default struct conflict policy to APPEND by @richox in https://github.com/kwai/blaze/pull/933
-* style check and reformat by @cxzl25 in https://github.com/kwai/blaze/pull/961
-* support orc reading based on index by @Flyangz in https://github.com/kwai/blaze/pull/871
-* support orc scan bytes metric by @Flyangz in https://github.com/kwai/blaze/pull/821
-* supports WindowGroupLimitExec by @richox in https://github.com/kwai/blaze/pull/957
-* supports falling back hash join to sort merge join when hash table is too big by @richox in https://github.com/kwai/blaze/pull/753
-* use better aggregate OwnedKey construction by @richox in https://github.com/kwai/blaze/pull/784
-* use separated thread in ffi exporter by @richox in https://github.com/kwai/blaze/pull/788
+* (celeborn shuffle read) force disable decompression because compressi… by @richox in https://github.com/kwai/auron/pull/897
+* .gitignore file add target-docker folder ignore by @wsk1314zwr in https://github.com/kwai/auron/pull/862
+* Add Auron icon and issue navigation In IDEA by @cxzl25 in https://github.com/kwai/auron/pull/699
+* Add comma to line in README file by @xleoken in https://github.com/kwai/auron/pull/778
+* Add support of Apache Uniffle for remote shuffle service by @zuston in https://github.com/kwai/auron/pull/796
+* Add support of building native with --features by @zuston in https://github.com/kwai/auron/pull/797
+* Add support of mac aarch64 for tpcds data generator by @zuston in https://github.com/kwai/auron/pull/792
+* Add support of memory profile by @zuston in https://github.com/kwai/auron/pull/798
+* Add support of pprof dump for rust execution by @zuston in https://github.com/kwai/auron/pull/793
+* Apply scalafix removeUnusedImports by @cxzl25 in https://github.com/kwai/auron/pull/960
+* Apply spotless by @cxzl25 in https://github.com/kwai/auron/pull/728
+* Automatic cancel previous CI tests when newly commit comes for per PR by @zuston in https://github.com/kwai/auron/pull/794
+* Automatically use the protoc version downloaded by the maven plugin by @cxzl25 in https://github.com/kwai/auron/pull/702
+* Avoid warning log `No such type of ValidateSparkPlan` by @cxzl25 in https://github.com/kwai/auron/pull/948
+* Bump Paimon version from 0.9.0 to 1.0.0 by @harveyyue in https://github.com/kwai/auron/pull/751
+* Bump async-trait from 0.1.83 to 0.1.84 by @dependabot in https://github.com/kwai/auron/pull/740
+* Bump async-trait from 0.1.84 to 0.1.85 by @dependabot in https://github.com/kwai/auron/pull/746
+* Bump async-trait from 0.1.85 to 0.1.86 by @dependabot in https://github.com/kwai/auron/pull/810
+* Bump async-trait from 0.1.86 to 0.1.87 by @dependabot in https://github.com/kwai/auron/pull/865
+* Bump async-trait from 0.1.87 to 0.1.88 by @dependabot in https://github.com/kwai/auron/pull/887
+* Bump bigdecimal from 0.4.7 to 0.4.8 by @dependabot in https://github.com/kwai/auron/pull/931
+* Bump bytes from 1.10.0 to 1.10.1 by @dependabot in https://github.com/kwai/auron/pull/864
+* Bump bytes from 1.9.0 to 1.10.0 by @dependabot in https://github.com/kwai/auron/pull/811
+* Bump bytesize from 1.3.0 to 1.3.2 by @dependabot in https://github.com/kwai/auron/pull/819
+* Bump bytesize from 1.3.2 to 2.0.0 by @dependabot in https://github.com/kwai/auron/pull/847
+* Bump bytesize from 2.0.0 to 2.0.1 by @dependabot in https://github.com/kwai/auron/pull/859
+* Bump foldhash from 0.1.3 to 0.1.4 by @dependabot in https://github.com/kwai/auron/pull/710
+* Bump foldhash from 0.1.4 to 0.1.5 by @dependabot in https://github.com/kwai/auron/pull/886
+* Bump itertools from 0.13.0 to 0.14.0 by @dependabot in https://github.com/kwai/auron/pull/733
+* Bump jemalloc_pprof from 0.6.0 to 0.7.0 by @dependabot in https://github.com/kwai/auron/pull/863
+* Bump log from 0.4.22 to 0.4.25 by @dependabot in https://github.com/kwai/auron/pull/764
+* Bump log from 0.4.25 to 0.4.26 by @dependabot in https://github.com/kwai/auron/pull/846
+* Bump log from 0.4.26 to 0.4.27 by @dependabot in https://github.com/kwai/auron/pull/909
+* Bump once_cell from 1.20.2 to 1.20.3 by @dependabot in https://github.com/kwai/auron/pull/816
+* Bump once_cell from 1.20.3 to 1.21.0 by @dependabot in https://github.com/kwai/auron/pull/874
+* Bump once_cell from 1.21.0 to 1.21.1 by @dependabot in https://github.com/kwai/auron/pull/882
+* Bump once_cell from 1.21.1 to 1.21.2 by @dependabot in https://github.com/kwai/auron/pull/924
+* Bump once_cell from 1.21.2 to 1.21.3 by @dependabot in https://github.com/kwai/auron/pull/929
+* Bump poem from 1.3.59 to 3.1.6 by @dependabot in https://github.com/kwai/auron/pull/799
+* Bump poem from 3.1.6 to 3.1.7 by @dependabot in https://github.com/kwai/auron/pull/845
+* Bump poem from 3.1.7 to 3.1.8 by @dependabot in https://github.com/kwai/auron/pull/918
+* Bump poem from 3.1.8 to 3.1.9 by @dependabot in https://github.com/kwai/auron/pull/946
+* Bump prost from 0.13.3 to 0.13.4 by @dependabot in https://github.com/kwai/auron/pull/688
+* Bump prost from 0.13.4 to 0.13.5 by @dependabot in https://github.com/kwai/auron/pull/823
+* Bump rand from 0.8.5 to 0.9.0 by @dependabot in https://github.com/kwai/auron/pull/801
+* Bump rand from 0.9.0 to 0.9.1 by @dependabot in https://github.com/kwai/auron/pull/956
+* Bump serde from 1.0.216 to 1.0.217 by @dependabot in https://github.com/kwai/auron/pull/800
+* Bump serde from 1.0.217 to 1.0.218 by @dependabot in https://github.com/kwai/auron/pull/842
+* Bump serde from 1.0.217 to 1.0.219 by @dependabot in https://github.com/kwai/auron/pull/893
+* Bump serde from 1.0.218 to 1.0.219 by @dependabot in https://github.com/kwai/auron/pull/867
+* Bump smallvec from 2.0.0-alpha.10 to 2.0.0-alpha.11 by @dependabot in https://github.com/kwai/auron/pull/900
+* Bump smallvec from 2.0.0-alpha.7 to 2.0.0-alpha.8 by @dependabot in https://github.com/kwai/auron/pull/692
+* Bump smallvec from 2.0.0-alpha.8 to 2.0.0-alpha.9 by @dependabot in https://github.com/kwai/auron/pull/698
+* Bump smallvec from 2.0.0-alpha.9 to 2.0.0-alpha.10 by @dependabot in https://github.com/kwai/auron/pull/770
+* Bump sonic-rs from 0.3.16 to 0.3.17 by @dependabot in https://github.com/kwai/auron/pull/694
+* Bump sonic-rs from 0.3.17 to 0.4.0 by @dependabot in https://github.com/kwai/auron/pull/875
+* Bump sonic-rs from 0.4.0 to 0.4.1 by @dependabot in https://github.com/kwai/auron/pull/932
+* Bump sonic-rs from 0.4.1 to 0.5.0 by @dependabot in https://github.com/kwai/auron/pull/943
+* Bump tempfile from 3.14.0 to 3.15.0 by @dependabot in https://github.com/kwai/auron/pull/741
+* Bump tempfile from 3.15.0 to 3.16.0 by @dependabot in https://github.com/kwai/auron/pull/802
+* Bump tempfile from 3.16.0 to 3.17.1 by @dependabot in https://github.com/kwai/auron/pull/828
+* Bump tempfile from 3.17.1 to 3.18.0 by @dependabot in https://github.com/kwai/auron/pull/866
+* Bump tempfile from 3.18.0 to 3.19.0 by @dependabot in https://github.com/kwai/auron/pull/884
+* Bump tempfile from 3.19.0 to 3.19.1 by @dependabot in https://github.com/kwai/auron/pull/894
+* Bump tokio from 1.42.0 to 1.43.0 by @dependabot in https://github.com/kwai/auron/pull/755
+* Bump tokio from 1.43.0 to 1.44.1 by @dependabot in https://github.com/kwai/auron/pull/883
+* Bump tokio from 1.44.1 to 1.44.2 by @dependabot in https://github.com/kwai/auron/pull/939
+* Bump tonic-build from 0.12.3 to 0.13.0 by @dependabot in https://github.com/kwai/auron/pull/917
+* Bump uuid from 1.11.0 to 1.11.1 by @dependabot in https://github.com/kwai/auron/pull/754
+* Bump uuid from 1.11.1 to 1.12.0 by @dependabot in https://github.com/kwai/auron/pull/765
+* Bump uuid from 1.12.0 to 1.12.1 by @dependabot in https://github.com/kwai/auron/pull/783
+* Bump uuid from 1.12.1 to 1.13.1 by @dependabot in https://github.com/kwai/auron/pull/814
+* Bump uuid from 1.13.1 to 1.14.0 by @dependabot in https://github.com/kwai/auron/pull/840
+* Bump uuid from 1.14.0 to 1.15.1 by @dependabot in https://github.com/kwai/auron/pull/853
+* Bump zstd from 0.13.2 to 0.13.3 by @dependabot in https://github.com/kwai/auron/pull/841
+* Cast function should convert scientific notation to correct decimal value by @harveyyue in https://github.com/kwai/auron/pull/844
+* Dev repartitioning by @gy11233 in https://github.com/kwai/auron/pull/693
+* Dev repartitioning by @gy11233 in https://github.com/kwai/auron/pull/734
+* Duplicated project schema will cause index out of bounds exception in orc_exec by @harveyyue in https://github.com/kwai/auron/pull/723
+* Expect sha2 function result will be consistent with spark by @harveyyue in https://github.com/kwai/auron/pull/966
+* Fallback cast date type to SparkUDFWrapper function by @harveyyue in https://github.com/kwai/auron/pull/838
+* Fix MacOS compile by @cxzl25 in https://github.com/kwai/auron/pull/724
+* Fix OrcScan reads missing data column by @ASiegeLion in https://github.com/kwai/auron/pull/716
+* Fix orc map type entries field naming issue by @harveyyue in https://github.com/kwai/auron/pull/732
+* Fix result is empty when bloom filter is built by spark side for some situation by @xm0830 in https://github.com/kwai/auron/pull/911
+* Fix some incorrect module name mapping in docker compose file by @harveyyue in https://github.com/kwai/auron/pull/709
+* Fix the rootless-docker action failure when building the jar in github action by @zuston in https://github.com/kwai/auron/pull/813
+* Fix udaf, add udaf enable conf by @gy11233 in https://github.com/kwai/auron/pull/851
+* Move scala object HiveClientHelper from java to scala folder by @harveyyue in https://github.com/kwai/auron/pull/822
+* NativeConverters adds aggregate function return type by @richox in https://github.com/kwai/auron/pull/930
+* ProjectExec adds cast automatically when data types not matched by @richox in https://github.com/kwai/auron/pull/916
+* Remove bug_report unnecessary information by @cxzl25 in https://github.com/kwai/auron/pull/727
+* Scan parquet/orc config by @cxzl25 in https://github.com/kwai/auron/pull/949
+* Support cast decimal data type with different precision and sale by @harveyyue in https://github.com/kwai/auron/pull/839
+* Support long type for ceil function by @harveyyue in https://github.com/kwai/auron/pull/825
+* Support more native parquet scan metrics by @harveyyue in https://github.com/kwai/auron/pull/876
+* Support native scan hive paimon cow table by @harveyyue in https://github.com/kwai/auron/pull/708
+* Support shuffle read records and total time metrics by @Flyangz in https://github.com/kwai/auron/pull/873
+* Supports UDAF and other aggregate functions not implemented by @gy11233 in https://github.com/kwai/auron/pull/848
+* Update rust toolchain to latest nightly by @wForget in https://github.com/kwai/auron/pull/861
+* [AURON-287][FOLLOWUP] AuronCelebornShuffleWriter should use mapped shuffle id for rerunning stage of fetch failure by @SteNicholas in https://github.com/kwai/auron/pull/712
+* [AURON-700] Minor nit fix for hyperlink by @merrily01 in https://github.com/kwai/auron/pull/701
+* [AURON-704] Specify name for spark ext function by @wForget in https://github.com/kwai/auron/pull/705
+* [AURON-706] Fix year/month/day functions data type by @wForget in https://github.com/kwai/auron/pull/703
+* [AURON-707][FOLLOWUP] NativePaimonTableScanExec should use shimed PartitionedFile and min partition number by @SteNicholas in https://github.com/kwai/auron/pull/713
+* [AURON-725] Bump Spark from 3.5.3 to 3.5.4 by @SteNicholas in https://github.com/kwai/auron/pull/726
+* [AURON-729] Fix a typo in the Shebang line of the shell script by @merrily01 in https://github.com/kwai/auron/pull/730
+* [AURON-736] Write time should increment for mapperEnd in CelebornPart… by @HYBG-1126 in https://github.com/kwai/auron/pull/739
+* [AURON-744] Bump Celeborn version from 0.5.2 to 0.5.3 by @SteNicholas in https://github.com/kwai/auron/pull/745
+* [AURON-747] Enhance the ArrowFFIExporter.exportNextBatch method to execute conditionally by @merrily01 in https://github.com/kwai/auron/pull/748
+* [AURON-747][FOLLOW-UP] Fix user changed in FFI NextBatch by @Flyangz in https://github.com/kwai/auron/pull/769
+* [AURON-760] Fallback shuffle exchange when range partitioning with unsupported type by @wForget in https://github.com/kwai/auron/pull/761
+* [AURON-762] Return null when log function input is negative by @wForget in https://github.com/kwai/auron/pull/763
+* [AURON-773] Support long type for floor function by @wForget in https://github.com/kwai/auron/pull/774
+* [AURON-775] Support float type for sum function by @wForget in https://github.com/kwai/auron/pull/776
+* [AURON-786] Mark big decimal value convertion as unsupported by @wForget in https://github.com/kwai/auron/pull/787
+* [AURON-790] Support LZ4_RAW compression codec for parquet by @SteNicholas in https://github.com/kwai/auron/pull/791
+* [AURON-803] Support statistics of ExecutionPlan for LimitExec by @SteNicholas in https://github.com/kwai/auron/pull/804
+* [AURON-805] Support statistics of ExecutionPlan for SortExec by @SteNicholas in https://github.com/kwai/auron/pull/807
+* [AURON-808] Support statistics of ExecutionPlan for WindowExec by @SteNicholas in https://github.com/kwai/auron/pull/809
+* [AURON-877] Bump Celeborn version from 0.5.3 to 0.5.4 by @SteNicholas in https://github.com/kwai/auron/pull/878
+* [AURON-879] Bump Spark from 3.5.4 to 3.5.5 by @SteNicholas in https://github.com/kwai/auron/pull/881
+* [AURON-891] Remove stop interface of RssPartitionWriterBase by @SteNicholas in https://github.com/kwai/auron/pull/892
+* [AURON-895] Bump Paimon from 1.0.0 to 1.0.1 by @SteNicholas in https://github.com/kwai/auron/pull/896
+* [AURON-902] Fix UnifflePartitionWriter invoke ShuffleWriteMetricsReporter#incWriteTime with nano seconds by @SteNicholas in https://github.com/kwai/auron/pull/903
+* [AURON-905] Bytes written should increment in UnifflePartitionWriter#write by @SteNicholas in https://github.com/kwai/auron/pull/906
+* [AURON-941] AuronCelebornShuffleReader should add batch open stream time to fetch wait time by @SteNicholas in https://github.com/kwai/auron/pull/942
+* add childOrderingRequired tag to DataWritingCommandExec by @richox in https://github.com/kwai/auron/pull/963
+* add conf: spark.auron.enable.scan.parquet/orc by @richox in https://github.com/kwai/auron/pull/944
+* add expr string to SparkUDFWrapper by @lihao712 in https://github.com/kwai/auron/pull/967
+* add malloc_conf for memory profiling by @Flyangz in https://github.com/kwai/auron/pull/836
+* assert_eq key_rows sorted_row_indices by @cxzl25 in https://github.com/kwai/auron/pull/954
+* bug fixes by @richox in https://github.com/kwai/auron/pull/717
+* bug fixes by @richox in https://github.com/kwai/auron/pull/777
+* clean rss shuffle writer api by @richox in https://github.com/kwai/auron/pull/820
+* close inactive issues by @richox in https://github.com/kwai/auron/pull/738
+* code refactoring and bug fixes by @richox in https://github..com/kwai/auron/pull/952
+* complete UDAF fallback implementation by @richox in https://github.com/kwai/auron/pull/888
+* convert scalar value using arrow ipc by @richox in https://github.com/kwai/auron/pull/938
+* feat(spill): Align with the multi IO compression codec in spill by @zuston in https://github.com/kwai/auron/pull/657
+* feat: Activate symbolize feature for heap profile by @zuston in https://github.com/kwai/auron/pull/937
+* fix NPE while getting spill buf metrics by @richox in https://github.com/kwai/auron/pull/904
+* fix SortExec error when sort key exprs are empty by @richox in https://github.com/kwai/auron/pull/958
+* fix UDAF fallbacking with literal params by @richox in https://github.com/kwai/auron/pull/922
+* fix agg failure: index out of bounds by @richox in https://github.com/kwai/auron/pull/899
+* fix bloom_filter_might_contain + literal params by @richox in https://github.com/kwai/auron/pull/914
+* fix build error and code style by @wForget in https://github.com/kwai/auron/pull/781
+* fix celeborn shuffle writer memory leaking by @richox in https://github.com/kwai/auron/pull/889
+* fix ci: add --all-opens for supporting jdk17 by @richox in https://github.com/kwai/auron/pull/758
+* fix ci: cache spark binaries by @richox in https://github.com/kwai/auron/pull/696
+* fix ci: trigger ci when opening PR by @richox in https://github.com/kwai/auron/pull/711
+* fix ci: trigger ci when opening/changing PR by @richox in https://github.com/kwai/auron/pull/714
+* fix ci: update to actions/upload-artifact@v4 by @richox in https://github.com/kwai/auron/pull/756
+* fix ci: update to actions/upload-artifact@v4 by @richox in https://github.com/kwai/auron/pull/757
+* fix ci: use cached spark-bin directory to walk around `permission denied` issue by @richox in https://github.com/kwai/auron/pull/766
+* fix ci: use huaweicloud mirror to download spark binaries by @richox in https://github.com/kwai/auron/pull/742
+* fix error when bloom filter is null by @richox in https://github.com/kwai/auron/pull/925
+* fix error when copying AuronColumnarArray by @richox in https://github.com/kwai/auron/pull/926
+* fix error when subquery is not finished by @richox in https://github.com/kwai/auron/pull/928
+* fix get_indexed_field nullable error by @lihao712 in https://github.com/kwai/auron/pull/968
+* fix hanging in corner case: ArrowFFIExporter implements AutoCloseable by @richox in https://github.com/kwai/auron/pull/831
+* fix http server startup by @Flyangz in https://github.com/kwai/auron/pull/834
+* fix imprecise ScalarValue memory size by @richox in https://github.com/kwai/auron/pull/962
+* fix inconsistent string to date casting by @richox in https://github.com/kwai/auron/pull/912
+* fix incorrect WindowGroupLimit conversion by @lihao712 in https://github.com/kwai/auron/pull/964
+* fix incorrect expression conversion: Days should be DayOfMonth by @richox in https://github.com/kwai/auron/pull/691
+* fix missing ReturnType in convertMoreAggregateExpr by @richox in https://github.com/kwai/auron/pull/934
+* fix mvn build helper by @richox in https://github.com/kwai/auron/pull/735
+* fix native shuffle reader with HeapByteBuffer by @richox in https://github.com/kwai/auron/pull/935
+* fix performance issues by @richox in https://github.com/kwai/auron/pull/743
+* fix possible hanging in ffi reader by @richox in https://github.com/kwai/auron/pull/860
+* fix possible panic in spawn_worker_thread_on_stream by @richox in https://github.com/kwai/auron/pull/849
+* fix range repartitioning proto issue by @gy11233 in https://github.com/kwai/auron/pull/752
+* fix rss bug: forced spilling an unspillable memory consumer by @richox in https://github.com/kwai/auron/pull/898
+* fix some issues causing 137 oom by @richox in https://github.com/kwai/auron/pull/815
+* fix spark_xxhash64 + literal error by @richox in https://github.com/kwai/auron/pull/920
+* fix test failures by @richox in https://github.com/kwai/auron/pull/720
+* fix union error with empty inputs by @lihao712 in https://github.com/kwai/auron/pull/959
+* fix-ci: adjust memory configuration by @richox in https://github.com/kwai/auron/pull/768
+* fix-ci: pull_request_target -> pull_request by @richox in https://github.com/kwai/auron/pull/782
+* fix-ci: remote incorrect cache by @richox in https://github.com/kwai/auron/pull/779
+* fix-ci: rust fmt by @richox in https://github.com/kwai/auron/pull/780
+* fix-ci: use specified jdk version by @richox in https://github.com/kwai/auron/pull/767
+* get_array_mem_size() prefers capacity to len by @lihao712 in https://github.com/kwai/auron/pull/969
+* get_json_object support blank space after '.' in path by @xm0830 in https://github.com/kwai/auron/pull/915
+* improve MetricNode: fix metric missing in Union children by @richox in https://github.com/kwai/auron/pull/832
+* introduce spark version control with spark-version-annotation-macros,… by @richox in https://github.com/kwai/auron/pull/908
+* keep same algorithm between put_long/put_binary and might_contain_long/might_contain_binary by @xm0830 in https://github.com/kwai/auron/pull/913
+* minor fixes of OOM cases by @richox in https://github.com/kwai/auron/pull/817
+* normalize shuffle write time to output io time by @richox in https://github.com/kwai/auron/pull/953
+* optimize sort merge join and avoid oom by @lihao712 in https://github.com/kwai/auron/pull/970
+* refactor aggregate `unfreeze_from_rows()` and fix UDAF fallbacking error by @richox in https://github.com/kwai/auron/pull/940
+* refactor rss shuffle writer, fix incorrect map status by @richox in https://github.com/kwai/auron/pull/901
+* remove eager shuffle reading by @richox in https://github.com/kwai/auron/pull/858
+* rewrite UnionExec and support auto type casting by @richox in https://github.com/kwai/auron/pull/927
+* set arrows default struct conflict policy to APPEND by @richox in https://github.com/kwai/auron/pull/933
+* style check and reformat by @cxzl25 in https://github.com/kwai/auron/pull/961
+* support orc reading based on index by @Flyangz in https://github.com/kwai/auron/pull/871
+* support orc scan bytes metric by @Flyangz in https://github.com/kwai/auron/pull/821
+* supports WindowGroupLimitExec by @richox in https://github.com/kwai/auron/pull/957
+* supports falling back hash join to sort merge join when hash table is too big by @richox in https://github.com/kwai/auron/pull/753
+* use better aggregate OwnedKey construction by @richox in https://github.com/kwai/auron/pull/784
+* use separated thread in ffi exporter by @richox in https://github.com/kwai/auron/pull/788
 
 ## New Contributors
-* @ASiegeLion made their first contribution in https://github.com/kwai/blaze/pull/716
-* @Flyangz made their first contribution in https://github.com/kwai/blaze/pull/769
-* @HYBG-1126 made their first contribution in https://github.com/kwai/blaze/pull/739
-* @cxzl25 made their first contribution in https://github.com/kwai/blaze/pull/699
-* @gy11233 made their first contribution in https://github.com/kwai/blaze/pull/693
-* @merrily01 made their first contribution in https://github.com/kwai/blaze/pull/701
-* @wsk1314zwr made their first contribution in https://github.com/kwai/blaze/pull/862
-* @xleoken made their first contribution in https://github.com/kwai/blaze/pull/778
-* @xm0830 made their first contribution in https://github.com/kwai/blaze/pull/911
+* @ASiegeLion made their first contribution in https://github.com/kwai/auron/pull/716
+* @Flyangz made their first contribution in https://github.com/kwai/auron/pull/769
+* @HYBG-1126 made their first contribution in https://github.com/kwai/auron/pull/739
+* @cxzl25 made their first contribution in https://github.com/kwai/auron/pull/699
+* @gy11233 made their first contribution in https://github.com/kwai/auron/pull/693
+* @merrily01 made their first contribution in https://github.com/kwai/auron/pull/701
+* @wsk1314zwr made their first contribution in https://github.com/kwai/auron/pull/862
+* @xleoken made their first contribution in https://github.com/kwai/auron/pull/778
+* @xm0830 made their first contribution in https://github.com/kwai/auron/pull/911
 
-**Full Changelog**: https://github.com/kwai/blaze/compare/v4.0.1...v5.0.0-preview1
+**Full Changelog**: https://github.com/kwai/auron/compare/v4.0.1...v5.0.0-preview1

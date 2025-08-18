@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     conf, conf::StringConf, is_jni_bridge_inited, jni_bridge::LocalRef, jni_call, jni_call_static,
     jni_get_string, jni_new_direct_byte_buffer, jni_new_global_ref,
 };
@@ -83,7 +83,7 @@ fn spill_compression_codec() -> &'static str {
                 Ok(format!("lz4")) // for testing
             }
         })
-        .expect("error reading spark.blaze.spill.compression.codec")
+        .expect("error reading spark.auron.spill.compression.codec")
         .as_str()
 }
 
@@ -93,7 +93,7 @@ pub fn try_new_spill(spill_metrics: &SpillMetrics) -> Result<Box<dyn Spill>> {
     } else {
         // use on heap spill if on-heap memory is available, otherwise use file spill
         let hsm = jni_call_static!(JniBridge.getTaskOnHeapSpillManager() -> JObject)?;
-        if jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).isOnHeapAvailable() -> bool)? {
+        if jni_call!(AuronOnHeapSpillManager(hsm.as_obj()).isOnHeapAvailable() -> bool)? {
             Ok(Box::new(OnHeapSpill::try_new(hsm, spill_metrics)?))
         } else {
             Ok(Box::new(FileSpill::try_new(spill_metrics)?))
@@ -177,12 +177,12 @@ impl Drop for FileSpill {
     }
 }
 
-/// A spill structure which cooperates with BlazeOnHeapSpillManager
+/// A spill structure which cooperates with AuronOnHeapSpillManager
 /// used in executor side
 struct OnHeapSpill(Arc<RawOnHeapSpill>, SpillMetrics);
 impl OnHeapSpill {
     fn try_new(hsm: LocalRef, spill_metrics: &SpillMetrics) -> Result<Self> {
-        let spill_id = jni_call!(BlazeOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
+        let spill_id = jni_call!(AuronOnHeapSpillManager(hsm.as_obj()).newSpill() -> i32)?;
         Ok(Self(
             Arc::new(RawOnHeapSpill {
                 hsm: jni_new_global_ref!(hsm.as_obj())?,
@@ -193,13 +193,13 @@ impl OnHeapSpill {
     }
 
     fn get_disk_usage(&self) -> Result<u64> {
-        let usage = jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
+        let usage = jni_call!(AuronOnHeapSpillManager(self.0.hsm.as_obj())
             .getSpillDiskUsage(self.0.spill_id) -> jlong)? as u64;
         Ok(usage)
     }
 
     fn get_disk_iotime(&self) -> Result<u64> {
-        let iotime = jni_call!(BlazeOnHeapSpillManager(self.0.hsm.as_obj())
+        let iotime = jni_call!(AuronOnHeapSpillManager(self.0.hsm.as_obj())
             .getSpillDiskIOTime(self.0.spill_id) -> jlong)? as u64;
         Ok(iotime)
     }
@@ -231,7 +231,7 @@ impl Write for OnHeapSpill {
         let write_len = buf.len();
         let buf = jni_new_direct_byte_buffer!(buf)?;
 
-        jni_call!(BlazeOnHeapSpillManager(
+        jni_call!(AuronOnHeapSpillManager(
             self.0.hsm.as_obj()).writeSpill(self.0.spill_id, buf.as_obj()) -> ()
         )?;
         self.1.mem_spill_size.add(write_len);
@@ -247,7 +247,7 @@ impl Read for OnHeapSpill {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let _timer = self.1.mem_spill_iotime.timer();
         let buf = jni_new_direct_byte_buffer!(buf)?;
-        let read_len = jni_call!(BlazeOnHeapSpillManager(
+        let read_len = jni_call!(AuronOnHeapSpillManager(
             self.0.hsm.as_obj()).readSpill(self.0.spill_id, buf.as_obj()) -> i32
         )?;
         Ok(read_len as usize)
@@ -273,7 +273,7 @@ struct RawOnHeapSpill {
 
 impl Drop for RawOnHeapSpill {
     fn drop(&mut self) {
-        let _ = jni_call!(BlazeOnHeapSpillManager(self.hsm.as_obj())
+        let _ = jni_call!(AuronOnHeapSpillManager(self.hsm.as_obj())
             .releaseSpill(self.spill_id) -> ());
     }
 }

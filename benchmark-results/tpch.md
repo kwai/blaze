@@ -1,7 +1,7 @@
 # TPC-H 1TB Benchmark
 
 ### Versions
-- Blaze version: [4.0.0](https://github.com/blaze-init/blaze/tree/v4.0.0)
+- Auron version: [4.0.0](https://github.com/blaze-init/auron/tree/v4.0.0)
 - Vanilla spark version: spark-3.5.1
 
 ### Environment
@@ -28,7 +28,7 @@ spark.sql.parquet.compression.codec zstd
 # enabled in spark 3.5 by default
 spark.sql.optimizer.runtime.bloomFilter.enabled true
 
-# enable HashJoin for small tables, which is faster both in spark and blaze
+# enable HashJoin for small tables, which is faster both in spark and auron
 # note: SortMergeJoin is still used for joining big tables with this configuration enabled
 spark.sql.join.preferSortMergeJoin false
 ```
@@ -40,24 +40,24 @@ spark.executor.memoryOverhead 2048
 spark.executor.cores 5
 ```
 
-Configurations for blaze:
+Configurations for auron:
 
-note: this configuration is widely used in production environment of Kuaishou.inc, without any tricky optimizations only for benchmark. (for example, you can set `spark.blaze.forceShuffledHashJoin true` to force using HashJoin instead of SortMergeJoin and get much faster benchmark result, but this is unacceptable in production environment)
+note: this configuration is widely used in production environment of Kuaishou.inc, without any tricky optimizations only for benchmark. (for example, you can set `spark.auron.forceShuffledHashJoin true` to force using HashJoin instead of SortMergeJoin and get much faster benchmark result, but this is unacceptable in production environment)
 
 ```conf
 spark.executor.memory 3g
 spark.executor.memoryOverhead 3072
-spark.blaze.enable true
-spark.sql.extensions org.apache.spark.sql.blaze.BlazeSparkSessionExtension
-spark.shuffle.manager org.apache.spark.sql.execution.blaze.shuffle.BlazeShuffleManager
+spark.auron.enable true
+spark.sql.extensions org.apache.spark.sql.auron.AuronSparkSessionExtension
+spark.shuffle.manager org.apache.spark.sql.execution.auron.shuffle.AuronShuffleManager
 ```
 
 ### Benchmark result:
-Blaze shows 2.12x query time speed-up comparing with Spark 3.5, with the same CPU/memory resources.
+Auron shows 2.12x query time speed-up comparing with Spark 3.5, with the same CPU/memory resources.
 
-![tpch-blaze400-spark351.png](tpch-blaze400-spark351.png)
+![tpch-auron400-spark351.png](tpch-auron400-spark351.png)
 
-|     | Spark    | Blaze   | Speedup |
+|     | Spark    | Auron   | Speedup |
 | --- | -------- | ------- | ------- |
 | q01 | 40.473   | 19.834  | 2.04    |
 | q02 | 20.527   | 11.639  | 1.76    |

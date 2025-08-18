@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ use arrow::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema, from_ffi},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     jni_bridge::LocalRef, jni_call, jni_get_byte_array_len, jni_get_byte_array_region,
     jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object, jni_new_prim_array,
 };

@@ -1,0 +1,12 @@
+[package]
+name = "auron-jni-bridge"
+version = "0.1.0"
+edition = "2024"
+resolver = "1"
+
+[dependencies]
+datafusion = { workspace = true }
+jni = { workspace = true }
+log = { workspace = true }
+once_cell = { workspace = true }
+paste = { workspace = true }

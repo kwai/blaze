@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>org.blaze</groupId>
-  <artifactId>blaze-engine_${scalaVersion}</artifactId>
+  <groupId>org.auron</groupId>
+  <artifactId>auron-engine_${scalaVersion}</artifactId>
   <version>${revision}</version>
   <packaging>pom</packaging>
 
@@ -11,9 +11,6 @@
     <module>spark-extension</module>
     <module>${shimPkg}</module>
     <module>hadoop-shim</module>
-    <module>thirdparty/blaze-celeborn</module>
-    <module>thirdparty/blaze-uniffle</module>
-    <module>thirdparty/blaze-paimon</module>
     <module>dev/mvn-build-helper/assembly</module>
     <module>dev/mvn-build-helper/proto</module>
   </modules>
@@ -23,9 +20,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>
-    <paimonVersion>1.1.1</paimonVersion>
-    <celebornVersion>0.6.0</celebornVersion>
-    <uniffleVersion>0.9.2</uniffleVersion>
 
     <javaVersion>8</javaVersion>
     <scalaVersion>2.12</scalaVersion>
@@ -210,7 +204,7 @@
             <arg>-Ywarn-unused</arg>
           </args>
           <jvmArgs>
-            <jvmArg>-Dblaze.shim=${shimName}</jvmArg>
+            <jvmArg>-Dauron.shim=${shimName}</jvmArg>
           </jvmArgs>
         </configuration>
         <dependencies>
@@ -583,28 +577,63 @@
     </profile>
 
     <profile>
+      <id>celeborn-base</id>
+      <activation>
+        <property>
+          <name>celebornProfileActivated</name>
+          <value>true</value>
+        </property>
+      </activation>
+    </profile>
+
+    <profile>
+      <id>celeborn</id>
+    </profile>
+    <profile>
+      <id>uniffle</id>
+    </profile>
+    <profile>
+      <id>paimon</id>
+    </profile>
+
+    <profile>
       <id>celeborn-0.5</id>
+      <modules>
+        <module>thirdparty/auron-celeborn-0.5</module>
+      </modules>
       <properties>
+        <celebornProfileActivated>true</celebornProfileActivated>
         <celebornVersion>0.5.4</celebornVersion>
       </properties>
     </profile>
 
     <profile>
       <id>celeborn-0.6</id>
+      <modules>
+        <module>thirdparty/auron-celeborn-0.6</module>
+      </modules>
       <properties>
+        <celebornProfileActivated>true</celebornProfileActivated>
         <celebornVersion>0.6.0</celebornVersion>
       </properties>
     </profile>
 
     <profile>
       <id>uniffle-0.9</id>
+      <modules>
+        <module>thirdparty/auron-uniffle</module>
+      </modules>
       <properties>
+        <uniffleProfileActivated>true</uniffleProfileActivated>
         <uniffleVersion>0.9.2</uniffleVersion>
       </properties>
     </profile>
 
     <profile>
       <id>paimon-1.1</id>
+      <modules>
+        <module>thirdparty/auron-paimon</module>
+      </modules>
       <properties>
         <paimonVersion>1.1.1</paimonVersion>
       </properties>

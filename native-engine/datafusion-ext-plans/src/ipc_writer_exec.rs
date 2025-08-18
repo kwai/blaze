@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ use std::{any::Any, fmt::Formatter, io::Write, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     jni_call, jni_call_static, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_string,
 };
 use datafusion::{

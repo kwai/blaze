@@ -10,7 +10,7 @@ default = ["tokio/rt-multi-thread"]
 [dependencies]
 arrow = { workspace = true }
 arrow-schema = { workspace = true }
-blaze-jni-bridge = { workspace = true }
+auron-jni-bridge = { workspace = true }
 datafusion = { workspace = true }
 
 async-trait = { workspace = true }

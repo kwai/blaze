@@ -21,7 +21,7 @@ use std::{any::Any, fmt, fmt::Formatter, ops::Range, pin::Pin, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use arrow_schema::{DataType, TimeUnit};
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     conf,
     conf::{BooleanConf, IntConf},
     jni_call_static, jni_new_global_ref, jni_new_string,
@@ -61,7 +61,7 @@ use parking_lot::Mutex;
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{BlazeSchemaAdapterFactory, internal_file_reader::InternalFileReader},
+    scan::{AuronSchemaAdapterFactory, internal_file_reader::InternalFileReader},
 };
 
 /// Execution plan for scanning one or more Parquet partitions
@@ -162,7 +162,7 @@ impl ExecutionPlan for ParquetExec {
         let fs = jni_call_static!(JniBridge.getResource(resource_id.as_obj()) -> JObject)?;
         let fs_provider = Arc::new(FsProvider::new(jni_new_global_ref!(fs.as_obj())?, &io_time));
 
-        let schema_adapter_factory = Arc::new(BlazeSchemaAdapterFactory);
+        let schema_adapter_factory = Arc::new(AuronSchemaAdapterFactory);
         let projection = match self.base_config.file_column_projection_indices() {
             Some(proj) => proj,
             None => (0..self.base_config.file_schema.fields().len()).collect(),
