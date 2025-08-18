@@ -1,0 +1,70 @@
+name: Build arm Releases
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["master"]
+
+jobs:
+  build-snapshot:
+    name: Build Blaze on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
+        blazever: [5.0.0]
+        scalaver: [2.12, 2.13]
+        javaver: [ 8 ]
+        runner: [ubuntu-22.04-arm, ubuntu-24.04-arm ]
+        exclude:
+          # Only build on scala-2.13 for spark-3.5
+          - sparkver: spark-3.0
+            scalaver: '2.13'
+          - sparkver: spark-3.1
+            scalaver: '2.13'
+          - sparkver: spark-3.2
+            scalaver: '2.13'
+          - sparkver: spark-3.3
+            scalaver: '2.13'
+          - sparkver: spark-3.4
+            scalaver: '2.13'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'adopt-hotspot'
+          java-version: ${{ matrix.javaver }}
+          cache: 'maven'
+
+      - uses: arduino/setup-protoc@v2
+        with:
+          version: "21.7"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          rustflags: --allow warnings -C target-feature=+aes
+          components:
+            cargo
+            rustfmt
+
+      - name: Detect osclassfier
+        id: detect-osclassfier
+        run: |
+          osclassfier=$(./build/mvn help:evaluate -Dexpression=os.detected.classifier -q -DforceStdout -P${{ matrix.sparkver }})
+          echo "osclassfier=$osclassfier" >> $GITHUB_ENV
+
+      - name: Build blaze-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
+        run: |
+          sed -i 's/opt-level = 1/opt-level = 0/g' Cargo.toml # use opt-level 0
+          rm -f .build-checksum_*.cache
+          build/mvn package -Prelease -P${{ matrix.sparkver }} -Pscala-${{ matrix.scalaver }} -DskipTests
+
+      - name: Upload blaze-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blaze-engine-${{matrix.sparkver}}_${{ matrix.scalaver }}-release-${{ matrix.runner }}-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target/blaze-engine-${{matrix.sparkver}}_${{ matrix.scalaver }}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          overwrite: true
