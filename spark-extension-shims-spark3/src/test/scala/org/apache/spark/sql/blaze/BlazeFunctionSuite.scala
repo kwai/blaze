@@ -16,16 +16,16 @@
 package org.apache.spark.sql.blaze
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.blaze.util.BlazeTestUtils
 
 class BlazeFunctionSuite extends org.apache.spark.sql.QueryTest with BaseBlazeSQLSuite {
 
   test("sum function with float input") {
-    withTable("t1") {
-      withSQLConf("spark.blaze.enable" -> "false") {
-        sql("set spark.blaze.enable=false")
+    if (BlazeTestUtils.isSparkV31OrGreater) {
+      withTable("t1") {
         sql("create table t1 using parquet as select 1.0f as c1")
         val df = sql("select sum(c1) from t1")
-        checkAnswer(df, Seq(Row(1.23, 1.1)))
+        checkAnswer(df, Seq(Row(1.0)))
       }
     }
   }

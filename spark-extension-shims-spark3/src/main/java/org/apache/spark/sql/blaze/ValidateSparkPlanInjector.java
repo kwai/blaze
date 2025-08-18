@@ -30,8 +30,13 @@ import org.slf4j.LoggerFactory;
 public class ValidateSparkPlanInjector {
 
     private static final Logger logger = LoggerFactory.getLogger(ValidateSparkPlanInjector.class);
+    private static boolean injected = false;
 
-    public static void inject() {
+    public static synchronized void inject() {
+        if (injected) {
+            logger.warn("ValidateSparkPlan already injected, skipping.");
+            return;
+        }
         try {
             ByteBuddyAgent.install();
             ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
@@ -44,6 +49,8 @@ public class ValidateSparkPlanInjector {
                     .intercept(MethodDelegation.to(ValidateSparkPlanApplyInterceptor.class))
                     .make()
                     .load(contextClassLoader, ClassLoadingStrategy.Default.INJECTION);
+            logger.info("Successfully injected ValidateSparkPlan.");
+            injected = true;
         } catch (TypePool.Resolution.NoSuchTypeException e) {
             logger.debug("No such type of ValidateSparkPlan", e);
         }
