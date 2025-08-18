@@ -141,13 +141,9 @@ Notes:
 
 ## Performance
 
-Check [TPC-H Benchmark Results](./benchmark-results/tpch.md).
-The latest benchmark result shows that Auron saved more than 50% time on TPC-H 1TB datasets comparing with Vanilla Spark 3.5.
+TPC-DS 1TB Benchmark (for details, see https://auron-project.github.io/documents/benchmarks.html):
 
-Stay tuned and join us for more upcoming thrilling numbers.
-
-TPC-H Query time:
-![tpch-auron400-spark351.png](./benchmark-results/tpch-auron400-spark351.png)
+![tpcds-benchmark-echarts.png](./benchmark-results/tpcds-benchmark-echarts.png)
 
 We also encourage you to benchmark Auron and share the results with us. 🤗
 
