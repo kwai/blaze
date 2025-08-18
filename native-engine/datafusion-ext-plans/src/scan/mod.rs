@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,29 +30,29 @@ use datafusion_ext_commons::df_execution_err;
 pub mod internal_file_reader;
 
 #[derive(Debug)]
-pub struct BlazeSchemaAdapterFactory;
+pub struct AuronSchemaAdapterFactory;
 
-impl SchemaAdapterFactory for BlazeSchemaAdapterFactory {
+impl SchemaAdapterFactory for AuronSchemaAdapterFactory {
     fn create(
         &self,
         projected_table_schema: SchemaRef,
         _table_schema: SchemaRef,
     ) -> Box<dyn SchemaAdapter> {
-        Box::new(BlazeSchemaAdapter::new(projected_table_schema))
+        Box::new(AuronSchemaAdapter::new(projected_table_schema))
     }
 }
 
-pub struct BlazeSchemaAdapter {
+pub struct AuronSchemaAdapter {
     table_schema: SchemaRef,
 }
 
-impl BlazeSchemaAdapter {
+impl AuronSchemaAdapter {
     pub fn new(table_schema: SchemaRef) -> Self {
         Self { table_schema }
     }
 }
 
-impl SchemaAdapter for BlazeSchemaAdapter {
+impl SchemaAdapter for AuronSchemaAdapter {
     fn map_column_index(&self, index: usize, file_schema: &Schema) -> Option<usize> {
         let field = self.table_schema.field(index);
 
@@ -88,7 +88,7 @@ impl SchemaAdapter for BlazeSchemaAdapter {
     }
 }
 
-pub fn create_blaze_schema_mapper(
+pub fn create_auron_schema_mapper(
     table_schema: &SchemaRef,
     field_mappings: &[Option<usize>],
 ) -> Arc<dyn SchemaMapper> {

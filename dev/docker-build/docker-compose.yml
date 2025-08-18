@@ -8,16 +8,16 @@ services:
       - ~/.sbt:/root/.sbt:rw
       - ~/.cargo/git:/root/.cargo/git:rw
       - ~/.cargo/registry:/root/.cargo/registry:rw
-      - ./../../:/blaze:rw
-      - ./../../target-docker:/blaze/target:rw
-      - ./../../target-docker/spark-extension-target:/blaze/spark-extension/target:rw
-      - ./../../target-docker/spark-extension-shims-spark3-target:/blaze/spark-extension-shims-spark3/target:rw
-      - ./../../target-docker/build-helper-proto-target:/blaze/dev/mvn-build-helper/proto/target:rw
-      - ./../../target-docker/build-helper-assembly-target:/blaze/dev/mvn-build-helper/assembly/target:rw
+      - ./../../:/auron:rw
+      - ./../../target-docker:/auron/target:rw
+      - ./../../target-docker/spark-extension-target:/auron/spark-extension/target:rw
+      - ./../../target-docker/spark-extension-shims-spark3-target:/auron/spark-extension-shims-spark3/target:rw
+      - ./../../target-docker/build-helper-proto-target:/auron/dev/mvn-build-helper/proto/target:rw
+      - ./../../target-docker/build-helper-assembly-target:/auron/dev/mvn-build-helper/assembly/target:rw
     environment:
       RUSTFLAGS: "-C target-cpu=skylake"
       SHIM: "${SHIM}"
       MODE: "${MODE}"
       JAVA_VERSION: "${JAVA_VERSION}"
       SCALA_VERSION: "${SCALA_VERSION}"
-    command: "bash -c 'source ~/.bashrc && cd /blaze && ./build/mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION} -Pscala-${SCALA_VERSION}'"
+    command: "bash -c 'source ~/.bashrc && cd /auron && ./build/mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION} -Pscala-${SCALA_VERSION}'"

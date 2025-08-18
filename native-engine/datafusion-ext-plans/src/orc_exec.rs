@@ -18,7 +18,7 @@
 use std::{any::Any, fmt, fmt::Formatter, pin::Pin, sync::Arc};
 
 use arrow::{datatypes::SchemaRef, error::ArrowError};
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     conf, conf::BooleanConf, jni_call_static, jni_new_global_ref, jni_new_string,
 };
 use bytes::Bytes;
@@ -50,7 +50,7 @@ use orc_rust::{
 
 use crate::{
     common::execution_context::ExecutionContext,
-    scan::{create_blaze_schema_mapper, internal_file_reader::InternalFileReader},
+    scan::{create_auron_schema_mapper, internal_file_reader::InternalFileReader},
 };
 
 /// Execution plan for scanning one or more Orc partitions
@@ -367,7 +367,7 @@ impl SchemaAdapter {
         }
 
         Ok((
-            create_blaze_schema_mapper(&self.projected_schema, &field_mappings),
+            create_auron_schema_mapper(&self.projected_schema, &field_mappings),
             projection,
         ))
     }

@@ -349,6 +349,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auron"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "auron-jni-bridge",
+ "auron-serde",
+ "bytesize",
+ "chrono",
+ "datafusion",
+ "datafusion-ext-commons",
+ "datafusion-ext-plans",
+ "futures",
+ "jemalloc_pprof",
+ "jni",
+ "log",
+ "once_cell",
+ "panic-message",
+ "poem",
+ "pprof",
+ "prost 0.14.1",
+ "serde",
+ "tikv-jemalloc-ctl",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
+ "tokio",
+]
+
+[[package]]
+name = "auron-jni-bridge"
+version = "0.1.0"
+dependencies = [
+ "datafusion",
+ "jni",
+ "log",
+ "once_cell",
+ "paste",
+]
+
+[[package]]
+name = "auron-serde"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "base64",
+ "datafusion",
+ "datafusion-ext-commons",
+ "datafusion-ext-exprs",
+ "datafusion-ext-functions",
+ "datafusion-ext-plans",
+ "log",
+ "object_store",
+ "parking_lot",
+ "prost 0.14.1",
+ "tonic-build",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -478,63 +535,6 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
-]
-
-[[package]]
-name = "blaze"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "blaze-jni-bridge",
- "blaze-serde",
- "bytesize",
- "chrono",
- "datafusion",
- "datafusion-ext-commons",
- "datafusion-ext-plans",
- "futures",
- "jemalloc_pprof",
- "jni",
- "log",
- "once_cell",
- "panic-message",
- "poem",
- "pprof",
- "prost 0.14.1",
- "serde",
- "tikv-jemalloc-ctl",
- "tikv-jemalloc-sys",
- "tikv-jemallocator",
- "tokio",
-]
-
-[[package]]
-name = "blaze-jni-bridge"
-version = "0.1.0"
-dependencies = [
- "datafusion",
- "jni",
- "log",
- "once_cell",
- "paste",
-]
-
-[[package]]
-name = "blaze-serde"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "base64",
- "datafusion",
- "datafusion-ext-commons",
- "datafusion-ext-exprs",
- "datafusion-ext-functions",
- "datafusion-ext-plans",
- "log",
- "object_store",
- "parking_lot",
- "prost 0.14.1",
- "tonic-build",
 ]
 
 [[package]]
@@ -1169,8 +1169,8 @@ dependencies = [
  "arrow",
  "arrow-schema",
  "async-trait",
+ "auron-jni-bridge",
  "bigdecimal",
- "blaze-jni-bridge",
  "byteorder",
  "bytes 1.10.1",
  "chrono",
@@ -1196,7 +1196,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
- "blaze-jni-bridge",
+ "auron-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
  "itertools 0.14.0",
@@ -1213,7 +1213,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
- "blaze-jni-bridge",
+ "auron-jni-bridge",
  "datafusion",
  "datafusion-ext-commons",
  "itertools 0.14.0",
@@ -1231,9 +1231,9 @@ dependencies = [
  "arrow",
  "arrow-schema",
  "async-trait",
+ "auron-jni-bridge",
  "base64",
  "bitvec",
- "blaze-jni-bridge",
  "byteorder",
  "bytes 1.10.1",
  "bytesize",
@@ -3638,7 +3638,7 @@ dependencies = [
 [[package]]
 name = "serde_json"
 version = "1.0.96"
-source = "git+https://github.com/blaze-init/json?branch=v1.0.96-blaze#95fa6cbac6b7146a8883f5ce761316d11282399b"
+source = "git+https://github.com/blaze-init/json?branch=v1.0.96-auron#95fa6cbac6b7146a8883f5ce761316d11282399b"
 dependencies = [
  "itoa",
  "ryu",

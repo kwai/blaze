@@ -1,4 +1,4 @@
-# Copyright 2022 The Blaze Authors
+# Copyright 2022 The Auron Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@ members = [
     "native-engine/datafusion-ext-exprs",
     "native-engine/datafusion-ext-functions",
     "native-engine/datafusion-ext-plans",
-    "native-engine/blaze",
-    "native-engine/blaze-jni-bridge",
-    "native-engine/blaze-serde",
+    "native-engine/auron",
+    "native-engine/auron-jni-bridge",
+    "native-engine/auron-serde",
 ]
 
 [profile.release]
@@ -43,28 +43,28 @@ debug = true
 overflow-checks = false
 
 [workspace.dependencies]
-blaze = { path = "./native-engine/blaze" }
-blaze-jni-bridge = { path = "./native-engine/blaze-jni-bridge" }
-blaze-serde = { path = "./native-engine/blaze-serde" }
+auron = { path = "./native-engine/auron" }
+auron-jni-bridge = { path = "./native-engine/auron-jni-bridge" }
+auron-serde = { path = "./native-engine/auron-serde" }
 datafusion-ext-commons = { path = "./native-engine/datafusion-ext-commons" }
 datafusion-ext-exprs = { path = "./native-engine/datafusion-ext-exprs" }
 datafusion-ext-functions = { path = "./native-engine/datafusion-ext-functions" }
 datafusion-ext-plans = { path = "./native-engine/datafusion-ext-plans" }
 
-# datafusion: branch=v49.0.0-blaze
+# datafusion: branch=v49.0.0-auron
 datafusion = { version = "49.0.0" }
 datafusion-datasource = { version = "49.0.0" }
 datafusion-datasource-parquet = { version = "49.0.0" }
 
-# orc-rust branch=v0.6.0-blaze
+# orc-rust branch=v0.6.0-auron
 orc-rust = { version = "0.6.0" }
 
-# arrow: branch=v55.2.0-blaze
+# arrow: branch=v55.2.0-auron
 arrow = { version = "55.2.0", features = ["ffi"]}
 arrow-schema = { version = "55.2.0", features = ["serde"] }
 parquet = { version = "55.2.0" }
 
-# serde_json: branch=v1.0.96-blaze
+# serde_json: branch=v1.0.96-auron
 serde_json = { version = "1.0.96" }
 
 # other dependencies
@@ -104,7 +104,7 @@ unchecked-index = "0.2.2"
 zstd = "0.13.3"
 
 [patch.crates-io]
-# datafusion: branch=v42-blaze
+# datafusion: branch=v42-auron
 datafusion = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
 datafusion-common = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
 datafusion-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
@@ -115,7 +115,7 @@ datafusion-optimizer = { git = "https://github.com/blaze-init/arrow-datafusion.g
 datafusion-physical-expr = { git = "https://github.com/blaze-init/arrow-datafusion.git", rev = "9034aeffb"}
 orc-rust = { git = "https://github.com/blaze-init/datafusion-orc.git", rev = "e10b240"}
 
-# arrow: branch=v53-blaze
+# arrow: branch=v53-auron
 arrow = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
 arrow-arith = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
 arrow-array = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
@@ -130,5 +130,5 @@ arrow-select = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de0
 arrow-string = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
 parquet = { git = "https://github.com/blaze-init/arrow-rs.git", rev = "5de02520c"}
 
-# serde_json: branch=v1.0.96-blaze
-serde_json = { git = "https://github.com/blaze-init/json", branch = "v1.0.96-blaze" }
+# serde_json: branch=v1.0.96-auron
+serde_json = { git = "https://github.com/blaze-init/json", branch = "v1.0.96-auron" }

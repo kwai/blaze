@@ -5,15 +5,12 @@
       <list>
         <IssueNavigationLink>
           <option name="issueRegexp" value="#(\d+)" />
-          <option name="linkRegexp" value="https://github.com/kwai/blaze/pull/$1" />
+          <option name="linkRegexp" value="https://github.com/kwai/auron/pull/$1" />
         </IssueNavigationLink>
       </list>
     </option>
   </component>
   <component name="VcsDirectoryMappings">
-    <mapping directory="$PROJECT_DIR$" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/arrow-datafusion" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/arrow-rs" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/thirdparty/datafusion-orc" vcs="Git" />
+    <mapping directory="" vcs="Git" />
   </component>
 </project>

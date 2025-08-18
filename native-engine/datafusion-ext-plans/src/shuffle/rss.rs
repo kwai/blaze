@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 use std::io::Write;
 
-use blaze_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
+use auron_jni_bridge::{jni_call, jni_new_direct_byte_buffer};
 use jni::objects::GlobalRef;
 
 pub struct RssWriter {
@@ -36,7 +36,7 @@ impl Write for RssWriter {
         let buf_len = buf.len();
         let buf = jni_new_direct_byte_buffer!(&buf)?;
         jni_call!(
-            BlazeRssPartitionWriterBase(self.rss_partition_writer.as_obj())
+            AuronRssPartitionWriterBase(self.rss_partition_writer.as_obj())
                 .write(self.partition_id as i32, buf.as_obj()) -> ()
         )?;
         Ok(buf_len)

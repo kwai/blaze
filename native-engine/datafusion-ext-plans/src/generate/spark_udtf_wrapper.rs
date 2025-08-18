@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     ffi::{FFI_ArrowArray, from_ffi_and_data_type},
 };
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     is_task_running, jni_call, jni_new_direct_byte_buffer, jni_new_global_ref, jni_new_object,
 };
 use datafusion::{common::Result, physical_expr::PhysicalExprRef};

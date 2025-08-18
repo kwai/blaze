@@ -18,7 +18,7 @@
 use std::io::{BufReader, Read, Take, Write};
 
 use arrow::{array::ArrayRef, datatypes::SchemaRef};
-use blaze_jni_bridge::{
+use auron_jni_bridge::{
     conf,
     conf::{IntConf, StringConf},
     is_jni_bridge_inited,

@@ -3,43 +3,27 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.blaze</groupId>
-    <artifactId>blaze-engine_${scalaVersion}</artifactId>
+    <groupId>org.auron</groupId>
+    <artifactId>auron-engine_${scalaVersion}</artifactId>
     <version>${revision}</version>
     <relativePath>../../../pom.xml</relativePath>
   </parent>
-  <groupId>org.blaze</groupId>
   <artifactId>assembly</artifactId>
   <packaging>jar</packaging>
 
   <properties>
-    <blaze.shade.packageName>blaze</blaze.shade.packageName>
+    <auron.shade.packageName>auron</auron.shade.packageName>
   </properties>
 
   <dependencies>
     <dependency>
-      <groupId>org.blaze</groupId>
+      <groupId>org.auron</groupId>
       <artifactId>spark-extension_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
     <dependency>
-      <groupId>org.blaze</groupId>
+      <groupId>org.auron</groupId>
       <artifactId>${shimPkg}_${scalaVersion}</artifactId>
-      <version>${revision}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.blaze</groupId>
-      <artifactId>blaze-celeborn_${scalaVersion}</artifactId>
-      <version>${revision}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.blaze</groupId>
-      <artifactId>blaze-uniffle_${scalaVersion}</artifactId>
-      <version>${revision}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.blaze</groupId>
-      <artifactId>blaze-paimon_${scalaVersion}</artifactId>
       <version>${revision}</version>
     </dependency>
   </dependencies>
@@ -91,15 +75,15 @@
               <relocations>
                 <relocation>
                   <pattern>com.google.flatbuffers</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.com.google.flatbuffers</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.com.google.flatbuffers</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>com.google.protobuf</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.com.google.protobuf</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.com.google.protobuf</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>org.apache.arrow</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.org.apache.arrow</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.org.apache.arrow</shadedPattern>
                   <!--arrow's C and dataset wrapper refers to the original class path, so we should not relocate here-->
                   <excludes>
                     <exclude>org.apache.arrow.c.**</exclude>
@@ -107,25 +91,25 @@
                 </relocation>
                 <relocation>
                   <pattern>javax.annotation</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.javax.annotation</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.javax.annotation</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>net.bytebuddy</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.net.bytebuddy</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.net.bytebuddy</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>org.checkerframework</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.org.checkerframework</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.org.checkerframework</shadedPattern>
                 </relocation>
                 <relocation>
                   <pattern>scala.compat</pattern>
-                  <shadedPattern>${blaze.shade.packageName}.scala.compat</shadedPattern>
+                  <shadedPattern>${auron.shade.packageName}.scala.compat</shadedPattern>
                 </relocation>
               </relocations>
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/blaze-engine-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
+              <outputFile>../../../target/auron-engine-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
             </configuration>
           </execution>
         </executions>
@@ -140,4 +124,39 @@
       </extension>
     </extensions>
   </build>
+
+  <profiles>
+    <profile>
+      <id>celeborn</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.auron</groupId>
+          <artifactId>auron-celeborn_${scalaVersion}</artifactId>
+          <version>${revision}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+
+    <profile>
+      <id>uniffle</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.auron</groupId>
+          <artifactId>auron-uniffle_${scalaVersion}</artifactId>
+          <version>${revision}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+
+    <profile>
+      <id>paimon</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.auron</groupId>
+          <artifactId>auron-paimon_${scalaVersion}</artifactId>
+          <version>${revision}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
 </project>

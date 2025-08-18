@@ -1,7 +1,7 @@
 testenv
 ===
 
-Setup an environment for testing spark-blaze-extension
+Setup an environment for testing spark-auron-extension
 
 ### step-1: download and install hadoop/hive/spark
 
@@ -21,8 +21,8 @@ run `source _bin/env.sh`
 
 run `spark-sql -f _workspace/init_bigint_1m.q`
 
-### step-5: try to execute a query with spark-sql + blaze extension
+### step-5: try to execute a query with spark-sql + auron extension
 
-edit ./spark-sql-blazePlugin and set the correct path spark-blaze-extension and blaze-rs.
+edit ./spark-sql-auronPlugin and set the correct path spark-auron-extension and auron-rs.
 
-run `./spark-sql-blazePlugin -f _workspace/shuffle.q` for testing.
+run `./spark-sql-auronPlugin -f _workspace/shuffle.q` for testing.

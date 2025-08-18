@@ -1,4 +1,4 @@
-// Copyright 2022 The Blaze Authors
+// Copyright 2022 The Auron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #![feature(slice_swap_unchecked)]
 #![feature(vec_into_raw_parts)]
 
-use blaze_jni_bridge::conf::{
+use auron_jni_bridge::conf::{
     BATCH_SIZE, IntConf, SUGGESTED_BATCH_MEM_SIZE, SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE,
 };
 use once_cell::sync::OnceCell;
