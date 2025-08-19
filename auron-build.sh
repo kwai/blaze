@@ -9,7 +9,7 @@ print_help() {
     echo "  --pre                  Activate pre-release profile"
     echo "  --release              Activate release profile"
     echo "  --sparkver <VERSION>   Specify Spark version (e.g. 3.0/3.1/3.2/3.3/3.4/3.5)"
-    echo "  --scalaver <VERSION>   Specify Spark version (e.g. 2.12/2.13)"
+    echo "  --scalaver <VERSION>   Specify Scala version (e.g. 2.12/2.13)"
     echo "  --celeborn <VERSION>   Specify Celeborn version (e.g. 0.5/0.6)"
     echo "  --uniffle <VERSION>    Specify Uniffle version (e.g. 0.9.2)"
     echo "  --paimon <VERSION>     Specify Paimon version (e.g. 1.1)"
