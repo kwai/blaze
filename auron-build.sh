@@ -11,7 +11,7 @@ print_help() {
     echo "  --sparkver <VERSION>   Specify Spark version (e.g. 3.0/3.1/3.2/3.3/3.4/3.5)"
     echo "  --scalaver <VERSION>   Specify Spark version (e.g. 2.12/2.13)"
     echo "  --celeborn <VERSION>   Specify Celeborn version (e.g. 0.5/0.6)"
-    echo "  --uniffle <VERSION>    Specify Uniffle version (e.g. 0.5/0.6)"
+    echo "  --uniffle <VERSION>    Specify Uniffle version (e.g. 0.9.2)"
     echo "  --paimon <VERSION>     Specify Paimon version (e.g. 1.1)"
     echo "  --clean <true/false>   Clean before build, default: true"
     echo "  -h, --help             Show this help message"
@@ -88,12 +88,12 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --celeborn)
+        --uniffle)
             if [[ -n "$2" && "$2" != -* ]]; then
                 UNIFFLE_VER="$2"
                 shift 2
             else
-                echo "ERROR: --celeborn requires version argument" >&2
+                echo "ERROR: --uniffle requires version argument" >&2
                 exit 1
             fi
             ;;
