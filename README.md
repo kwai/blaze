@@ -16,10 +16,10 @@
 
 # AURON
 
-[![TPC-DS](https://github.com/blaze-init/auron/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/blaze-init/auron/actions/workflows/tpcds.yml)
-[![master-ce7-builds](https://github.com/blaze-init/auron/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/blaze-init/auron/actions/workflows/build-ce7-releases.yml)
+[![TPC-DS](https://github.com/kwai/blaze/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/kwai/blaze/actions/workflows/tpcds.yml)
+[![master-ce7-builds](https://github.com/kwai/blaze/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/kwai/blaze/actions/workflows/build-ce7-releases.yml)
 
-![dev/auron-logo.png](./dev/auron-logo.png)
+<p align="center"><img src="./dev/auron-logo.png" /></p>
 
 The Auron accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines
 the power of the [Apache DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
