@@ -20,7 +20,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.auron.plan.NativeSortMergeJoinBase
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case object NativeSortMergeJoinExecProvider {
 

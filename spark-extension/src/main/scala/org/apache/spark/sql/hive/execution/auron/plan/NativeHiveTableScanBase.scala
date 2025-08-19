@@ -37,12 +37,12 @@ import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import java.net.URI
 import java.security.PrivilegedExceptionAction
 
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)
     extends LeafExecNode

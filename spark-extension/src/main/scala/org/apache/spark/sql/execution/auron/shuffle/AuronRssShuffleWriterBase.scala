@@ -23,8 +23,8 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
 import org.apache.spark.shuffle.ShuffleWriter
 import org.apache.spark.sql.auron.{JniBridge, NativeHelper, NativeRDD, Shims}
-import org.auron.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode}
-import org.auron.sparkver
+import org.apache.auron.protobuf.{PhysicalPlanNode, RssShuffleWriterExecNode}
+import org.apache.auron.sparkver
 
 abstract class AuronRssShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V] {

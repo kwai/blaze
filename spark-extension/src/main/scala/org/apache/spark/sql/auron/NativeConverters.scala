@@ -33,7 +33,7 @@ import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.commons.lang3.reflect.MethodUtils
 
 import com.google.protobuf.ByteString
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.auron.util.Using
 import org.apache.spark.sql.catalyst.expressions.{Abs, Acos, Add, Alias, And, Asin, Atan, Attribute, AttributeReference, BitwiseAnd, BitwiseOr, BoundReference, CaseWhen, Cast, Ceil, CheckOverflow, Coalesce, Concat, ConcatWs, Contains, Cos, CreateArray, CreateNamedStruct, DayOfMonth, Divide, EndsWith, EqualTo, Exp, Expression, Floor, GetArrayItem, GetJsonObject, GetMapValue, GetStructField, GreaterThan, GreaterThanOrEqual, If, In, InSet, IsNotNull, IsNull, LeafExpression, Length, LessThan, LessThanOrEqual, Like, Literal, Log, Log10, Log2, Lower, MakeDecimal, Md5, Month, Multiply, Murmur3Hash, Not, NullIf, OctetLength, Or, Remainder, Sha2, ShiftLeft, ShiftRight, Signum, Sin, Sqrt, StartsWith, StringRepeat, StringSpace, StringTrim, StringTrimLeft, StringTrimRight, Substring, Subtract, Tan, Unevaluable, UnscaledValue, Upper, XxHash64, Year}
@@ -79,7 +79,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
-import org.auron.protobuf.PhysicalExprNode
+import org.apache.auron.protobuf.PhysicalExprNode
 
 object NativeConverters extends Logging {
   def udfJsonEnabled: Boolean =
@@ -137,7 +137,7 @@ object NativeConverters extends Logging {
       // decimal
       case t: DecimalType =>
         arrowTypeBuilder.setDECIMAL(
-          org.auron.protobuf.Decimal
+          org.apache.auron.protobuf.Decimal
             .newBuilder()
             .setWhole(Math.max(t.precision, 1))
             .setFractional(t.scale)
@@ -146,7 +146,7 @@ object NativeConverters extends Logging {
       // array/list
       case a: ArrayType =>
         arrowTypeBuilder.setLIST(
-          org.auron.protobuf.List
+          org.apache.auron.protobuf.List
             .newBuilder()
             .setFieldType(
               pb.Field
@@ -158,7 +158,7 @@ object NativeConverters extends Logging {
 
       case m: MapType =>
         arrowTypeBuilder.setMAP(
-          org.auron.protobuf.Map
+          org.apache.auron.protobuf.Map
             .newBuilder()
             .setKeyType(
               pb.Field
@@ -175,7 +175,7 @@ object NativeConverters extends Logging {
             .build())
       case s: StructType =>
         arrowTypeBuilder.setSTRUCT(
-          org.auron.protobuf.Struct
+          org.apache.auron.protobuf.Struct
             .newBuilder()
             .addAllSubFieldTypes(
               s.fields

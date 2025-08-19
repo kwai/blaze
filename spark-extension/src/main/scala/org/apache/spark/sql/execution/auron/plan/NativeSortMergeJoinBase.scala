@@ -37,10 +37,10 @@ import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.LeftAnti
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.execution.BinaryExecNode
-import org.auron.protobuf.JoinOn
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.SortMergeJoinExecNode
-import org.auron.protobuf.SortOptions
+import org.apache.auron.protobuf.JoinOn
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.SortMergeJoinExecNode
+import org.apache.auron.protobuf.SortOptions
 
 abstract class NativeSortMergeJoinBase(
     override val left: SparkPlan,

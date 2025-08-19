@@ -16,7 +16,7 @@
  */
 package org.apache.spark.sql.auron
 
-import org.auron.sparkverEnableMembers
+import org.apache.auron.sparkverEnableMembers
 
 @sparkverEnableMembers("3.5")
 class AuronAdaptiveQueryExecSuite

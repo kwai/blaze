@@ -27,7 +27,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.aggregate.BaseAggregateExec
 import org.apache.spark.sql.execution.auron.plan.NativeAggBase.AggExecMode
 import org.apache.spark.sql.types.BinaryType
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case class NativeAggExec(
     execMode: AggExecMode,

@@ -35,10 +35,10 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-import org.auron.protobuf.PhysicalExprNode
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.PhysicalSortExprNode
-import org.auron.protobuf.SortExecNode
+import org.apache.auron.protobuf.PhysicalExprNode
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.PhysicalSortExprNode
+import org.apache.auron.protobuf.SortExecNode
 import org.apache.spark.sql.auron.NativeSupports
 
 abstract class NativeSortBase(

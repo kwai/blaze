@@ -34,9 +34,9 @@ import org.apache.spark.sql.auron.NativeHelper
 import org.apache.spark.sql.execution.auron.arrowio.ArrowFFIExporter
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.OneToOneDependency
-import org.auron.protobuf.FFIReaderExecNode
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.Schema
+import org.apache.auron.protobuf.FFIReaderExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.Schema
 import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.auron.Shims
 import org.apache.spark.sql.catalyst.expressions.SortOrder

@@ -41,8 +41,8 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
-import org.auron.{protobuf => pb}
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.{protobuf => pb}
+import org.apache.auron.protobuf.PhysicalPlanNode
 
 import com.google.protobuf.ByteString
 

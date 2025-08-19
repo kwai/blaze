@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.execution.FileSourceScanExec

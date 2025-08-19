@@ -30,9 +30,9 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
-import org.auron.protobuf.ExpandExecNode
-import org.auron.protobuf.ExpandProjection
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.ExpandExecNode
+import org.apache.auron.protobuf.ExpandProjection
+import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.spark.sql.auron.NativeSupports
 
 abstract class NativeExpandBase(

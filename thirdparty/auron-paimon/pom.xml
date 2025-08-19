@@ -3,18 +3,18 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.auron</groupId>
-    <artifactId>auron-engine_${scalaVersion}</artifactId>
-    <version>${revision}</version>
+    <groupId>org.apache.auron</groupId>
+    <artifactId>auron-parent_${scalaVersion}</artifactId>
+    <version>${project.version}</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
-  <groupId>org.auron</groupId>
+  <groupId>org.apache.auron</groupId>
   <artifactId>auron-paimon_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
     <dependency>
-      <groupId>org.auron</groupId>
+      <groupId>org.apache.auron</groupId>
       <artifactId>spark-extension_${scalaVersion}</artifactId>
       <version>${project.version}</version>
     </dependency>

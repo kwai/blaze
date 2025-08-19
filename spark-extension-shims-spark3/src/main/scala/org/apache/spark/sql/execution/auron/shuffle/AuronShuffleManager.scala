@@ -22,7 +22,7 @@ import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.shuffle.sort.SortShuffleManager.canUseBatchFetch
 import org.apache.spark.sql.execution.auron.shuffle.AuronShuffleDependency.isArrowShuffle
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 class AuronShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
   val sortShuffleManager = new SortShuffleManager(conf)

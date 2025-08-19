@@ -31,7 +31,7 @@ import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.BinaryExecNode
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 
 abstract class NativeShuffledHashJoinBase(
     override val left: SparkPlan,

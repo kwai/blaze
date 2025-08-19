@@ -24,7 +24,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case class NativeParquetInsertIntoHiveTableExec(
     cmd: InsertIntoHiveTable,

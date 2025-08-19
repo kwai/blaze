@@ -3,9 +3,9 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.auron</groupId>
-    <artifactId>auron-engine_${scalaVersion}</artifactId>
-    <version>${revision}</version>
+    <groupId>org.apache.auron</groupId>
+    <artifactId>auron-parent_${scalaVersion}</artifactId>
+    <version>${project.version}</version>
     <relativePath>../../../pom.xml</relativePath>
   </parent>
   <artifactId>assembly</artifactId>
@@ -17,14 +17,14 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.auron</groupId>
+      <groupId>org.apache.auron</groupId>
       <artifactId>spark-extension_${scalaVersion}</artifactId>
-      <version>${revision}</version>
+      <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.auron</groupId>
+      <groupId>org.apache.auron</groupId>
       <artifactId>${shimPkg}_${scalaVersion}</artifactId>
-      <version>${revision}</version>
+      <version>${project.version}</version>
     </dependency>
   </dependencies>
 
@@ -109,7 +109,7 @@
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/auron-engine-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${revision}.jar</outputFile>
+              <outputFile>../../../target/auron-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${project.version}.jar</outputFile>
             </configuration>
           </execution>
         </executions>
@@ -130,9 +130,9 @@
       <id>celeborn</id>
       <dependencies>
         <dependency>
-          <groupId>org.auron</groupId>
+          <groupId>org.apache.auron</groupId>
           <artifactId>auron-celeborn_${scalaVersion}</artifactId>
-          <version>${revision}</version>
+          <version>${project.version}</version>
         </dependency>
       </dependencies>
     </profile>
@@ -141,9 +141,9 @@
       <id>uniffle</id>
       <dependencies>
         <dependency>
-          <groupId>org.auron</groupId>
+          <groupId>org.apache.auron</groupId>
           <artifactId>auron-uniffle_${scalaVersion}</artifactId>
-          <version>${revision}</version>
+          <version>${project.version}</version>
         </dependency>
       </dependencies>
     </profile>
@@ -152,9 +152,9 @@
       <id>paimon</id>
       <dependencies>
         <dependency>
-          <groupId>org.auron</groupId>
+          <groupId>org.apache.auron</groupId>
           <artifactId>auron-paimon_${scalaVersion}</artifactId>
-          <version>${revision}</version>
+          <version>${project.version}</version>
         </dependency>
       </dependencies>
     </profile>

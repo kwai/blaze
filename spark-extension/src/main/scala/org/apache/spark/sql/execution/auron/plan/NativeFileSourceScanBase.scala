@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.broadcast.Broadcast
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.auron.JniBridge
 import org.apache.spark.sql.auron.NativeConverters

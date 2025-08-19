@@ -18,7 +18,7 @@ package org.apache.spark.sql.execution.auron.plan
 
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.SparkPlan
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case class NativeFilterExec(condition: Expression, override val child: SparkPlan)
     extends NativeFilterBase(condition, child) {
