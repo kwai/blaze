@@ -45,8 +45,8 @@ jobs:
         id: cache
         uses: actions/cache@v3
         with:
-          path: target-docker/auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
-          key: auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          path: target-docker/auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT.jar
+          key: auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT.jar
 
       - uses: ScribeMD/rootless-docker@0.2.2
         if: steps.cache.outputs.cache-hit != 'true'
@@ -64,6 +64,6 @@ jobs:
       - name: Upload auron-engine-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
-          path: target-docker/auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.blazever }}-SNAPSHOT.jar
+          name: auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          path: target-docker/auron-engine-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT.jar
           overwrite: true
