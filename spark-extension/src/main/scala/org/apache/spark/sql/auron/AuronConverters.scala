@@ -142,11 +142,13 @@ object AuronConverters extends Logging {
     extConvertProviders.exists(_.isSupported(exec))
   }
 
+  // format: off
   // scalafix:off
   // necessary imports for cross spark versions build
   import org.apache.spark.sql.catalyst.plans._
   import org.apache.spark.sql.catalyst.optimizer._
   // scalafix:on
+  // format: on
 
   def convertSparkPlanRecursively(exec: SparkPlan): SparkPlan = {
     // convert
