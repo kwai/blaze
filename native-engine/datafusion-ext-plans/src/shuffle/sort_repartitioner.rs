@@ -14,7 +14,6 @@
 // limitations under the License.
 
 use std::{
-    fs::OpenOptions,
     io::{Read, Write},
     sync::{Arc, Weak},
 };
@@ -39,7 +38,7 @@ use crate::{
         MemConsumer, MemConsumerInfo, MemManager,
         spill::{OwnedSpillBufReader, Spill, try_new_spill},
     },
-    shuffle::{Partitioning, ShuffleRepartitioner, buffered_data::BufferedData},
+    shuffle::{Partitioning, ShuffleRepartitioner, buffered_data::BufferedData, open_shuffle_file},
 };
 
 pub struct SortShuffleRepartitioner {
@@ -171,16 +170,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
                 let output_io_time_cloned = output_io_time.clone();
                 let _output_io_timer = output_io_time_cloned.timer();
 
-                let mut output_data = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&data_file)?;
-                let mut output_index = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&index_file)?;
+                let mut output_data = open_shuffle_file(&data_file)?;
+                let mut output_index = open_shuffle_file(&index_file)?;
 
                 // write data file
                 // exclude io timer because it is already included buffered_data.write()
@@ -228,16 +219,8 @@ impl ShuffleRepartitioner for SortShuffleRepartitioner {
         let output_io_time = self.output_io_time.clone();
         tokio::task::spawn_blocking(move || {
             let _output_io_timer = output_io_time.timer();
-            let mut output_data = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&data_file)?;
-            let mut output_index = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&index_file)?;
+            let mut output_data = open_shuffle_file(&data_file)?;
+            let mut output_index = open_shuffle_file(&index_file)?;
 
             let mut merge_iter = OffsettedMergeIterator::new(
                 num_output_partitions,

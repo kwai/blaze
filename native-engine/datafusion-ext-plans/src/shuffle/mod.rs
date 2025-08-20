@@ -15,6 +15,9 @@
 
 use std::{
     fmt,
+    fs::{File, OpenOptions},
+    os::unix::fs::PermissionsExt,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -273,4 +276,19 @@ fn binary_search(rows: &Arc<Rows>, target: Row, from_index: isize, to_index: isi
         }
     }
     return low as usize; // key not found.
+}
+
+pub fn open_shuffle_file<P: AsRef<Path>>(path: P) -> std::io::Result<File> {
+    let path_ref = path.as_ref();
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path_ref)?;
+
+    // Set the shuffle file permissions to 0644 to keep it consistent with the
+    // permissions of the built-in shuffler manager in Spark.
+    std::fs::set_permissions(path_ref, std::fs::Permissions::from_mode(0o644))?;
+
+    Ok(file)
 }
