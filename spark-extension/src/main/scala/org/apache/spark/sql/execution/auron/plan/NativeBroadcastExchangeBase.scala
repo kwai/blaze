@@ -64,6 +64,7 @@ import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.types.BinaryType
+
 import org.apache.auron.{protobuf => pb}
 
 abstract class NativeBroadcastExchangeBase(mode: BroadcastMode, override val child: SparkPlan)

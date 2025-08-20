@@ -26,6 +26,7 @@ import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FilePartition
+
 import org.apache.auron.{protobuf => pb}
 
 abstract class NativeOrcScanBase(basedFileScan: FileSourceScanExec)

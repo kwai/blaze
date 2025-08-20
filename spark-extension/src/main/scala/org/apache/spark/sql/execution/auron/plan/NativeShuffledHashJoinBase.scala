@@ -19,9 +19,6 @@ package org.apache.spark.sql.execution.auron.plan
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
-import org.apache.spark.sql.catalyst.plans.RightOuter
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeConverters
@@ -30,7 +27,11 @@ import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.plans.RightOuter
 import org.apache.spark.sql.execution.BinaryExecNode
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.metric.SQLMetric
+
 import org.apache.auron.{protobuf => pb}
 
 abstract class NativeShuffledHashJoinBase(

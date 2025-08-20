@@ -19,10 +19,12 @@ package org.apache.spark.sql.execution.auron.plan
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 
+import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeConverters
-import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.auron.NativeHelper
+import org.apache.spark.sql.auron.NativeRDD
+import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.NullsFirst
@@ -34,12 +36,11 @@ import org.apache.spark.sql.catalyst.plans.physical.UnspecifiedDistribution
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.OneToOneDependency
+
 import org.apache.auron.protobuf.PhysicalExprNode
 import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.auron.protobuf.PhysicalSortExprNode
 import org.apache.auron.protobuf.SortExecNode
-import org.apache.spark.sql.auron.NativeSupports
 
 abstract class NativeSortBase(
     sortOrder: Seq[SortOrder],

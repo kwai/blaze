@@ -17,41 +17,43 @@
 package org.apache.spark.sql.auron
 
 import java.io.File
+
 import org.apache.spark.ShuffleDependency
-import org.apache.spark.TaskContext
 import org.apache.spark.SparkContext
-import org.apache.auron.{protobuf => pb}
+import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.Generator
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.auron.plan._
-import org.apache.spark.sql.execution.auron.shuffle.RssPartitionWriterBase
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
-import org.apache.spark.sql.SQLContext
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.Generator
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.auron.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.auron.plan.NativeSortMergeJoinBase
+import org.apache.spark.sql.execution.auron.shuffle.RssPartitionWriterBase
+import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.types.DataType
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
+
+import org.apache.auron.{protobuf => pb}
 
 abstract class Shims {
 

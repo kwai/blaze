@@ -24,14 +24,14 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.apache.auron.protobuf.PhysicalPlanNode
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
+
+import org.apache.auron.protobuf.PhysicalPlanNode
 
 object NativeHelper extends Logging {
   val currentUser: UserGroupInformation = UserGroupInformation.getCurrentUser

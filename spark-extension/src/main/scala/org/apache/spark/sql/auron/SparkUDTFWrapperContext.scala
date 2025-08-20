@@ -26,10 +26,10 @@ import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvid
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.auron.util.Using
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Generator
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.Nondeterministic
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.ROOT_ALLOCATOR

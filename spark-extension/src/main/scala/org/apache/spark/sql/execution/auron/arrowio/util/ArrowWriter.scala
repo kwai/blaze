@@ -106,7 +106,7 @@ class ArrowWriter(val root: VectorSchemaRoot, fields: Array[ArrowFieldWriter]) {
   }
 }
 
-private[sql] abstract class ArrowFieldWriter {
+abstract private[sql] class ArrowFieldWriter {
 
   def valueVector: ValueVector
 

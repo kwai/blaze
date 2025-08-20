@@ -23,7 +23,7 @@ import org.apache.spark.sql.execution.SparkPlan
 trait NativeSupports extends SparkPlan {
   protected def doExecuteNative(): NativeRDD
 
-  protected override def doExecute(): RDD[InternalRow] = doExecuteNative()
+  override protected def doExecute(): RDD[InternalRow] = doExecuteNative()
 
   def executeNative(): NativeRDD = executeQuery {
     doExecuteNative()

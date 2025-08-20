@@ -17,12 +17,14 @@
 package org.apache.spark.sql.auron
 
 import java.util.ServiceLoader
+
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+import org.apache.spark.Partition
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.auron.AuronConvertStrategy.childOrderingRequiredTag
@@ -32,34 +34,51 @@ import org.apache.spark.sql.auron.AuronConvertStrategy.convertToNonNativeTag
 import org.apache.spark.sql.auron.AuronConvertStrategy.isNeverConvert
 import org.apache.spark.sql.auron.AuronConvertStrategy.joinSmallerSideTag
 import org.apache.spark.sql.auron.NativeConverters.{roundRobinTypeSupported, scalarTypeSupported, StubExpr}
+import org.apache.spark.sql.auron.util.AuronLogUtils.logDebugPlanConversion
+import org.apache.spark.sql.catalyst.expressions.AggregateWindowFunction
 import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
-import org.apache.spark.sql.catalyst.expressions.aggregate.Final
-import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.expressions.WindowExpression
+import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
-import org.apache.spark.sql.catalyst.expressions.Ascending
-import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.expressions.aggregate.Final
+import org.apache.spark.sql.catalyst.expressions.aggregate.Partial
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
-import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
-import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.physical.RangePartitioning
+import org.apache.spark.sql.catalyst.plans.physical.RoundRobinPartitioning
+import org.apache.spark.sql.execution.ExpandExec
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.FilterExec
+import org.apache.spark.sql.execution.GenerateExec
 import org.apache.spark.sql.execution.GlobalLimitExec
+import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.LocalLimitExec
+import org.apache.spark.sql.execution.LocalTableScanExec
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.SortExec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.TakeOrderedAndProjectExec
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.UnionExec
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
+import org.apache.spark.sql.execution.aggregate.SortAggregateExec
+import org.apache.spark.sql.execution.auron.plan.BroadcastLeft
+import org.apache.spark.sql.execution.auron.plan.BroadcastRight
+import org.apache.spark.sql.execution.auron.plan.ConvertToNativeBase
 import org.apache.spark.sql.execution.auron.plan.NativeAggBase
+import org.apache.spark.sql.execution.auron.plan.NativeBroadcastExchangeBase
+import org.apache.spark.sql.execution.auron.plan.NativeOrcScanBase
+import org.apache.spark.sql.execution.auron.plan.NativeParquetScanBase
+import org.apache.spark.sql.execution.auron.plan.NativeSortBase
 import org.apache.spark.sql.execution.auron.plan.NativeUnionBase
 import org.apache.spark.sql.execution.auron.plan.Util
 import org.apache.spark.sql.execution.command.DataWritingCommandExec
@@ -67,30 +86,13 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins._
 import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.execution.ExpandExec
-import org.apache.spark.sql.execution.aggregate.SortAggregateExec
-import org.apache.spark.sql.execution.auron.plan.NativeBroadcastExchangeBase
-import org.apache.spark.sql.execution.GenerateExec
-import org.apache.spark.sql.execution.LocalTableScanExec
-import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.auron.plan.BroadcastLeft
-import org.apache.spark.sql.execution.auron.plan.BroadcastRight
-import org.apache.spark.sql.execution.auron.plan.ConvertToNativeBase
-import org.apache.spark.sql.execution.auron.plan.NativeOrcScanBase
-import org.apache.spark.sql.execution.auron.plan.NativeParquetScanBase
-import org.apache.spark.sql.execution.auron.plan.NativeSortBase
-import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
 import org.apache.spark.sql.hive.execution.auron.plan.NativeHiveTableScanBase
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.LongType
-import org.apache.spark.Partition
-import org.apache.spark.sql.auron.util.AuronLogUtils.logDebugPlanConversion
-import org.apache.spark.sql.catalyst.expressions.AggregateWindowFunction
+
 import org.apache.auron.protobuf.EmptyPartitionsExecNode
 import org.apache.auron.protobuf.PhysicalPlanNode
-import org.apache.spark.sql.catalyst.expressions.WindowExpression
-import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.auron.sparkver
 
 object AuronConverters extends Logging {

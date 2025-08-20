@@ -16,9 +16,10 @@
  */
 package org.apache.spark.sql.execution.auron.shuffle
 
-import java.io.{FileInputStream, IOException, InputStream}
+import java.io.{FileInputStream, InputStream, IOException}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, ReadableByteChannel}
+
 import org.apache.commons.lang3.reflect.{FieldUtils, MethodUtils}
 import org.apache.spark.{InterruptibleIterator, ShuffleDependency, TaskContext}
 import org.apache.spark.internal.Logging

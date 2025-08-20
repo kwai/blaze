@@ -16,30 +16,31 @@
  */
 package org.apache.spark.sql.execution.auron.plan
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
+import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeConverters
-import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.auron.NativeHelper
+import org.apache.spark.sql.auron.NativeRDD
+import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.analysis.ResolvedStar
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.auron.plan.NativeProjectBase.getNativeProjectBuilder
-import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.execution.metric.SQLMetric
+
+import org.apache.auron.protobuf.ArrowType
 import org.apache.auron.protobuf.PhysicalExprNode
 import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.auron.protobuf.ProjectionExecNode
-import org.apache.spark.sql.auron.NativeSupports
-import org.apache.spark.sql.catalyst.expressions.SortOrder
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.auron.protobuf.ArrowType
 
 abstract class NativeProjectBase(projectList: Seq[NamedExpression], override val child: SparkPlan)
     extends UnaryExecNode

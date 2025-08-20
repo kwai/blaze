@@ -16,8 +16,8 @@
  */
 package org.apache.spark.sql.auron.util
 
-import scala.util.control.{ControlThrowable, NonFatal}
 import scala.util.Try
+import scala.util.control.{ControlThrowable, NonFatal}
 
 /**
  * A utility for performing automatic resource management. It can be used to perform an operation
@@ -226,7 +226,7 @@ object Using {
      */
     def apply[A](op: Manager => A): Try[A] = Try { (new Manager).manage(op) }
 
-    private final class Resource[R](resource: R)(implicit releasable: Releasable[R]) {
+    final private class Resource[R](resource: R)(implicit releasable: Releasable[R]) {
       def release(): Unit = releasable.release(resource)
     }
   }
