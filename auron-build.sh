@@ -158,7 +158,7 @@ if [[ "$PRE_PROFILE" == true ]]; then
     BUILD_ARGS=("${BUILD_ARGS[@]}" "-Ppre")
 fi
 if [[ "$RELEASE_PROFILE" == true ]]; then
-    BUILD_ARGS+=" -Prelease"
+    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Prelease")
 fi
 if [[ -n "$SPARK_VER" ]]; then
     BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pspark-$SPARK_VER")
