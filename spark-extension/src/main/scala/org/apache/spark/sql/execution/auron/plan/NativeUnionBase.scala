@@ -31,11 +31,11 @@ import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.auron.protobuf.EmptyPartitionsExecNode
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.Schema
-import org.auron.protobuf.UnionExecNode
-import org.auron.protobuf.UnionInput
+import org.apache.auron.protobuf.EmptyPartitionsExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.Schema
+import org.apache.auron.protobuf.UnionExecNode
+import org.apache.auron.protobuf.UnionInput
 
 abstract class NativeUnionBase(
     override val children: Seq[SparkPlan],

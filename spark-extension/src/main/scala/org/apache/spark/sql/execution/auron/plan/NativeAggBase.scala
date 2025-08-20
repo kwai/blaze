@@ -46,7 +46,7 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.DataType
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.sql.catalyst.expressions.ExprId
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.expressions.SortOrder

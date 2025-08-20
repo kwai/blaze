@@ -20,7 +20,7 @@ import java.io.File
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.apache.spark.SparkContext
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.IndexShuffleBlockResolver

@@ -52,9 +52,9 @@ import org.apache.spark.sql.hive.auron.HiveClientHelper
 import org.apache.spark.util.SerializableConfiguration
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.execution.UnaryExecNode
-import org.auron.protobuf.ParquetProp
-import org.auron.protobuf.ParquetSinkExecNode
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.ParquetProp
+import org.apache.auron.protobuf.ParquetSinkExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 
 abstract class NativeParquetSinkBase(
     sparkSession: SparkSession,

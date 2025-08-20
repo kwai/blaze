@@ -43,9 +43,9 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.ShutdownHookManager
 import org.apache.spark.util.Utils
-import org.auron.protobuf.PartitionId
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.TaskDefinition
+import org.apache.auron.protobuf.PartitionId
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.TaskDefinition
 
 case class AuronCallNativeWrapper(
     nativePlan: PhysicalPlanNode,

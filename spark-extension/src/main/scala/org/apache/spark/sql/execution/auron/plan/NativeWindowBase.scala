@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 import org.apache.spark.sql.catalyst.expressions.DenseRank
 import org.apache.spark.sql.catalyst.expressions.RowNumber
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
@@ -48,7 +48,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.expressions.aggregate.Max
 import org.apache.spark.sql.catalyst.expressions.aggregate.Min
 import org.apache.spark.sql.catalyst.expressions.aggregate.Sum
-import org.auron.protobuf.WindowGroupLimit
+import org.apache.auron.protobuf.WindowGroupLimit
 
 abstract class NativeWindowBase(
     windowExpression: Seq[NamedExpression],

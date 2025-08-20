@@ -86,12 +86,12 @@ import org.apache.spark.sql.types.LongType
 import org.apache.spark.Partition
 import org.apache.spark.sql.auron.util.AuronLogUtils.logDebugPlanConversion
 import org.apache.spark.sql.catalyst.expressions.AggregateWindowFunction
-import org.auron.protobuf.EmptyPartitionsExecNode
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.EmptyPartitionsExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.spark.sql.catalyst.expressions.WindowExpression
 import org.apache.spark.sql.catalyst.expressions.WindowSpecDefinition
 import org.apache.spark.sql.internal.SQLConf
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 object AuronConverters extends Logging {
   def enableScan: Boolean =

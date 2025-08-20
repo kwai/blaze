@@ -24,7 +24,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{IndexShuffleBlockResolver, ShuffleWriteMetricsReporter, ShuffleWriter}
 import org.apache.spark.sql.auron.{NativeHelper, NativeRDD, Shims}
-import org.auron.protobuf.{PhysicalPlanNode, ShuffleWriterExecNode}
+import org.apache.auron.protobuf.{PhysicalPlanNode, ShuffleWriterExecNode}
 
 abstract class AuronShuffleWriterBase[K, V](metrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]

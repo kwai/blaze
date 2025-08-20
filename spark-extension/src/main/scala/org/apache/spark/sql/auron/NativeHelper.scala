@@ -24,7 +24,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config

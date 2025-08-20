@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>org.auron</groupId>
-  <artifactId>auron-engine_${scalaVersion}</artifactId>
-  <version>${revision}</version>
+
+  <parent>
+    <groupId>org.apache</groupId>
+    <artifactId>apache</artifactId>
+    <version>35</version>
+  </parent>
+
+  <groupId>org.apache.auron</groupId>
+  <artifactId>auron-parent_${scalaVersion}</artifactId>
+  <version>${project.version}</version>
   <packaging>pom</packaging>
 
   <modules>
@@ -16,7 +23,7 @@
   </modules>
 
   <properties>
-    <revision>5.0.0-SNAPSHOT</revision>
+    <project.version>5.0.0-SNAPSHOT</project.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
     <protobufVersion>3.21.9</protobufVersion>

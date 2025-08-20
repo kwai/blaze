@@ -20,7 +20,7 @@ import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
 import org.apache.spark.sql.execution.auron.shuffle.AuronShuffleDependency.isArrowShuffle
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 abstract class AuronRssShuffleManagerBase(_conf: SparkConf) extends ShuffleManager with Logging {
   override def registerShuffle[K, V, C](

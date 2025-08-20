@@ -91,8 +91,8 @@ jobs:
       - name: Upload ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
-          path: target/auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
+          name: auron-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          path: target/auron-${{ inputs.sparkver }}_${{ inputs.scalaver }}-pre-*-SNAPSHOT.jar
           overwrite: true
 
   run-tpcds-test:
@@ -133,7 +133,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: auron-engine-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
+          name: auron-${{ inputs.sparkver }}_${{ inputs.scalaver }}-jdk-${{ inputs.javaver }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -148,7 +148,7 @@ jobs:
       - name: Install Auron JAR
         run: |
           ls -la
-          cp auron-engine-*${{ inputs.sparkver }}_${{ inputs.scalaver }}*.jar spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}/jars/
+          cp auron-*${{ inputs.sparkver }}_${{ inputs.scalaver }}*.jar spark-bin-${{ inputs.sparkver }}_${{ inputs.scalaver }}/jars/
 
       - uses: actions/setup-java@v4
         with:

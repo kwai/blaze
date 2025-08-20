@@ -38,7 +38,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case class NativeShuffleExchangeExec(
     override val outputPartitioning: Partitioning,

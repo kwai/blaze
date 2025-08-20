@@ -32,9 +32,9 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-import org.auron.protobuf.FilterExecNode
-import org.auron.protobuf.PhysicalExprNode
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.FilterExecNode
+import org.apache.auron.protobuf.PhysicalExprNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.And
 import org.apache.spark.sql.catalyst.expressions.AttributeReference

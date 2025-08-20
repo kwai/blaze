@@ -42,7 +42,7 @@ import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.hive.auron.PaimonUtil
 import org.apache.spark.sql.hive.execution.HiveTableScanExec
 import org.apache.spark.sql.types.StructType
-import org.auron.{protobuf => pb}
+import org.apache.auron.{protobuf => pb}
 
 case class NativePaimonTableScanExec(basedHiveScan: HiveTableScanExec)
     extends NativeHiveTableScanBase(basedHiveScan)

@@ -29,8 +29,8 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.auron.plan.NativeRenameColumnsBase.buildRenameColumnsExec
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.RenameColumnsExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.RenameColumnsExecNode
 
 import org.apache.spark.sql.auron.NativeSupports
 

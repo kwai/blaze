@@ -28,7 +28,7 @@ import org.apache.spark.Partition
 import org.apache.spark.Partitioner
 import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 
 class NativeRDD(
     @transient private val rddSparkContext: SparkContext,

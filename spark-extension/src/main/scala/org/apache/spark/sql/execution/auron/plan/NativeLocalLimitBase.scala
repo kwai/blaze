@@ -28,8 +28,8 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.OneToOneDependency
-import org.auron.protobuf.LimitExecNode
-import org.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.LimitExecNode
+import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.spark.sql.auron.NativeSupports
 
 abstract class NativeLocalLimitBase(limit: Long, override val child: SparkPlan)

@@ -22,7 +22,7 @@ import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.auron.plan.BuildSide
 import org.apache.spark.sql.execution.auron.plan.NativeShuffledHashJoinBase
 import org.apache.spark.sql.execution.joins.HashJoin
-import org.auron.sparkver
+import org.apache.auron.sparkver
 
 case object NativeShuffledHashJoinExecProvider {
 

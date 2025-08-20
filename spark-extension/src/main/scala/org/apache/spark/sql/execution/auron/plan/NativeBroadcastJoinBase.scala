@@ -41,8 +41,8 @@ import org.apache.spark.sql.execution.BinaryExecNode
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.HashedRelationBroadcastMode
 import org.apache.spark.sql.types.LongType
-import org.auron.{protobuf => pb}
-import org.auron.protobuf.JoinOn
+import org.apache.auron.{protobuf => pb}
+import org.apache.auron.protobuf.JoinOn
 
 abstract class NativeBroadcastJoinBase(
     override val left: SparkPlan,

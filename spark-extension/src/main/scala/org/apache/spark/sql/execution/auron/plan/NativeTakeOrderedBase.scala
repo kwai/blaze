@@ -39,11 +39,11 @@ import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.auron.Shims
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
-import org.auron.protobuf.FetchLimit
-import org.auron.protobuf.PhysicalExprNode
-import org.auron.protobuf.PhysicalPlanNode
-import org.auron.protobuf.PhysicalSortExprNode
-import org.auron.protobuf.SortExecNode
+import org.apache.auron.protobuf.FetchLimit
+import org.apache.auron.protobuf.PhysicalExprNode
+import org.apache.auron.protobuf.PhysicalPlanNode
+import org.apache.auron.protobuf.PhysicalSortExprNode
+import org.apache.auron.protobuf.SortExecNode
 
 abstract class NativeTakeOrderedBase(
     limit: Long,
