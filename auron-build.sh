@@ -21,11 +21,12 @@ print_help() {
     echo "  --release       → -Prelease"
     echo "  --sparkver 3.5  → -Pspark-3.5"
     echo "  --celeborn 0.5  → -Pceleborn,celeborn-0.5"
+    echo "  --uniffle 0.9   → -Puniffle,uniffle-0.9"
     echo "  --paimon 1.1    → -Ppaimon,paimon-1.1"
     echo
     echo "Examples:"
-    echo "  $0 --pre --sparkver 3.5"
-    echo "  $0 --release --celeborn 0.5 --paimon 1.1"
+    echo "  $0 --pre --sparkver 3.5 --scalaver 2.13"
+    echo "  $0 --release --sparkver 3.5 --scalaver 2.13 --celeborn 0.5 --uniffle 0.9 --paimon 1.1"
     exit 0
 }
 
@@ -119,7 +120,7 @@ done
 
 # Validate requirements
 if [[ "$PRE_PROFILE" == false && "$RELEASE_PROFILE" == false ]]; then
-    MISSING_REQUIREMENTS+=("One of --pre or --release must be specified")
+    MISSING_REQUIREMENTS+=("--pre or --release must be specified")
 fi
 
 if [[ -z "$SPARK_VER" ]]; then
@@ -166,11 +167,11 @@ fi
 if [[ -n "$SCALA_VER" ]]; then
     BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pscala-$SCALA_VER")
 fi
-if [[ -n "$UNIFFLE_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Puniffle,uniffle-$CELEBORN_VER")
-fi
 if [[ -n "$CELEBORN_VER" ]]; then
     BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pceleborn,celeborn-$CELEBORN_VER")
+fi
+if [[ -n "$UNIFFLE_VER" ]]; then
+    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Puniffle,uniffle-$UNIFFLE_VER")
 fi
 if [[ -n "$PAIMON_VER" ]]; then
     BUILD_ARGS=("${BUILD_ARGS[@]}" "-Ppaimon,paimon-$PAIMON_VER")
@@ -178,5 +179,5 @@ fi
 MVN_ARGS=("${CLEAN_ARGS[@]}" "${BUILD_ARGS[@]}")
 
 # Execute Maven command
-echo "Compiling with maven args: ${MVN_ARGS[@]}"
+echo "Compiling with maven args: $MVN_CMD ${MVN_ARGS[@]}"
 "$MVN_CMD" "${MVN_ARGS[@]}"
