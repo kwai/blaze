@@ -15,15 +15,23 @@
 # limitations under the License.
 #
 
-[package]
-name = "auron-jni-bridge"
-version = "0.1.0"
-edition = "2024"
-resolver = "1"
-
-[dependencies]
-datafusion = { workspace = true }
-jni = { workspace = true }
-log = { workspace = true }
-once_cell = { workspace = true }
-paste = { workspace = true }
+**/.*/**
+**/*.json
+**/*.prefs
+**/*.log
+**/*.md
+**/*.iml
+**/target/**
+**/out/**
+**/spark-warehouse/**
+**/metastore_db/**
+**/licenses/LICENSE*
+**/licenses-binary/LICENSE*
+**/dependency-reduced-pom.xml
+**/scalastyle-output.xml
+NOTICE*
+docs/**
+build/apache-maven-*/**
+# TODO: remove tool kit code
+tpcds/**
+dev/testenv/**
