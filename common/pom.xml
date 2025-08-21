@@ -25,15 +25,10 @@
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.apache.auron</groupId>
-  <artifactId>spark-version-annotation-macros_${scalaVersion}</artifactId>
+  <artifactId>auron-common_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
   <dependencies>
-    <dependency>
-      <groupId>org.apache.auron</groupId>
-      <artifactId>auron-common_${scalaVersion}</artifactId>
-      <version>${project.version}</version>
-    </dependency>
     <dependency>
       <groupId>org.scala-lang</groupId>
       <artifactId>scala-library</artifactId>
@@ -47,6 +42,11 @@
     <dependency>
       <groupId>org.scala-lang</groupId>
       <artifactId>scala-reflect</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-core_${scalaVersion}</artifactId>
       <scope>provided</scope>
     </dependency>
   </dependencies>
@@ -66,35 +66,22 @@
           </execution>
         </executions>
       </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>templating-maven-plugin</artifactId>
+        <version>${maven.plugin.templating.version}</version>
+        <executions>
+          <execution>
+            <id>filter-src</id>
+            <goals>
+              <goal>filter-sources</goal>
+            </goals>
+            <configuration>
+              <sourceDirectory>src/main/templates</sourceDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
-
-  <profiles>
-    <profile>
-      <id>scala-2.12</id>
-      <activation>
-        <property>
-          <name>scalaVersion</name>
-          <value>2.12</value>
-        </property>
-      </activation>
-      <dependencies>
-        <dependency>
-          <groupId>org.scalamacros</groupId>
-          <artifactId>paradise_${scalaLongVersion}</artifactId>
-          <version>${scalamacros.paradise.version}</version>
-          <exclusions>
-            <exclusion>
-              <groupId>org.scala-lang</groupId>
-              <artifactId>scala-compiler</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.scala-lang</groupId>
-              <artifactId>scala-reflect</artifactId>
-            </exclusion>
-          </exclusions>
-        </dependency>
-      </dependencies>
-    </profile>
-  </profiles>
 </project>
