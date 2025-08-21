@@ -584,16 +584,6 @@
     </profile>
 
     <profile>
-      <id>celeborn-base</id>
-      <activation>
-        <property>
-          <name>celebornProfileActivated</name>
-          <value>true</value>
-        </property>
-      </activation>
-    </profile>
-
-    <profile>
       <id>celeborn</id>
     </profile>
     <profile>
@@ -609,7 +599,6 @@
         <module>thirdparty/auron-celeborn-0.5</module>
       </modules>
       <properties>
-        <celebornProfileActivated>true</celebornProfileActivated>
         <celebornVersion>0.5.4</celebornVersion>
       </properties>
     </profile>
@@ -620,7 +609,6 @@
         <module>thirdparty/auron-celeborn-0.6</module>
       </modules>
       <properties>
-        <celebornProfileActivated>true</celebornProfileActivated>
         <celebornVersion>0.6.0</celebornVersion>
       </properties>
     </profile>
@@ -631,7 +619,6 @@
         <module>thirdparty/auron-uniffle</module>
       </modules>
       <properties>
-        <uniffleProfileActivated>true</uniffleProfileActivated>
         <uniffleVersion>0.9.2</uniffleVersion>
       </properties>
     </profile>
