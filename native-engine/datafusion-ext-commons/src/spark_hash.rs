@@ -49,17 +49,9 @@ pub fn create_hashes<T: num::PrimInt>(
     seed: T,
     h: impl Fn(&[u8], T) -> T + Copy,
 ) -> Vec<T> {
-    if arrays.is_empty() {
-        return vec![seed; len];
-    }
-    let mut hash_buffer = vec![T::zero(); len];
-
-    // hash first column
-    hash_array(&arrays[0], &mut hash_buffer, seed, true, h);
-
-    // hash rest columns
-    for col in arrays.iter().skip(1) {
-        hash_array(col, &mut hash_buffer, seed, false, h);
+    let mut hash_buffer = vec![seed; len];
+    for col in arrays.iter() {
+        hash_array(col, &mut hash_buffer, h);
     }
     hash_buffer
 }
@@ -68,8 +60,6 @@ pub fn create_hashes<T: num::PrimInt>(
 fn hash_array<T: num::PrimInt>(
     array: &ArrayRef,
     hashes_buffer: &mut [T],
-    initial_seed: T,
-    is_initial: bool,
     h: impl Fn(&[u8], T) -> T + Copy,
 ) {
     assert_eq!(array.len(), hashes_buffer.len());
@@ -83,12 +73,12 @@ fn hash_array<T: num::PrimInt>(
             let array = $column.as_any().downcast_ref::<$array_type>().unwrap();
             if array.null_count() == 0 {
                 for (i, hash) in $hashes.iter_mut().enumerate() {
-                    *hash = $h(&array.value(i).as_ref(), initial_seed_or!(*hash));
+                    *hash = $h(&array.value(i).as_ref(), *hash);
                 }
             } else {
                 for (i, hash) in $hashes.iter_mut().enumerate() {
                     if !array.is_null(i) {
-                        *hash = $h(&array.value(i).as_ref(), initial_seed_or!(*hash));
+                        *hash = $h(&array.value(i).as_ref(), *hash);
                     }
                 }
             }
@@ -102,18 +92,12 @@ fn hash_array<T: num::PrimInt>(
 
             if array.null_count() == 0 {
                 for (hash, value) in $hashes.iter_mut().zip(values.iter()) {
-                    *hash = $h(
-                        (*value as $ty).to_le_bytes().as_ref(),
-                        initial_seed_or!(*hash),
-                    );
+                    *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
                 }
             } else {
                 for (i, (hash, value)) in $hashes.iter_mut().zip(values.iter()).enumerate() {
                     if !array.is_null(i) {
-                        *hash = $h(
-                            (*value as $ty).to_le_bytes().as_ref(),
-                            initial_seed_or!(*hash),
-                        );
+                        *hash = $h((*value as $ty).to_le_bytes().as_ref(), *hash);
                     }
                 }
             }
@@ -126,18 +110,12 @@ fn hash_array<T: num::PrimInt>(
 
             if array.null_count() == 0 {
                 for (i, hash) in $hashes.iter_mut().enumerate() {
-                    *hash = $h(
-                        array.value(i).to_le_bytes().as_ref(),
-                        initial_seed_or!(*hash),
-                    );
+                    *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
                 }
             } else {
                 for (i, hash) in $hashes.iter_mut().enumerate() {
                     if !array.is_null(i) {
-                        *hash = $h(
-                            array.value(i).to_le_bytes().as_ref(),
-                            initial_seed_or!(*hash),
-                        );
+                        *hash = $h(array.value(i).to_le_bytes().as_ref(), *hash);
                     }
                 }
             }
@@ -154,7 +132,7 @@ fn hash_array<T: num::PrimInt>(
                         (if array.value(i) { 1u32 } else { 0u32 })
                             .to_le_bytes()
                             .as_ref(),
-                        initial_seed_or!(*hash),
+                        *hash,
                     );
                 }
             } else {
@@ -164,7 +142,7 @@ fn hash_array<T: num::PrimInt>(
                             (if array.value(i) { 1u32 } else { 0u32 })
                                 .to_le_bytes()
                                 .as_ref(),
-                            initial_seed_or!(*hash),
+                            *hash,
                         );
                     }
                 }
@@ -222,34 +200,10 @@ fn hash_array<T: num::PrimInt>(
             hash_array_decimal!(Decimal128Array, array, hashes_buffer, h);
         }
         DataType::Dictionary(index_type, _) => match index_type.as_ref() {
-            DataType::Int8 => create_hashes_dictionary::<Int8Type, _>(
-                array,
-                hashes_buffer,
-                initial_seed,
-                is_initial,
-                h,
-            ),
-            DataType::Int16 => create_hashes_dictionary::<Int16Type, _>(
-                array,
-                hashes_buffer,
-                initial_seed,
-                is_initial,
-                h,
-            ),
-            DataType::Int32 => create_hashes_dictionary::<Int32Type, _>(
-                array,
-                hashes_buffer,
-                initial_seed,
-                is_initial,
-                h,
-            ),
-            DataType::Int64 => create_hashes_dictionary::<Int64Type, _>(
-                array,
-                hashes_buffer,
-                initial_seed,
-                is_initial,
-                h,
-            ),
+            DataType::Int8 => create_hashes_dictionary::<Int8Type, _>(array, hashes_buffer, h),
+            DataType::Int16 => create_hashes_dictionary::<Int16Type, _>(array, hashes_buffer, h),
+            DataType::Int32 => create_hashes_dictionary::<Int32Type, _>(array, hashes_buffer, h),
+            DataType::Int64 => create_hashes_dictionary::<Int64Type, _>(array, hashes_buffer, h),
             other => panic!("Unsupported dictionary type in hasher hashing: {other}"),
         },
         _ => {
@@ -265,15 +219,9 @@ fn hash_array<T: num::PrimInt>(
 fn create_hashes_dictionary<K: ArrowDictionaryKeyType, T: num::PrimInt>(
     array: &ArrayRef,
     hashes_buffer: &mut [T],
-    initial_seed: T,
-    is_initial: bool,
     h: impl Fn(&[u8], T) -> T + Copy,
 ) {
     let dict_array = array.as_any().downcast_ref::<DictionaryArray<K>>().unwrap();
-
-    if is_initial {
-        hashes_buffer.fill(initial_seed);
-    }
 
     // Hash each dictionary value once, and then use that computed
     // hash for each key value to avoid a potentially expensive
@@ -535,6 +483,34 @@ mod tests {
             -235771157374669727,
         ];
         assert_eq!(hashes, expected);
+    }
+
+    #[test]
+    fn test_list_array() {
+        // Create inner array data: [1, 2, 3, 4, 5, 6]
+        let value_data = ArrayData::builder(DataType::Int32)
+            .len(6)
+            .add_buffer(Buffer::from_slice_ref(
+                &[1i32, 2, 3, 4, 5, 6].to_byte_slice(),
+            ))
+            .build()
+            .unwrap();
+
+        // Create offset array to define list boundaries: [[1, 2], [3, 4, 5], [6]]
+        let list_data_type = DataType::new_list(DataType::Int32, false);
+        let list_data = ArrayData::builder(list_data_type)
+            .len(3)
+            .add_buffer(Buffer::from_slice_ref(&[0i32, 2, 5, 6].to_byte_slice()))
+            .add_child_data(value_data)
+            .build()
+            .unwrap();
+
+        let list_array = ListArray::from(list_data);
+        let array_ref = Arc::new(list_array) as ArrayRef;
+
+        // Test Murmur3 hash
+        let hashes = create_murmur3_hashes(3, &[array_ref.clone()], 42);
+        assert_eq!(hashes, vec![-222940379, -374492525, -331964951]);
     }
 
     #[test]

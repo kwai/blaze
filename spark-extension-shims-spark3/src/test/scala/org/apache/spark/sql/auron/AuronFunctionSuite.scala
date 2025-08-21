@@ -56,4 +56,16 @@ class AuronFunctionSuite extends org.apache.spark.sql.QueryTest with BaseAuronSQ
             "c4e27d35517ca62243c1f322d7922dac175830be4668e8a1cf3befdcd287bb5b6f8c5f041c9d89e4609c8cfa242008c7c7133af1685f57bac9052c1212f1d089")))
     }
   }
+
+  test("spark hash function") {
+    withTable("t1") {
+      sql("create table t1 using parquet as select array(1, 2) as arr")
+      val functions =
+        """
+          |select hash(arr) from t1
+          |""".stripMargin
+      val df = sql(functions)
+      checkAnswer(df, Seq(Row(-222940379)))
+    }
+  }
 }
