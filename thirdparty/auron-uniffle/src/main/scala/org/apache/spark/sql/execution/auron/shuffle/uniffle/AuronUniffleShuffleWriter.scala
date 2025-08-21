@@ -18,8 +18,8 @@ package org.apache.spark.sql.execution.auron.shuffle.uniffle
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.shuffle.{ShuffleHandle, ShuffleWriteMetricsReporter}
+import org.apache.spark.shuffle.writer.RssShuffleWriter
 import org.apache.spark.sql.execution.auron.shuffle.{AuronRssShuffleWriterBase, RssPartitionWriterBase}
 
 class AuronUniffleShuffleWriter[K, V, C](

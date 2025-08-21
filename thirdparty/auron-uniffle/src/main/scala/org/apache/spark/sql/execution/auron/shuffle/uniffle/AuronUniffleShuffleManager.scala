@@ -16,12 +16,12 @@
  */
 package org.apache.spark.sql.execution.auron.shuffle.uniffle
 
+import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
+import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.reader.RssShuffleReader
 import org.apache.spark.shuffle.uniffle.RssShuffleHandleWrapper
 import org.apache.spark.shuffle.writer.RssShuffleWriter
-import org.apache.spark.shuffle._
 import org.apache.spark.sql.execution.auron.shuffle.{AuronRssShuffleManagerBase, AuronRssShuffleReaderBase, AuronRssShuffleWriterBase}
-import org.apache.spark.{ShuffleDependency, SparkConf, TaskContext}
 
 class AuronUniffleShuffleManager(conf: SparkConf, isDriver: Boolean)
     extends AuronRssShuffleManagerBase(conf) {

@@ -21,21 +21,23 @@ import java.io.OutputStream
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.nio.ByteBuffer
+
 import scala.reflect.ClassTag
+
 import org.apache.celeborn.client.read.CelebornInputStream
 import org.apache.celeborn.common.CelebornConf
 import org.apache.commons.lang3.reflect.FieldUtils
+import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.serializer.DeserializationStream
+import org.apache.spark.serializer.SerializationStream
+import org.apache.spark.serializer.SerializerInstance
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
 import org.apache.spark.shuffle.celeborn.CelebornShuffleHandle
 import org.apache.spark.shuffle.celeborn.CelebornShuffleReader
 import org.apache.spark.shuffle.celeborn.ExecutorShuffleIdTracker
 import org.apache.spark.sql.execution.auron.shuffle.AuronRssShuffleReaderBase
-import org.apache.spark.ShuffleDependency
-import org.apache.spark.serializer.DeserializationStream
-import org.apache.spark.serializer.SerializationStream
-import org.apache.spark.serializer.SerializerInstance
 
 class AuronCelebornShuffleReader[K, C](
     conf: CelebornConf,
