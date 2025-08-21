@@ -19,10 +19,10 @@ package org.apache.spark.sql.execution.auron.shuffle.celeborn
 import java.nio.ByteBuffer
 
 import org.apache.celeborn.client.{ShuffleClient, ShuffleClientImpl}
+import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.sql.execution.auron.shuffle.RssPartitionWriterBase
-import org.apache.spark.TaskContext
 
 class CelebornPartitionWriter(
     shuffleClient: ShuffleClient,

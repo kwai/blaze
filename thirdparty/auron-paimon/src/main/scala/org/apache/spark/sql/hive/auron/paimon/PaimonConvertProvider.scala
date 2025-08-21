@@ -17,8 +17,8 @@
 package org.apache.spark.sql.hive.auron
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.auron.AuronConvertProvider
 import org.apache.spark.sql.auron.AuronConverters
+import org.apache.spark.sql.auron.AuronConvertProvider
 import org.apache.spark.sql.auron.util.AuronLogUtils
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive.execution.HiveTableScanExec

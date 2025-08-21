@@ -16,8 +16,15 @@
  */
 package org.apache.spark.sql.execution.auron.shuffle.uniffle
 
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.util
+
+import scala.collection.AbstractIterator
+
 import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.hadoop.conf.Configuration
+import org.apache.spark.{ShuffleDependency, TaskContext}
 import org.apache.spark.executor.ShuffleReadMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ShuffleReadMetricsReporter
@@ -25,19 +32,13 @@ import org.apache.spark.shuffle.reader.{RssShuffleDataIterator, RssShuffleReader
 import org.apache.spark.shuffle.uniffle.RssShuffleHandleWrapper
 import org.apache.spark.sql.execution.auron.shuffle.AuronRssShuffleReaderBase
 import org.apache.spark.util.TaskCompletionListener
-import org.apache.spark.{ShuffleDependency, TaskContext}
 import org.apache.uniffle.client.api.ShuffleReadClient
 import org.apache.uniffle.client.factory.ShuffleClientFactory
 import org.apache.uniffle.client.util.RssClientConfig
+import org.apache.uniffle.common.{ShuffleDataDistributionType, ShuffleServerInfo}
 import org.apache.uniffle.common.config.RssConf
 import org.apache.uniffle.common.exception.RssException
-import org.apache.uniffle.common.{ShuffleDataDistributionType, ShuffleServerInfo}
 import org.apache.uniffle.shaded.org.roaringbitmap.longlong.Roaring64NavigableMap
-
-import java.io.InputStream
-import java.nio.ByteBuffer
-import java.util
-import scala.collection.AbstractIterator
 
 class AuronUniffleShuffleReader[K, C](
     reader: RssShuffleReader[K, C],

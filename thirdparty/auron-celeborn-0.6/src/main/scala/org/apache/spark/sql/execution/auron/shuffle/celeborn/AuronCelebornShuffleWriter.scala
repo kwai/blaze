@@ -28,6 +28,7 @@ import org.apache.spark.shuffle.celeborn.SparkUtils
 import org.apache.spark.sql.auron.Shims
 import org.apache.spark.sql.execution.auron.shuffle.AuronRssShuffleWriterBase
 import org.apache.spark.sql.execution.auron.shuffle.RssPartitionWriterBase
+
 import org.apache.auron.sparkver
 
 class AuronCelebornShuffleWriter[K, V](

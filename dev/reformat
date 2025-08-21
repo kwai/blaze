@@ -30,18 +30,27 @@ while (( "$#" )); do
   shift
 done
 
-sparkver=(spark-3.0 spark-3.1 spark-3.2 spark-3.3 spark-3.4 spark-3.5)
-SCALA_PROFILE=scala-2.12
-
 MODE=pre
-for ver in ${sparkver[@]}
-do
-  SHIM=$ver
+SCALA_PROFILE=scala-2.12
+function run_maven() {
   if [[ "$CHECK" == "true" ]]; then
-    ${PROJECT_DIR}/build/mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
+    "${PROJECT_DIR}"/build/mvn spotless:check compile test-compile scalafix:scalafix -Dscalafix.mode=CHECK -Dscalafix.skipTest=true -DskipBuildNative -P"${MODE}" -P"${SCALA_PROFILE}" "$@"
   else
-    ${PROJECT_DIR}/build/mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${SHIM}" -P"${MODE}" -P"${SCALA_PROFILE}"
+    "${PROJECT_DIR}"/build/mvn spotless:apply compile test-compile scalafix:scalafix -DskipBuildNative -P"${MODE}" -P"${SCALA_PROFILE}" "$@"
   fi
+}
+
+sparkvers=(spark-3.0 spark-3.1 spark-3.2 spark-3.3 spark-3.4)
+for sparkver in "${sparkvers[@]}"
+do
+  run_maven -P"${sparkver}"
+done
+
+# check or format the third-party code with spark-3.5
+sparkver=spark-3.5
+for celebornver in celeborn-0.5 celeborn-0.6
+do
+  run_maven -P"${sparkver}" -Pceleborn,"${celebornver}" -Puniffle,uniffle-0.9 -Ppaimon,paimon-1.1
 done
 
 # check or format the rust code
