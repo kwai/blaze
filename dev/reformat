@@ -40,22 +40,17 @@ function run_maven() {
   fi
 }
 
-sparkver=(spark-3.0 spark-3.1 spark-3.2 spark-3.3 spark-3.4)
-for ver in "${sparkver[@]}"
+sparkvers=(spark-3.0 spark-3.1 spark-3.2 spark-3.3 spark-3.4)
+for sparkver in "${sparkvers[@]}"
 do
-  SHIM=$ver
-  run_maven -P"${SHIM}"
+  run_maven -P"${sparkver}"
 done
 
 # check or format the third-party code with spark-3.5
-sparkver=(spark-3.5)
-for ver in "${sparkver[@]}"
+sparkver=spark-3.5
+for celebornver in celeborn-0.5 celeborn-0.6
 do
-  for celebornver in celeborn-0.5 celeborn-0.6
-  do
-    SHIM=$ver
-    run_maven -P"${SHIM}" -Pceleborn,"${celebornver}" -Puniffle,uniffle-0.9 -Ppaimon,paimon-1.1
-  done
+  run_maven -P"${sparkver}" -Pceleborn,"${celebornver}" -Puniffle,uniffle-0.9 -Ppaimon,paimon-1.1
 done
 
 # check or format the rust code
