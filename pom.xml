@@ -332,17 +332,17 @@
             <palantirJavaFormat />
             <removeUnusedImports />
             <licenseHeader>
-              <file>${session.executionRootDirectory}/dev/license-header</file>
+              <file>${maven.multiModuleProjectDirectory}/dev/license-header</file>
             </licenseHeader>
           </java>
           <scala>
             <scalafmt>
               <version>${scalafmtVersion}</version>
-              <file>${session.executionRootDirectory}/scalafmt.conf</file>
+              <file>${maven.multiModuleProjectDirectory}/scalafmt.conf</file>
               <scalaMajorVersion>${scalaVersion}</scalaMajorVersion>
             </scalafmt>
             <licenseHeader>
-              <file>${session.executionRootDirectory}/dev/license-header</file>
+              <file>${maven.multiModuleProjectDirectory}/dev/license-header</file>
             </licenseHeader>
           </scala>
           <pom>
@@ -383,7 +383,7 @@
         <artifactId>scalafix-maven-plugin_${scalaVersion}</artifactId>
         <version>0.1.4_0.9.31</version>
         <configuration>
-          <config>${session.executionRootDirectory}/scalafix.conf</config>
+          <config>${maven.multiModuleProjectDirectory}/scalafix.conf</config>
         </configuration>
         <dependencies>
           <dependency>
