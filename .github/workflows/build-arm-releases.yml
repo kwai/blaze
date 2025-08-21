@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-snapshot:
-    name: Build Auron on ${{ matrix.runner }}
+    name: Build arm Auron
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
