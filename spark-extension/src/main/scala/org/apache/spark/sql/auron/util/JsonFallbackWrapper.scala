@@ -21,8 +21,8 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.{BoundReference, GenericInternalRow, GetJsonObject, Literal}
-import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.auron.arrowio.util.{ArrowUtils, ArrowWriter}
+import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.auron.columnar.ColumnarHelper
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 

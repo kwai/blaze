@@ -20,14 +20,15 @@ import java.io.IOException
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 
-import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.Dependency
 import org.apache.spark.Partition
 import org.apache.spark.Partitioner
 import org.apache.spark.SparkContext
 import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.InternalRow
+
 import org.apache.auron.protobuf.PhysicalPlanNode
 
 class NativeRDD(

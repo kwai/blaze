@@ -17,6 +17,7 @@
 package org.apache.spark.sql.execution.auron.shuffle
 
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
+
 import org.apache.auron.sparkver
 
 class AuronShuffleWriter[K, V](metrics: ShuffleWriteMetricsReporter)

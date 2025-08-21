@@ -22,11 +22,12 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.Partition
 import org.apache.spark.TaskContext
-import org.apache.auron.{protobuf => pb}
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FilePartition
+
+import org.apache.auron.{protobuf => pb}
 
 abstract class NativeParquetScanBase(basedFileScan: FileSourceScanExec)
     extends NativeFileSourceScanBase(basedFileScan) {

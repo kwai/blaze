@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.execution.metric.SQLShuffleReadMetricsReporter
 import org.apache.spark.sql.execution.metric.SQLShuffleWriteMetricsReporter
+
 import org.apache.auron.sparkver
 
 case class NativeShuffleExchangeExec(
@@ -105,7 +106,7 @@ case class NativeShuffleExchangeExec(
    */
   private var cachedShuffleRDD: ShuffledRowRDD = _
 
-  protected override def doExecuteNonNative(): RDD[InternalRow] = {
+  override protected def doExecuteNonNative(): RDD[InternalRow] = {
     // Returns the same ShuffleRowRDD if this plan is used by multiple plans.
     if (cachedShuffleRDD == null) {
       cachedShuffleRDD = new ShuffledRowRDD(shuffleDependency, readMetrics)

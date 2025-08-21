@@ -20,26 +20,27 @@ import java.util.UUID
 
 import scala.collection.immutable.SortedMap
 
+import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.JniBridge
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.UnaryExecNode
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeConverters
-import org.apache.spark.sql.auron.NativeRDD
 import org.apache.spark.sql.auron.NativeHelper
+import org.apache.spark.sql.auron.NativeRDD
+import org.apache.spark.sql.auron.NativeSupports
+import org.apache.spark.sql.auron.Shims
+import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.SortOrder
+import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.auron.arrowio.ArrowFFIExporter
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics
-import org.apache.spark.OneToOneDependency
+import org.apache.spark.sql.types.StructType
+
 import org.apache.auron.protobuf.FFIReaderExecNode
 import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.auron.protobuf.Schema
-import org.apache.spark.sql.auron.NativeSupports
-import org.apache.spark.sql.auron.Shims
-import org.apache.spark.sql.catalyst.expressions.SortOrder
 
 abstract class ConvertToNativeBase(override val child: SparkPlan)
     extends UnaryExecNode

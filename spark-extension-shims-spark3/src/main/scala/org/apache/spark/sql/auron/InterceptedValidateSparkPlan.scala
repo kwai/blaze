@@ -18,6 +18,7 @@ package org.apache.spark.sql.auron
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.SparkPlan
+
 import org.apache.auron.sparkver
 
 object InterceptedValidateSparkPlan extends Logging {

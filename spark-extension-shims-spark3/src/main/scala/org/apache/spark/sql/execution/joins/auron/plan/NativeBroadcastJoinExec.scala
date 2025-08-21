@@ -25,6 +25,7 @@ import org.apache.spark.sql.execution.auron.plan.BroadcastRight
 import org.apache.spark.sql.execution.auron.plan.BroadcastSide
 import org.apache.spark.sql.execution.auron.plan.NativeBroadcastJoinBase
 import org.apache.spark.sql.execution.joins.HashJoin
+
 import org.apache.auron.sparkver
 
 case class NativeBroadcastJoinExec(

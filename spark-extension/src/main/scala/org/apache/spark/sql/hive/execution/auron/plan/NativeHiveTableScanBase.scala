@@ -16,6 +16,9 @@
  */
 package org.apache.spark.sql.hive.execution.auron.plan
 
+import java.net.URI
+import java.security.PrivilegedExceptionAction
+
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.fs.FileSystem
@@ -26,6 +29,7 @@ import org.apache.spark.sql.auron.NativeHelper
 import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.auron.Shims
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.LeafExecNode
 import org.apache.spark.sql.execution.SparkPlan
@@ -37,11 +41,8 @@ import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
-import org.apache.auron.{protobuf => pb}
-import java.net.URI
-import java.security.PrivilegedExceptionAction
 
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.auron.{protobuf => pb}
 import org.apache.auron.sparkver
 
 abstract class NativeHiveTableScanBase(basedHiveScan: HiveTableScanExec)

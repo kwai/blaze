@@ -17,6 +17,7 @@
 package org.apache.spark.sql.execution.auron.plan
 
 import org.apache.spark.sql.execution.SparkPlan
+
 import org.apache.auron.sparkver
 
 case class NativeGlobalLimitExec(limit: Long, override val child: SparkPlan)

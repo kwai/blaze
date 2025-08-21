@@ -21,11 +21,10 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util
 
-import org.apache.spark.internal.Logging
-import org.apache.spark.util.Utils
-
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
+import org.apache.spark.internal.Logging
+import org.apache.spark.util.Utils
 
 abstract class SpillBuf {
   def write(buf: ByteBuffer): Unit

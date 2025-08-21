@@ -17,25 +17,24 @@
 package org.apache.spark.sql.execution.auron.arrowio
 
 import java.lang.Thread.UncaughtExceptionHandler
+import java.security.PrivilegedExceptionAction
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.BlockingQueue
 
 import org.apache.arrow.c.ArrowArray
 import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.spark.TaskContext
+import org.apache.spark.sql.auron.{AuronConf, NativeHelper}
+import org.apache.spark.sql.auron.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils
+import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowWriter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.auron.{AuronConf, NativeHelper}
-import org.apache.spark.sql.auron.util.Using
-import org.apache.spark.TaskContext
-import java.security.PrivilegedExceptionAction
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.BlockingQueue
-
-import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.CHILD_ALLOCATOR
 
 class ArrowFFIExporter(rowIter: Iterator[InternalRow], schema: StructType) extends AutoCloseable {
   private val maxBatchNumRows = AuronConf.BATCH_SIZE.intConf()

@@ -16,9 +16,9 @@
  */
 package org.apache.spark.sql.execution.auron.plan
 
+import scala.collection.JavaConverters.asJavaIterableConverter
 import scala.collection.immutable.SortedMap
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.JavaConverters.asJavaIterableConverter
 
 import org.apache.spark.rdd.PartitionerAwareUnionRDD
 import org.apache.spark.rdd.PartitionerAwareUnionRDDPartition
@@ -31,6 +31,7 @@ import org.apache.spark.sql.auron.NativeSupports
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetric
+
 import org.apache.auron.protobuf.EmptyPartitionsExecNode
 import org.apache.auron.protobuf.PhysicalPlanNode
 import org.apache.auron.protobuf.Schema

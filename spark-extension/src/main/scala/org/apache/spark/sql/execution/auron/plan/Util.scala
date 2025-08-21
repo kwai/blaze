@@ -20,6 +20,7 @@ import org.apache.spark.sql.auron.NativeConverters
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+
 import org.apache.auron.{protobuf => pb}
 
 object Util {

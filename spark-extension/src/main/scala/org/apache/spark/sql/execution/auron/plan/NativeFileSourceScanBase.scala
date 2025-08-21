@@ -18,11 +18,12 @@ package org.apache.spark.sql.execution.auron.plan
 
 import java.net.URI
 import java.security.PrivilegedExceptionAction
+
 import scala.collection.JavaConverters._
+
 import org.apache.commons.lang3.reflect.MethodUtils
 import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.broadcast.Broadcast
-import org.apache.auron.{protobuf => pb}
 import org.apache.spark.rdd.MapPartitionsRDD
 import org.apache.spark.sql.auron.JniBridge
 import org.apache.spark.sql.auron.NativeConverters
@@ -34,13 +35,15 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.LeafExecNode
-import org.apache.spark.sql.execution.datasources.FileScanRDD
-import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.execution.datasources.FilePartition
-import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.datasources.FilePartition
+import org.apache.spark.sql.execution.datasources.FileScanRDD
+import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.{DecimalType, NullType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
+
+import org.apache.auron.{protobuf => pb}
 
 abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
     extends LeafExecNode

@@ -25,18 +25,19 @@ import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.hive.ql.io.parquet.convert.HiveSchemaConverter
 import org.apache.hadoop.hive.ql.io.IOConstants
+import org.apache.hadoop.hive.ql.io.parquet.convert.HiveSchemaConverter
 import org.apache.hadoop.hive.ql.io.parquet.write.DataWritableWriteSupport
 import org.apache.hadoop.hive.ql.plan.TableDesc
 import org.apache.hadoop.hive.serde.serdeConstants
+import org.apache.hadoop.hive.serde2.SerDeUtils
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils
-import org.apache.hadoop.hive.serde2.SerDeUtils
 import org.apache.hadoop.mapred.JobConf
 import org.apache.hadoop.mapreduce.Job
-import org.apache.spark.sql.auron.JniBridge
+import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.auron.JniBridge
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeHelper
 import org.apache.spark.sql.auron.NativeRDD
@@ -46,12 +47,12 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.expressions.SortOrder
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.hive.auron.HiveClientHelper
 import org.apache.spark.util.SerializableConfiguration
-import org.apache.spark.OneToOneDependency
-import org.apache.spark.sql.execution.UnaryExecNode
+
 import org.apache.auron.protobuf.ParquetProp
 import org.apache.auron.protobuf.ParquetSinkExecNode
 import org.apache.auron.protobuf.PhysicalPlanNode

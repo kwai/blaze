@@ -19,12 +19,12 @@ package org.apache.spark.sql.auron
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.ColumnarRule
 import org.apache.spark.sql.execution.LocalTableScanExec
+import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.internal.SQLConf
 
 class AuronSparkSessionExtension extends (SparkSessionExtensions => Unit) with Logging {

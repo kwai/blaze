@@ -32,8 +32,12 @@ import org.apache.arrow.c.Data
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider
+import org.apache.spark.SparkEnv
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.io.SnappyCompressionCodec
+import org.apache.spark.memory.MemoryConsumer
+import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.auron.memory.OnHeapSpillManager
 import org.apache.spark.sql.auron.util.Using
 import org.apache.spark.sql.catalyst.InternalRow
@@ -46,18 +50,14 @@ import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggregate
-import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils
-import org.apache.spark.sql.execution.auron.arrowio.util.ArrowWriter
 import org.apache.spark.sql.execution.UnsafeRowSerializer
+import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils.ROOT_ALLOCATOR
+import org.apache.spark.sql.execution.auron.arrowio.util.ArrowWriter
 import org.apache.spark.sql.execution.auron.columnar.ColumnarHelper
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.ByteBufferInputStream
-import org.apache.spark.SparkEnv
-import org.apache.spark.io.SnappyCompressionCodec
-import org.apache.spark.memory.MemoryConsumer
-import org.apache.spark.memory.MemoryMode
 import org.apache.spark.util.Utils
 
 case class SparkUDAFWrapperContext[B](serialized: ByteBuffer) extends Logging {

@@ -26,13 +26,12 @@ class AuronAdaptiveQueryExecSuite
 
   import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
   import org.apache.spark.sql.execution.{PartialReducerPartitionSpec, SparkPlan}
-  import org.apache.spark.sql.execution.adaptive.{AQEShuffleReadExec, AdaptiveSparkPlanExec}
+  import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
   import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
   import org.apache.spark.sql.execution.exchange.Exchange
   import org.apache.spark.sql.execution.ui.{SparkListenerSQLAdaptiveExecutionUpdate, SparkListenerSQLAdaptiveSQLMetricUpdates}
   import org.apache.spark.sql.internal.SQLConf
   import org.apache.spark.sql.test.SQLTestData.TestData
-
   import testImplicits._
 
   // Copy from spark/sql/core/src/test/scala/org/apache/spark/sql/execution/adaptive/AdaptiveQueryExecSuite.scala

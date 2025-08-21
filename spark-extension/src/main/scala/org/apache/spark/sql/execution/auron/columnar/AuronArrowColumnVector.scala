@@ -16,30 +16,30 @@
  */
 package org.apache.spark.sql.execution.auron.columnar
 
-import org.apache.arrow.vector.DateDayVector
-import org.apache.arrow.vector.DecimalVector
-import org.apache.arrow.vector.IntVector
-import org.apache.arrow.vector.UInt1Vector
-import org.apache.arrow.vector.VarCharVector
-import org.apache.arrow.vector.complex.StructVector
 import org.apache.arrow.vector.BigIntVector
 import org.apache.arrow.vector.BitVector
-import org.apache.arrow.vector.NullVector
-import org.apache.arrow.vector.TimeStampMicroTZVector
-import org.apache.arrow.vector.TinyIntVector
-import org.apache.arrow.vector.UInt2Vector
-import org.apache.arrow.vector.UInt4Vector
-import org.apache.arrow.vector.ValueVector
-import org.apache.arrow.vector.VarBinaryVector
-import org.apache.arrow.vector.complex.FixedSizeListVector
-import org.apache.arrow.vector.complex.ListVector
-import org.apache.arrow.vector.TimeStampMicroVector
-import org.apache.arrow.vector.UInt8Vector
-import org.apache.arrow.vector.complex.MapVector
+import org.apache.arrow.vector.DateDayVector
+import org.apache.arrow.vector.DecimalVector
 import org.apache.arrow.vector.Float4Vector
 import org.apache.arrow.vector.Float8Vector
+import org.apache.arrow.vector.IntVector
+import org.apache.arrow.vector.NullVector
 import org.apache.arrow.vector.SmallIntVector
+import org.apache.arrow.vector.TimeStampMicroTZVector
+import org.apache.arrow.vector.TimeStampMicroVector
+import org.apache.arrow.vector.TinyIntVector
+import org.apache.arrow.vector.UInt1Vector
+import org.apache.arrow.vector.UInt2Vector
+import org.apache.arrow.vector.UInt4Vector
+import org.apache.arrow.vector.UInt8Vector
+import org.apache.arrow.vector.ValueVector
+import org.apache.arrow.vector.VarBinaryVector
+import org.apache.arrow.vector.VarCharVector
 import org.apache.arrow.vector.complex.BaseRepeatedValueVector
+import org.apache.arrow.vector.complex.FixedSizeListVector
+import org.apache.arrow.vector.complex.ListVector
+import org.apache.arrow.vector.complex.MapVector
+import org.apache.arrow.vector.complex.StructVector
 import org.apache.arrow.vector.holders.NullableVarCharHolder
 import org.apache.spark.sql.execution.auron.arrowio.util.ArrowUtils
 import org.apache.spark.sql.types.Decimal
@@ -195,62 +195,62 @@ object AuronArrowColumnVector {
 
   private class BooleanAccessor(vector: BitVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getBoolean(rowId: Int): Boolean = vector.get(rowId) == 1
+    final override def getBoolean(rowId: Int): Boolean = vector.get(rowId) == 1
   }
 
   private class ByteAccessor(vector: TinyIntVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getByte(rowId: Int): Byte = vector.get(rowId)
+    final override def getByte(rowId: Int): Byte = vector.get(rowId)
   }
 
   private class UInt1Accessor(vector: UInt1Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getByte(rowId: Int): Byte = vector.get(rowId)
+    final override def getByte(rowId: Int): Byte = vector.get(rowId)
   }
 
   private class UInt2Accessor(vector: UInt2Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getShort(rowId: Int): Short = vector.get(rowId).toShort
+    final override def getShort(rowId: Int): Short = vector.get(rowId).toShort
   }
 
   private class UInt4Accessor(vector: UInt4Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getInt(rowId: Int) = vector.get(rowId)
+    final override def getInt(rowId: Int) = vector.get(rowId)
   }
 
   private class UInt8Accessor(vector: UInt8Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getLong(rowId: Int): Long = vector.get(rowId)
+    final override def getLong(rowId: Int): Long = vector.get(rowId)
   }
 
   private class ShortAccessor(vector: SmallIntVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getShort(rowId: Int): Short = vector.get(rowId)
+    final override def getShort(rowId: Int): Short = vector.get(rowId)
   }
 
   private class IntAccessor(vector: IntVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getInt(rowId: Int): Int = vector.get(rowId)
+    final override def getInt(rowId: Int): Int = vector.get(rowId)
   }
 
   private class LongAccessor(vector: BigIntVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getLong(rowId: Int): Long = vector.get(rowId)
+    final override def getLong(rowId: Int): Long = vector.get(rowId)
   }
 
   private class FloatAccessor(vector: Float4Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getFloat(rowId: Int): Float = vector.get(rowId)
+    final override def getFloat(rowId: Int): Float = vector.get(rowId)
   }
 
   private class DoubleAccessor(vector: Float8Vector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getDouble(rowId: Int): Double = vector.get(rowId)
+    final override def getDouble(rowId: Int): Double = vector.get(rowId)
   }
 
   private class DecimalAccessor(vector: DecimalVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getDecimal(rowId: Int, precision: Int, scale: Int): Decimal = {
+    final override def getDecimal(rowId: Int, precision: Int, scale: Int): Decimal = {
       if (isNullAt(rowId)) return null
       Decimal.apply(vector.getObject(rowId), precision, scale)
     }
@@ -260,7 +260,7 @@ object AuronArrowColumnVector {
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
     final private val stringResult = new NullableVarCharHolder
 
-    override final def getUTF8String(rowId: Int) = {
+    final override def getUTF8String(rowId: Int) = {
       vector.get(rowId, stringResult)
       if (stringResult.isSet == 0) null
       else
@@ -273,29 +273,29 @@ object AuronArrowColumnVector {
 
   private class BinaryAccessor(vector: VarBinaryVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getBinary(rowId: Int): Array[Byte] = vector.getObject(rowId)
+    final override def getBinary(rowId: Int): Array[Byte] = vector.getObject(rowId)
   }
 
   private class DateAccessor(vector: DateDayVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getInt(rowId: Int): Int = vector.get(rowId)
+    final override def getInt(rowId: Int): Int = vector.get(rowId)
   }
 
   private class TimestampAccessor(vector: TimeStampMicroVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getLong(rowId: Int): Long = vector.get(rowId)
+    final override def getLong(rowId: Int): Long = vector.get(rowId)
   }
 
   private class TimestampTZAccessor(vector: TimeStampMicroTZVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
-    override final def getLong(rowId: Int): Long = vector.get(rowId)
+    final override def getLong(rowId: Int): Long = vector.get(rowId)
   }
 
   private class ArrayAccessor(vector: ListVector)
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
     private val arrayData = new AuronArrowColumnVector(vector.getDataVector)
 
-    override final def getArray(rowId: Int): AuronColumnarArray = {
+    final override def getArray(rowId: Int): AuronColumnarArray = {
       val start = vector.getElementStartIndex(rowId)
       val end = vector.getElementEndIndex(rowId)
       new AuronColumnarArray(arrayData, start, end - start)
@@ -306,7 +306,7 @@ object AuronArrowColumnVector {
       extends AuronArrowColumnVector.ArrowVectorAccessor(vector) {
     private val arrayData = new AuronArrowColumnVector(vector.getDataVector)
 
-    override final def getArray(rowId: Int): AuronColumnarArray = {
+    final override def getArray(rowId: Int): AuronColumnarArray = {
       val start = vector.getElementStartIndex(rowId)
       val end = vector.getElementEndIndex(rowId)
       new AuronColumnarArray(arrayData, start, end - start)
@@ -322,7 +322,7 @@ object AuronArrowColumnVector {
     private val keys = new AuronArrowColumnVector(entries.getChild(MapVector.KEY_NAME))
     private val values = new AuronArrowColumnVector(entries.getChild(MapVector.VALUE_NAME))
 
-    override final def getMap(rowId: Int): AuronColumnarMap = {
+    final override def getMap(rowId: Int): AuronColumnarMap = {
       val index = rowId * BaseRepeatedValueVector.OFFSET_WIDTH
       val offset = vector.getOffsetBuffer.getInt(index)
       val length = vector.getInnerValueCountAt(rowId)

@@ -31,8 +31,8 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.IndexShuffleBlockResolver
 import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
-import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.auron.AuronConverters.ForceNativeExecutionWrapperBase
 import org.apache.spark.sql.auron.NativeConverters.NativeExprWrapperBase
 import org.apache.spark.sql.catalyst.InternalRow
@@ -56,13 +56,14 @@ import org.apache.spark.sql.execution.CoalescedPartitionSpec
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.PartialMapperPartitionSpec
 import org.apache.spark.sql.execution.PartialReducerPartitionSpec
-import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.execution.ShuffledRowRDD
+import org.apache.spark.sql.execution.ShufflePartitionSpec
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.adaptive.BroadcastQueryStageExec
 import org.apache.spark.sql.execution.adaptive.QueryStageExec
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
+import org.apache.spark.sql.execution.auron.plan._
 import org.apache.spark.sql.execution.auron.plan.ConvertToNativeExec
 import org.apache.spark.sql.execution.auron.plan.NativeAggBase
 import org.apache.spark.sql.execution.auron.plan.NativeAggBase.AggExecMode
@@ -96,7 +97,6 @@ import org.apache.spark.sql.execution.auron.plan.NativeUnionBase
 import org.apache.spark.sql.execution.auron.plan.NativeUnionExec
 import org.apache.spark.sql.execution.auron.plan.NativeWindowBase
 import org.apache.spark.sql.execution.auron.plan.NativeWindowExec
-import org.apache.spark.sql.execution.auron.plan._
 import org.apache.spark.sql.execution.auron.shuffle.{AuronBlockStoreShuffleReaderBase, AuronRssShuffleManagerBase, RssPartitionWriterBase}
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ReusedExchangeExec}
@@ -110,6 +110,7 @@ import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.storage.FileSegment
+
 import org.apache.auron.{protobuf => pb, sparkver}
 
 class ShimsImpl extends Shims with Logging {

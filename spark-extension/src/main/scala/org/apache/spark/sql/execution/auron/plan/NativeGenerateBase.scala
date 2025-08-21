@@ -20,6 +20,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
 import scala.collection.mutable.ArrayBuffer
 
+import com.google.protobuf.ByteString
 import org.apache.spark.OneToOneDependency
 import org.apache.spark.sql.auron.MetricNode
 import org.apache.spark.sql.auron.NativeConverters
@@ -41,10 +42,9 @@ import org.apache.spark.sql.execution.UnaryExecNode
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
+
 import org.apache.auron.{protobuf => pb}
 import org.apache.auron.protobuf.PhysicalPlanNode
-
-import com.google.protobuf.ByteString
 
 abstract class NativeGenerateBase(
     generator: Generator,
