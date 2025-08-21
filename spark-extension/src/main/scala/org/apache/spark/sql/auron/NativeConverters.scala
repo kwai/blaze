@@ -82,12 +82,9 @@ import org.apache.auron.{protobuf => pb}
 import org.apache.auron.protobuf.PhysicalExprNode
 
 object NativeConverters extends Logging {
-  def udfJsonEnabled: Boolean =
-    AuronConverters.getBooleanConf("spark.auron.udf.UDFJson.enabled", defaultValue = true)
-  def udfBrickHouseEnabled: Boolean =
-    AuronConverters.getBooleanConf("spark.auron.udf.brickhouse.enabled", defaultValue = true)
-  def decimalArithOpEnabled: Boolean =
-    AuronConverters.getBooleanConf("spark.auron.decimal.arithOp.enabled", defaultValue = false)
+  def udfJsonEnabled: Boolean = AuronConf.UDF_JSON_ENABLED.booleanConf()
+  def udfBrickHouseEnabled: Boolean = AuronConf.UDF_BRICKHOUSE_ENABLED.booleanConf()
+  def decimalArithOpEnabled: Boolean = AuronConf.DECIMAL_ARITH_OP_ENABLED.booleanConf()
 
   def scalarTypeSupported(dataType: DataType): Boolean = {
     dataType match {

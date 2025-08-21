@@ -21,6 +21,7 @@ import org.apache.spark.SparkEnv$;
 
 @SuppressWarnings("unused")
 public enum AuronConf {
+
     /// suggested batch size for arrow batches.
     BATCH_SIZE("spark.auron.batchSize", 10000),
 
@@ -55,7 +56,7 @@ public enum AuronConf {
     /// ignore corrupted input files
     IGNORE_CORRUPTED_FILES("spark.files.ignoreCorruptFiles", false),
 
-    /// enable partial aggregate skipping (see https://github.com/blaze-init/auron/issues/327)
+    /// enable partial aggregate skipping (see https://github.com/kwai/auron/issues/327)
     PARTIAL_AGG_SKIPPING_ENABLE("spark.auron.partialAggSkipping.enable", true),
 
     /// partial aggregate skipping ratio
@@ -67,64 +68,138 @@ public enum AuronConf {
     /// always skip partial aggregate when triggered spilling
     PARTIAL_AGG_SKIPPING_SKIP_SPILL("spark.auron.partialAggSkipping.skipSpill", false),
 
-    // parquet enable page filtering
+    /// parquet enable page filtering
     PARQUET_ENABLE_PAGE_FILTERING("spark.auron.parquet.enable.pageFiltering", false),
 
-    // parquet enable bloom filter
+    /// parquet enable bloom filter
     PARQUET_ENABLE_BLOOM_FILTER("spark.auron.parquet.enable.bloomFilter", false),
 
-    // parquet max over read size
+    /// parquet max over read size
     PARQUET_MAX_OVER_READ_SIZE("spark.auron.parquet.maxOverReadSize", 16384),
 
-    // parquet metadata cache size
+    /// parquet metadata cache size
     PARQUET_METADATA_CACHE_SIZE("spark.auron.parquet.metadataCacheSize", 5),
 
-    // spark io compression codec
+    /// spark io compression codec
     SPARK_IO_COMPRESSION_CODEC("spark.io.compression.codec", "lz4"),
 
-    // spark io compression zstd level
+    /// spark io compression zstd level
     SPARK_IO_COMPRESSION_ZSTD_LEVEL("spark.io.compression.zstd.level", 1),
 
-    // tokio worker threads per cpu (spark.task.cpus), 0 for auto detection
+    /// tokio worker threads per cpu (spark.task.cpus), 0 for auto-detection
     TOKIO_WORKER_THREADS_PER_CPU("spark.auron.tokio.worker.threads.per.cpu", 0),
 
-    // number of cpus per task
+    /// number of cpus per task
     SPARK_TASK_CPUS("spark.task.cpus", 1),
 
-    // replace all sort-merge join to shuffled-hash join, only used for benchmarking
+    /// replace all sort-merge join to shuffled-hash join, only used for benchmarking
     FORCE_SHUFFLED_HASH_JOIN("spark.auron.forceShuffledHashJoin", false),
 
-    // shuffle compression target buffer size, default is 4MB
+    /// shuffle compression target buffer size, default is 4MB
     SHUFFLE_COMPRESSION_TARGET_BUF_SIZE("spark.auron.shuffle.compression.targetBufSize", 4194304),
 
-    // spark spill compression codec
+    /// spark spill compression codec
     SPILL_COMPRESSION_CODEC("spark.auron.spill.compression.codec", "lz4"),
 
-    // enable hash join falling back to sort merge join when hash table is too big
+    /// enable hash join falling back to sort merge join when hash table is too big
     SMJ_FALLBACK_ENABLE("spark.auron.smjfallback.enable", false),
 
-    // smj fallback threshold
+    /// smj fallback threshold
     SMJ_FALLBACK_ROWS_THRESHOLD("spark.auron.smjfallback.rows.threshold", 10000000),
 
-    // smj fallback threshold
+    /// smj fallback threshold
     SMJ_FALLBACK_MEM_SIZE_THRESHOLD("spark.auron.smjfallback.mem.threshold", 134217728),
 
-    // max memory fraction of on-heap spills
+    /// max memory fraction of on-heap spills
     ON_HEAP_SPILL_MEM_FRACTION("spark.auron.onHeapSpill.memoryFraction", 0.9),
 
-    // suggested memory size for record batch
+    /// suggested memory size for record batch
     SUGGESTED_BATCH_MEM_SIZE("spark.auron.suggested.batch.memSize", 8388608),
 
-    // fallback to UDFJson when error parsing json in native implementation
+    /// fallback to UDFJson when error parsing json in native implementation
     PARSE_JSON_ERROR_FALLBACK("spark.auron.parseJsonError.fallback", true),
 
-    // suggested memory size for k-way merging
-    // use smaller batch memory size for kway merging since there will be multiple
-    // batches in memory at the same time
+    /// suggested memory size for k-way merging
+    /// use smaller batch memory size for kway merging since there will be multiple
+    /// batches in memory at the same time
     SUGGESTED_BATCH_MEM_SIZE_KWAY_MERGE("spark.auron.suggested.batch.memSize.multiwayMerging", 1048576),
 
+    /// enable scan operation
+    ENABLE_SCAN("spark.auron.enable.scan", true),
+
+    /// enable project operation
+    ENABLE_PROJECT("spark.auron.enable.project", true),
+
+    /// enable filter operation
+    ENABLE_FILTER("spark.auron.enable.filter", true),
+
+    /// enable sort operation
+    ENABLE_SORT("spark.auron.enable.sort", true),
+
+    /// enable union operation
+    ENABLE_UNION("spark.auron.enable.union", true),
+
+    /// enable sort merge join
+    ENABLE_SMJ("spark.auron.enable.smj", true),
+
+    /// enable shuffled hash join
+    ENABLE_SHJ("spark.auron.enable.shj", true),
+
+    /// enable broadcast hash join
+    ENABLE_BHJ("spark.auron.enable.bhj", true),
+
+    /// enable broadcast nested loop join
+    ENABLE_BNLJ("spark.auron.enable.bnlj", true),
+
+    /// enable local limit operation
+    ENABLE_LOCAL_LIMIT("spark.auron.enable.local.limit", true),
+
+    /// enable global limit operation
+    ENABLE_GLOBAL_LIMIT("spark.auron.enable.global.limit", true),
+
+    /// enable take ordered and project operation
+    ENABLE_TAKE_ORDERED_AND_PROJECT("spark.auron.enable.take.ordered.and.project", true),
+
+    /// enable aggregation operation
+    ENABLE_AGGR("spark.auron.enable.aggr", true),
+
+    /// enable expand operation
+    ENABLE_EXPAND("spark.auron.enable.expand", true),
+
+    /// enable window operation
+    ENABLE_WINDOW("spark.auron.enable.window", true),
+
+    /// enable window group limit operation
+    ENABLE_WINDOW_GROUP_LIMIT("spark.auron.enable.window.group.limit", true),
+
+    /// enable generate operation
+    ENABLE_GENERATE("spark.auron.enable.generate", true),
+
+    /// enable local table scan operation
+    ENABLE_LOCAL_TABLE_SCAN("spark.auron.enable.local.table.scan", true),
+
+    /// enable data writing operation
+    ENABLE_DATA_WRITING("spark.auron.enable.data.writing", false),
+
+    /// enable parquet scan operation
+    ENABLE_SCAN_PARQUET("spark.auron.enable.scan.parquet", true),
+
+    /// enable orc scan operation
+    ENABLE_SCAN_ORC("spark.auron.enable.scan.orc", true),
+
+    /// enable UDF JSON functionality
+    UDF_JSON_ENABLED("spark.auron.udf.UDFJson.enabled", true),
+
+    /// enable brickhouse UDF functionality
+    UDF_BRICKHOUSE_ENABLED("spark.auron.udf.brickhouse.enabled", true),
+
+    /// enable decimal arithmetic operations (might have precision loss issue)
+    DECIMAL_ARITH_OP_ENABLED("spark.auron.decimal.arithOp.enabled", false),
+
+    ///  orc force positional evolution
     ORC_FORCE_POSITIONAL_EVOLUTION("spark.auron.orc.force.positional.evolution", false),
 
+    /// native log level
     NATIVE_LOG_LEVEL("spark.auron.native.log.level", "info");
 
     public final String key;
