@@ -32,6 +32,3 @@
 NOTICE*
 docs/**
 build/apache-maven-*/**
-# TODO: remove tool kit code
-tpcds/**
-dev/testenv/**
