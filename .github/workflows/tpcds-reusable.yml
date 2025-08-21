@@ -70,7 +70,6 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
           rustflags: --allow warnings -C target-feature=+aes
           components:
             cargo
@@ -80,7 +79,9 @@ jobs:
         uses: actions-rust-lang/rustfmt@v1
 
       - name: Cargo test
-        run: cargo +nightly test --workspace --all-features
+        run: |
+          cargo --version
+          cargo test --workspace --all-features
 
       - name: Build ${{ inputs.sparkver }}_${{ inputs.scalaver }} jdk-${{ inputs.javaver }}
         run: |
