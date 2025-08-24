@@ -19,6 +19,7 @@ package org.apache.spark.auron
 import java.io.EOFException
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
+import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.hadoop.fs.FSDataInputStream
 import org.apache.hadoop.fs.StreamCapabilities
@@ -36,13 +37,20 @@ object FSDataInputWrapper {
     }
   }
 
+  private val positionedReadableCache = new ConcurrentHashMap[Class[_], Boolean]()
+
   private def canUsePositionedReadable(input: FSDataInputStream): Boolean = {
-    try {
-      input.getClass.getMethod("readFully", classOf[Long], classOf[ByteBuffer]) != null &&
-      input.hasCapability(StreamCapabilities.PREADBYTEBUFFER)
-    } catch {
-      case _: Throwable => false
-    }
+    val inputClass = input.getClass
+    positionedReadableCache.computeIfAbsent(
+      inputClass,
+      _ => {
+        try {
+          inputClass.getMethod("readFully", classOf[Long], classOf[ByteBuffer]) != null &&
+          input.hasCapability(StreamCapabilities.PREADBYTEBUFFER)
+        } catch {
+          case _: Throwable => false
+        }
+      })
   }
 }
 
