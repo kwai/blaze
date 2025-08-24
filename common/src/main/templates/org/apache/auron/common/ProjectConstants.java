@@ -18,5 +18,5 @@
 package org.apache.auron.common;
 public final class ProjectConstants {
 	public static final String PROJECT_VERSION = "${project.version}";
-	public static final String SPARK_BINARY_VERSION = "${sparkBinaryVersion}";
+	public static final String SHIM_NAME = "${shimName}";
 }

@@ -37,6 +37,11 @@
       <artifactId>spark-extension_${scalaVersion}</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <dependency>
+      <groupId>org.apache.auron</groupId>
+      <artifactId>${shimPkg}_${scalaVersion}</artifactId>
+      <version>${project.version}</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -120,7 +125,7 @@
               <archive>
                 <addMavenDescriptor>false</addMavenDescriptor>
               </archive>
-              <outputFile>../../../target/auron-spark-${sparkBinaryVersion}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${project.version}.jar</outputFile>
+              <outputFile>../../../target/auron-${shimName}_${scalaVersion}-${releaseMode}-${os.detected.classifier}-${project.version}.jar</outputFile>
             </configuration>
           </execution>
         </executions>
@@ -137,67 +142,6 @@
   </build>
 
   <profiles>
-    <profile>
-      <id>spark-3.0</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>spark-3.1</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>spark-3.2</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>spark-3.3</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>spark-3.4</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>spark-3.5</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.auron</groupId>
-          <artifactId>spark-extension-shims-spark3_${scalaVersion}</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-
     <profile>
       <id>celeborn</id>
       <dependencies>

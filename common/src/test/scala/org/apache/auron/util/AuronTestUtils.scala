@@ -19,6 +19,7 @@ package org.apache.auron.util
 import org.apache.spark.SPARK_VERSION
 
 object AuronTestUtils {
+
   lazy val SPARK_RUNTIME_VERSION: SemanticVersion = SemanticVersion(SPARK_VERSION)
   lazy val isSparkV30OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.0"
   lazy val isSparkV31OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.1"
