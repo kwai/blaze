@@ -57,7 +57,7 @@
     <maven.plugin.surefire.version>3.3.0</maven.plugin.surefire.version>
     <maven.plugin.shade.version>3.5.2</maven.plugin.shade.version>
     <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
-    <maven.plugin.templating.version>1.0.0</maven.plugin.templating.version>
+    <maven.plugin.templating.version>3.0.0</maven.plugin.templating.version>
 
     <scalamacros.paradise.version>2.1.1</scalamacros.paradise.version>
     <semanticdb.version>4.8.1</semanticdb.version>
