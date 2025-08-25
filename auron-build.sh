@@ -20,7 +20,7 @@
 
 # Function to display script usage
 print_help() {
-    echo "Usage: $0 [OPTIONS]"
+    echo "Usage: $0 [OPTIONS] <maven build options>"
     echo "Build Auron project with specified Maven profiles"
     echo
     echo "Options:"
