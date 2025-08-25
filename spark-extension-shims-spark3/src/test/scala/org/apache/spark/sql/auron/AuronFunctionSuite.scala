@@ -20,7 +20,10 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.auron.util.AuronTestUtils
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 
-class AuronFunctionSuite extends org.apache.spark.sql.QueryTest with BaseAuronSQLSuite with AdaptiveSparkPlanHelper {
+class AuronFunctionSuite
+    extends org.apache.spark.sql.QueryTest
+    with BaseAuronSQLSuite
+    with AdaptiveSparkPlanHelper {
 
   test("sum function with float input") {
     if (AuronTestUtils.isSparkV31OrGreater) {
