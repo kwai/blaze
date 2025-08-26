@@ -23,7 +23,8 @@ import scala.reflect.macros.whitebox
 
 object sparkver {
   def matchVersion(vers: String): Boolean = {
-    val configuredVer = System.getProperty("auron.shim")
+    // please ensure the common module is built
+    val configuredVer = org.apache.auron.common.ProjectConstants.SHIM_NAME
     for (ver <- vers.split("/")) {
       val verStripped = ver.trim
       if (s"spark-$verStripped" == configuredVer) {
