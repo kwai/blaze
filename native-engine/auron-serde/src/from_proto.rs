@@ -755,6 +755,7 @@ impl From<&protobuf::BoundReference> for Column {
 impl From<protobuf::ScalarFunction> for Arc<ScalarUDF> {
     fn from(f: protobuf::ScalarFunction) -> Self {
         use datafusion::functions as f;
+        use datafusion_spark::function as spark_fun;
         use protobuf::ScalarFunction;
 
         match f {
@@ -814,13 +815,20 @@ impl From<protobuf::ScalarFunction> for Arc<ScalarUDF> {
             ScalarFunction::StartsWith => f::string::starts_with(),
             ScalarFunction::Strpos => f::unicode::strpos(),
             ScalarFunction::Substr => f::unicode::substr(),
-            ScalarFunction::ToHex => f::string::to_hex(),
+            // ScalarFunction::ToHex => f::string::to_hex(),
             ScalarFunction::ToTimestampMicros => f::datetime::to_timestamp_micros(),
             ScalarFunction::ToTimestampSeconds => f::datetime::to_timestamp_seconds(),
             ScalarFunction::Now => f::datetime::now(),
             ScalarFunction::Translate => f::unicode::translate(),
             ScalarFunction::RegexpMatch => f::regex::regexp_match(),
             ScalarFunction::Coalesce => f::core::coalesce(),
+
+            // -- datafusion-spark functions
+            // math functions
+            ScalarFunction::Expm1 => spark_fun::math::expm1(),
+            ScalarFunction::Factorial => spark_fun::math::factorial(),
+            ScalarFunction::Hex => spark_fun::math::hex(),
+
             ScalarFunction::SparkExtFunctions => {
                 unreachable!()
             }
