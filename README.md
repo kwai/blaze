@@ -81,7 +81,7 @@ This section describes how to submit and configure a Spark Job with Auron suppor
 
 1. move auron jar package to spark client classpath (normally `spark-xx.xx.xx/jars/`).
 
-2. add the follow configs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
+2. Add the following configs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
 
 ```properties
 spark.auron.enable true
