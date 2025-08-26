@@ -24,27 +24,20 @@ print_help() {
     echo "Build Auron project with specified Maven profiles"
     echo
     echo "Options:"
-    echo "  --pre                  Activate pre-release profile"
-    echo "  --release              Activate release profile"
-    echo "  --sparkver <VERSION>   Specify Spark version (e.g. 3.0/3.1/3.2/3.3/3.4/3.5)"
-    echo "  --scalaver <VERSION>   Specify Scala version (e.g. 2.12/2.13)"
-    echo "  --celeborn <VERSION>   Specify Celeborn version (e.g. 0.5/0.6)"
-    echo "  --uniffle <VERSION>    Specify Uniffle version (e.g. 0.9)"
-    echo "  --paimon <VERSION>     Specify Paimon version (e.g. 1.1)"
-    echo "  --clean <true/false>   Clean before build, default: true"
-    echo "  -h, --help             Show this help message"
-    echo
-    echo "Profile mapping:"
-    echo "  --pre           → -Ppre"
-    echo "  --release       → -Prelease"
-    echo "  --sparkver 3.5  → -Pspark-3.5"
-    echo "  --celeborn 0.5  → -Pceleborn,celeborn-0.5"
-    echo "  --uniffle 0.9   → -Puniffle,uniffle-0.9"
-    echo "  --paimon 1.1    → -Ppaimon,paimon-1.1"
+    echo "  --pre                    Activate pre-release profile"
+    echo "  --release                Activate release profile"
+    echo "  --sparkver <VERSION>     Specify Spark version (e.g. 3.0/3.1/3.2/3.3/3.4/3.5)"
+    echo "  --scalaver <VERSION>     Specify Scala version (e.g. 2.12/2.13)"
+    echo "  --celeborn <VERSION>     Specify Celeborn version (e.g. 0.5/0.6)"
+    echo "  --uniffle <VERSION>      Specify Uniffle version (e.g. 0.9)"
+    echo "  --paimon <VERSION>       Specify Paimon version (e.g. 1.1)"
+    echo "  --clean <true|false>     Clean before build (default: true)"
+    echo "  --skiptests <true|false> Skip unit tests (default: true)"
+    echo "  -h, --help               Show this help message"
     echo
     echo "Examples:"
-    echo "  $0 --pre --sparkver 3.5 --scalaver 2.13"
-    echo "  $0 --release --sparkver 3.5 --scalaver 2.13 --celeborn 0.5 --uniffle 0.9 --paimon 1.1"
+    echo "  $0 --pre --sparkver 3.5 --scalaver 2.12"
+    echo "  $0 --clean true --skiptests true --release --sparkver 3.5 --scalaver 2.12 --celeborn 0.5 --uniffle 0.9 --paimon 1.1"
     exit 0
 }
 
@@ -54,6 +47,7 @@ MVN_CMD="$(dirname "$0")/build/mvn"
 PRE_PROFILE=false
 RELEASE_PROFILE=false
 CLEAN=true
+SKIP_TESTS=true
 SPARK_VER=""
 SCALA_VER=""
 CELEBORN_VER=""
@@ -77,6 +71,15 @@ while [[ $# -gt 0 ]]; do
                 shift 2
             else
                 echo "ERROR: --clean requires true/false" >&2
+                exit 1
+            fi
+            ;;
+        --skiptests)
+            if [[ -n "$2" && "$2" =~ ^(true|false)$ ]]; then
+                SKIP_TESTS="$2"
+                shift 2
+            else
+                echo "ERROR: --skiptests requires true/false" >&2
                 exit 1
             fi
             ;;
@@ -144,15 +147,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate requirements
+# Validate required options
+MISSING_REQUIREMENTS=()
 if [[ "$PRE_PROFILE" == false && "$RELEASE_PROFILE" == false ]]; then
     MISSING_REQUIREMENTS+=("--pre or --release must be specified")
 fi
-
 if [[ -z "$SPARK_VER" ]]; then
     MISSING_REQUIREMENTS+=("--sparkver must be specified")
 fi
-
 if [[ -z "$SCALA_VER" ]]; then
     MISSING_REQUIREMENTS+=("--scalaver must be specified")
 fi
@@ -167,41 +169,46 @@ if [[ "${#MISSING_REQUIREMENTS[@]}" -gt 0 ]]; then
     exit 1
 fi
 
-# Validate profile combinations
 if [[ "$PRE_PROFILE" == true && "$RELEASE_PROFILE" == true ]]; then
     echo "ERROR: Cannot use both --pre and --release simultaneously" >&2
     exit 1
 fi
 
-# Build Maven args
+# Compose build args
 CLEAN_ARGS=()
-BUILD_ARGS=(package -DskipTests)
-
-# Add profile flags
 if [[ "$CLEAN" == true ]]; then
-    CLEAN_ARGS=(clean)
+    CLEAN_ARGS+=("clean")
 fi
+
+BUILD_ARGS=()
+if [[ "$SKIP_TESTS" == true ]]; then
+    BUILD_ARGS+=("package" "-DskipTests")
+else
+    BUILD_ARGS+=("package")
+fi
+
 if [[ "$PRE_PROFILE" == true ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Ppre")
+    BUILD_ARGS+=("-Ppre")
 fi
 if [[ "$RELEASE_PROFILE" == true ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Prelease")
+    BUILD_ARGS+=("-Prelease")
 fi
 if [[ -n "$SPARK_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pspark-$SPARK_VER")
+    BUILD_ARGS+=("-Pspark-$SPARK_VER")
 fi
 if [[ -n "$SCALA_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pscala-$SCALA_VER")
+    BUILD_ARGS+=("-Pscala-$SCALA_VER")
 fi
 if [[ -n "$CELEBORN_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Pceleborn,celeborn-$CELEBORN_VER")
+    BUILD_ARGS+=("-Pceleborn,celeborn-$CELEBORN_VER")
 fi
 if [[ -n "$UNIFFLE_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Puniffle,uniffle-$UNIFFLE_VER")
+    BUILD_ARGS+=("-Puniffle,uniffle-$UNIFFLE_VER")
 fi
 if [[ -n "$PAIMON_VER" ]]; then
-    BUILD_ARGS=("${BUILD_ARGS[@]}" "-Ppaimon,paimon-$PAIMON_VER")
+    BUILD_ARGS+=("-Ppaimon,paimon-$PAIMON_VER")
 fi
+
 MVN_ARGS=("${CLEAN_ARGS[@]}" "${BUILD_ARGS[@]}")
 
 # Execute Maven command
