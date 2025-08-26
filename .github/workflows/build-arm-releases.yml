@@ -24,7 +24,7 @@ on:
 
 jobs:
   build-snapshot:
-    name: Build Auron on ${{ matrix.runner }}
+    name: Build ARM
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -61,7 +61,6 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
           rustflags: --allow warnings -C target-feature=+aes
           components:
             cargo
