@@ -17,7 +17,8 @@
 package org.apache.spark.sql.auron
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.auron.util.AuronTestUtils
+
+import org.apache.auron.util.AuronTestUtils
 
 class AuronFunctionSuite extends org.apache.spark.sql.QueryTest with BaseAuronSQLSuite {
 

@@ -14,17 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.auron.util
 
-import org.apache.spark.SPARK_VERSION
-
-object AuronTestUtils {
-
-  lazy val SPARK_RUNTIME_VERSION: SemanticVersion = SemanticVersion(SPARK_VERSION)
-  lazy val isSparkV30OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.0"
-  lazy val isSparkV31OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.1"
-  lazy val isSparkV32OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.2"
-  lazy val isSparkV33OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.3"
-  lazy val isSparkV34OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.4"
-  lazy val isSparkV35OrGreater: Boolean = SPARK_RUNTIME_VERSION >= "3.5"
+package org.apache.auron.common;
+public final class ProjectConstants {
+	public static final String PROJECT_VERSION = "${project.version}";
+	public static final String SHIM_NAME = "${shimName}";
 }

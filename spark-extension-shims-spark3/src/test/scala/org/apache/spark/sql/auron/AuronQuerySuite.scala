@@ -19,7 +19,8 @@ package org.apache.spark.sql.auron
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.auron.util.AuronTestUtils
+
+import org.apache.auron.util.AuronTestUtils
 
 class AuronQuerySuite
     extends org.apache.spark.sql.QueryTest
