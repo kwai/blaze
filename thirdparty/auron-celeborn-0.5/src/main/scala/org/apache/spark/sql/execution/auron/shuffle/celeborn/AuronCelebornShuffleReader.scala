@@ -97,17 +97,7 @@ class AuronCelebornShuffleReader[K, C](
       }
     }
 
-    reader.read().map { kv =>
-      val celebornInputStream = kv._2.asInstanceOf[CelebornInputStream]
-
-      // force disable decompression because compression is skipped in shuffle writer
-      FieldUtils.writeField(
-        celebornInputStream,
-        "shuffleCompressionEnabled",
-        Boolean.box(false).asInstanceOf[Object],
-        true)
-      celebornInputStream
-    }
+    reader.read().map { kv => kv._2.asInstanceOf[CelebornInputStream] }
   }
 }
 
