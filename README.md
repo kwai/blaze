@@ -79,7 +79,7 @@ SHIM=spark-3.3 MODE=release JAVA_VERSION=8 SCALA_VERSION=2.12 ./release-docker.s
 
 This section describes how to submit and configure a Spark Job with Auron support.
 
-1. move auron jar package to spark client classpath (normally `spark-xx.xx.xx/jars/`).
+1. Move the Auron JAR to the Spark client classpath (normally spark-xx.xx.xx/jars/).
 
 2. Add the following configs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
 
