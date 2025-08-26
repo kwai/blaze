@@ -22,21 +22,19 @@
 
 <p align="center"><img src="./dev/auron-logo.png" /></p>
 
-The Auron accelerator for Apache Spark leverages native vectorized execution to accelerate query processing. It combines
-the power of the [Apache DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the Spark distributed
+The Auron accelerator for big data engine (e.g., Spark, Flink) leverages native vectorized execution to accelerate query processing. It combines
+the power of the [Apache DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the distributed
 computing framework.
 
-Auron takes a fully optimized physical plan from Spark, mapping it into DataFusion's execution plan, and performs native
-plan computation in Spark executors.
+Auron takes a fully optimized physical plan from distrbuted computing framework, mapping it into DataFusion's execution plan, and performs native
+plan computation.
 
-Auron is composed of the following high-level components:
+The key Key capabilities of Auron include:
 
-- **Spark Extension**: hooks the whole accelerator into Spark execution lifetime.
-- **Spark Shims**: specialized codes for different versions of spark.
-- **Native Engine**: implements the native engine in rust, including:
-  - ExecutionPlan protobuf specification
-  - JNI gateway
-  - Customized operators, expressions, functions
+- **Native execution**:  Implemented in Rust, eliminating JVM overhead and enabling predictable performance.
+- **Vectorized computation**: Built on Apache Arrow's columnar format, fully leveraging SIMD instructions for batch processing.
+- **Pluggable architecture:**: Seamlessly integrates with Apache Spark while designed for future extensibility to other engines.
+- **Production-hardened optimizations:** Multi-level memory management, compacted shuffle formats, and adaptive execution strategies developed through large-scale deployment.
 
 Based on the inherent well-defined extensibility of DataFusion, Auron can be easily extended to support:
 
@@ -62,11 +60,6 @@ compilation. We recommend you to use [rustup](https://rustup.rs/).
 Auron has been well tested on jdk8/11/17.
 
 3. Check out the source code.
-
-```shell
-git clone git@github.com:kwai/auron.git
-cd auron
-```
 
 4. Build the project.
 
@@ -106,40 +99,6 @@ spark.executor.memoryOverhead 4096
 spark-sql -f tpcds/q01.sql
 ```
 
-## Integrate with Apache Celeborn
-Auron has supported Celeborn integration now, use the following configurations to enable shuffling with Celeborn:
-
-```properties
-
-# change celeborn endpoint and storage directory to the correct location
-spark.shuffle.manager org.apache.spark.sql.execution.auron.shuffle.celeborn.AuronCelebornShuffleManager
-spark.serializer org.apache.spark.serializer.KryoSerializer
-spark.celeborn.master.endpoints localhost:9097
-spark.celeborn.client.spark.shuffle.writer hash
-spark.celeborn.client.push.replicate.enabled false
-spark.celeborn.storage.availableTypes HDFS
-spark.celeborn.storage.hdfs.dir hdfs:///home/celeborn
-spark.sql.adaptive.localShuffleReader.enabled false
-```
-## Integrate with Apache Uniffle
-Auron supports integration with Apache Uniffle, a high-performance remote shuffle service for Apache Spark. 
-
-To enable Uniffle as the shuffle manager in Auron, configure your Spark application with the following settings in 
-`spark-defaults.conf` or via Spark submit options:
-
-```properties
-
-spark.shuffle.manager org.apache.spark.sql.execution.auron.shuffle.uniffle.AuronUniffleShuffleManager
-spark.serializer org.apache.spark.serializer.KryoSerializer
-spark.rss.coordinator.quorum <coordinatorIp1>:19999,<coordinatorIp2>:19999
-spark.rss.enabled true
-```
-Notes:
-
-* Uniffle Client Dependency: Ensure the Uniffle client library (e.g., `rss-client-spark3-shaded-0.9.2.jar` for Uniffle 0.9.2 or later) is included in your Spark application's classpath.
-* Coordinator Endpoints: Replace `<coordinator-host>:19999` with the actual Uniffle coordinator address in your cluster.
-* For detailed setup and advanced configuration, refer to the [Apache Uniffle Documentation](https://uniffle.apache.org/docs/client-guide).
-
 ## Performance
 
 TPC-DS 1TB Benchmark (for details, see https://auron-project.github.io/documents/benchmarks.html):
@@ -150,13 +109,19 @@ We also encourage you to benchmark Auron and share the results with us. 🤗
 
 ## Community
 
-We're using [Discussions](https://github.com/blaze-init/auron/discussions) to connect with other members
-of our community. We hope that you:
-- Ask questions you're wondering about.
-- Share ideas.
-- Engage with other community members.
-- Welcome others who are open-minded. Remember that this is a community we build together 💪 .
+### Subscribe Mailing Lists
 
+Mail List is the most recognized form of communication in the Apache community.
+Contact us through the following mailing list.
+
+| Name                                                       | Scope                           |                                                          |                                                               | 
+|:-----------------------------------------------------------|:--------------------------------|:---------------------------------------------------------|:--------------------------------------------------------------|
+| [dev@auron.apache.org](mailto:dev@auron.apache.org)  | Development-related discussions | [Subscribe](mailto:dev-subscribe@auron.apache.org)    | [Unsubscribe](mailto:dev-unsubscribe@auron.apache.org)     |
+
+
+### Report Issues or Submit Pull Request
+
+If you meet any questions, connect us and fix it by submitting a 🔗[Pull Request](https://github.com/apache/auron/pulls).
 
 ## License
 
