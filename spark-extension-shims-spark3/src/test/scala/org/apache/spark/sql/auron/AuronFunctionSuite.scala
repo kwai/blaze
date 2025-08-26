@@ -18,8 +18,12 @@ package org.apache.spark.sql.auron
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.auron.util.AuronTestUtils
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 
-class AuronFunctionSuite extends org.apache.spark.sql.QueryTest with BaseAuronSQLSuite {
+class AuronFunctionSuite
+    extends org.apache.spark.sql.QueryTest
+    with BaseAuronSQLSuite
+    with AdaptiveSparkPlanHelper {
 
   test("sum function with float input") {
     if (AuronTestUtils.isSparkV31OrGreater) {
@@ -66,6 +70,33 @@ class AuronFunctionSuite extends org.apache.spark.sql.QueryTest with BaseAuronSQ
           |""".stripMargin
       val df = sql(functions)
       checkAnswer(df, Seq(Row(-222940379)))
+    }
+  }
+
+  test("expm1 function") {
+    withTable("t1") {
+      sql("create table t1(c1 double) using parquet")
+      sql("insert into t1 values(0.0), (1.1), (2.2)")
+      val df = sql("select expm1(c1) from t1")
+      checkAnswer(df, Seq(Row(0.0), Row(2.0041660239464334), Row(8.025013499434122)))
+    }
+  }
+
+  test("factorial function") {
+    withTable("t1") {
+      sql("create table t1(c1 int) using parquet")
+      sql("insert into t1 values(5)")
+      val df = sql("select factorial(c1) from t1")
+      checkAnswer(df, Seq(Row(120)))
+    }
+  }
+
+  test("hex function") {
+    withTable("t1") {
+      sql("create table t1(c1 int, c2 string) using parquet")
+      sql("insert into t1 values(17, 'Spark SQL')")
+      val df = sql("select hex(c1), hex(c2) from t1")
+      checkAnswer(df, Seq(Row("11", "537061726B2053514C")))
     }
   }
 }

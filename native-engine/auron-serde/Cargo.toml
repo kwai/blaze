@@ -30,6 +30,7 @@ datafusion-ext-commons = { workspace = true }
 datafusion-ext-exprs = { workspace = true }
 datafusion-ext-functions = { workspace = true }
 datafusion-ext-plans = { workspace = true }
+datafusion-spark = { workspace = true }
 
 base64 = { workspace = true }
 log = { workspace = true }
