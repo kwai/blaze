@@ -20,7 +20,7 @@
 
 # Function to display script usage
 print_help() {
-    echo "Usage: $0 [OPTIONS]"
+    echo "Usage: $0 [OPTIONS] <maven build options>"
     echo "Build Auron project with specified Maven profiles"
     echo
     echo "Options:"
@@ -128,8 +128,16 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             print_help
             ;;
-        *)
+        --*)
             echo "ERROR: Unknown option '$1'" >&2
+            echo "Use '$0 --help' for usage information" >&2
+            exit 1
+            ;;
+        -*)
+            break
+            ;;
+        *)
+            echo "ERROR: $1 is not supported" >&2
             echo "Use '$0 --help' for usage information" >&2
             exit 1
             ;;
@@ -197,5 +205,5 @@ fi
 MVN_ARGS=("${CLEAN_ARGS[@]}" "${BUILD_ARGS[@]}")
 
 # Execute Maven command
-echo "Compiling with maven args: $MVN_CMD ${MVN_ARGS[@]}"
-"$MVN_CMD" "${MVN_ARGS[@]}"
+echo "Compiling with maven args: $MVN_CMD ${MVN_ARGS[@]} $@"
+"$MVN_CMD" "${MVN_ARGS[@]}" "$@"
