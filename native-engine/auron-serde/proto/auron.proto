@@ -253,7 +253,7 @@ enum ScalarFunction {
   StartsWith=51;
   Strpos=52;
   Substr=53;
-  ToHex=54;
+  // ToHex=54;
   ToTimestamp=55;
   ToTimestampMillis=56;
   ToTimestampMicros=57;
@@ -263,6 +263,9 @@ enum ScalarFunction {
   Trim=61;
   Upper=62;
   Coalesce=63;
+  Expm1=64;
+  Factorial=65;
+  Hex=66;
   SparkExtFunctions=10000;
 }
 
