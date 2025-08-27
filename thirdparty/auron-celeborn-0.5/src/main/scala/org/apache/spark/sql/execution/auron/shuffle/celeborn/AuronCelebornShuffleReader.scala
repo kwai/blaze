@@ -26,6 +26,7 @@ import scala.reflect.ClassTag
 
 import org.apache.celeborn.client.read.CelebornInputStream
 import org.apache.celeborn.common.CelebornConf
+import org.apache.commons.lang3.reflect.FieldUtils
 import org.apache.spark.ShuffleDependency
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.Logging
