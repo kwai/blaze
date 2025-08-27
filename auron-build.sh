@@ -24,7 +24,7 @@ print_help() {
     echo "Build Auron project with specified Maven profiles"
     echo
     echo "Options:"
-    echo "  --docker <true|false>    Build in Docker (default: false)"
+    echo "  --docker <true|false>    Build in Docker with CentOS7 (default: false)"
     echo "  --pre                    Activate pre-release profile"
     echo "  --release                Activate release profile"
     echo "  --sparkver <VERSION>     Specify Spark version (e.g. 3.0/3.1/3.2/3.3/3.4/3.5)"
