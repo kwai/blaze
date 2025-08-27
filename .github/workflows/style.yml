@@ -21,9 +21,11 @@ on:
   push:
     branches:
       - master
+      - branch-*
   pull_request:
     branches:
       - master
+      - branch-*
 
 concurrency:
   group: style-${{ github.ref }}
