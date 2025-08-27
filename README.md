@@ -26,10 +26,10 @@ The Auron accelerator for big data engine (e.g., Spark, Flink) leverages native 
 the power of the [Apache DataFusion](https://arrow.apache.org/datafusion/) library and the scale of the distributed
 computing framework.
 
-Auron takes a fully optimized physical plan from distrbuted computing framework, mapping it into DataFusion's execution plan, and performs native
+Auron takes a fully optimized physical plan from distributed computing framework, mapping it into DataFusion's execution plan, and performs native
 plan computation.
 
-The key Key capabilities of Auron include:
+The key capabilities of Auron include:
 
 - **Native execution**:  Implemented in Rust, eliminating JVM overhead and enabling predictable performance.
 - **Vectorized computation**: Built on Apache Arrow's columnar format, fully leveraging SIMD instructions for batch processing.
@@ -79,9 +79,9 @@ SHIM=spark-3.3 MODE=release JAVA_VERSION=8 SCALA_VERSION=2.12 ./release-docker.s
 
 This section describes how to submit and configure a Spark Job with Auron support.
 
-1. move auron jar package to spark client classpath (normally `spark-xx.xx.xx/jars/`).
+1. Move the Auron JAR to the Spark client classpath (normally spark-xx.xx.xx/jars/).
 
-2. add the follow confs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
+2. Add the following configs to spark configuration in `spark-xx.xx.xx/conf/spark-default.conf`:
 
 ```properties
 spark.auron.enable true
