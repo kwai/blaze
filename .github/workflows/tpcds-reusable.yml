@@ -121,7 +121,7 @@ jobs:
           version: "21.7"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@ab6845274e2ff01cd4462007e1a9d9df1ab49f42
         with:
           rustflags: --allow warnings -C target-feature=+aes
           components:
@@ -129,7 +129,7 @@ jobs:
             rustfmt
 
       - name: Rustfmt Check
-        uses: actions-rust-lang/rustfmt@v1
+        uses: actions-rust-lang/rustfmt@559aa3035a47390ba96088dffa783b5d26da9326
 
       - name: Cargo test
         run: |
