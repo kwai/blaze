@@ -227,7 +227,7 @@ if [[ "$USE_DOCKER" == true ]]; then
     # In Docker mode, use multi-threaded Maven build with -T8 for faster compilation
     BUILD_ARGS+=("-T8")
     if [[ "$CLEAN" == true ]]; then
-        # Clean the host-side directory that is mounted into the Docker container as /auron/target.
+        # Clean the host-side directory that is mounted into the Docker container.
         # This avoids "device or resource busy" errors when running `mvn clean` inside the container.
         echo "[INFO] Docker mode: manually cleaning target-docker contents..."
         rm -rf ./target-docker/* || echo "[WARN] Failed to clean target-docker/*"
