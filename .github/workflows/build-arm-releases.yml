@@ -50,6 +50,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: 'adopt-hotspot'
@@ -61,7 +63,7 @@ jobs:
           version: "21.7"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses:  ./.github/actions/setup-rust-toolchain
         with:
           rustflags: --allow warnings -C target-feature=+aes
           components:

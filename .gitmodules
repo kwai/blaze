@@ -17,4 +17,7 @@
 
 [submodule "dev/tpcds_1g"]
 	path = dev/tpcds_1g
-	url = git@github.com:blaze-init/tpcds_1g.git
+	url = https://github.com/auron-project/tpcds_1g
+[submodule ".github/actions/setup-rust-toolchain"]
+	path = .github/actions/setup-rust-toolchain
+	url = https://github.com/actions-rust-lang/setup-rust-toolchain
