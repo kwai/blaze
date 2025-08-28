@@ -17,8 +17,8 @@
 
 # AURON
 
-[![TPC-DS](https://github.com/kwai/blaze/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/kwai/blaze/actions/workflows/tpcds.yml)
-[![master-ce7-builds](https://github.com/kwai/blaze/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/kwai/blaze/actions/workflows/build-ce7-releases.yml)
+[![TPC-DS](https://github.com/apache/auron/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/apache/auron/actions/workflows/tpcds.yml)
+[![master-ce7-builds](https://github.com/apache/auron/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/apache/auron/actions/workflows/build-ce7-releases.yml)
 
 <p align="center"><img src="./dev/auron-logo.png" /></p>
 
