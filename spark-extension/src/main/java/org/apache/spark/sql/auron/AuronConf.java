@@ -55,7 +55,7 @@ public enum AuronConf {
     /// ignore corrupted input files
     IGNORE_CORRUPTED_FILES("spark.files.ignoreCorruptFiles", false),
 
-    /// enable partial aggregate skipping (see https://github.com/blaze-init/auron/issues/327)
+    /// enable partial aggregate skipping (see https://github.com/apache/auron/issues/327)
     PARTIAL_AGG_SKIPPING_ENABLE("spark.auron.partialAggSkipping.enable", true),
 
     /// partial aggregate skipping ratio
