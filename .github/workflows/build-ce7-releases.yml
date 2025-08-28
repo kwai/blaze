@@ -24,7 +24,6 @@ on:
     branches:
       - master
       - branch-*
-  pull_request:
 
 jobs:
   build-snapshot:
