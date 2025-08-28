@@ -101,9 +101,11 @@ spark-sql -f tpcds/q01.sql
 
 ## Performance
 
-TPC-DS 1TB Benchmark (for details, see https://auron-project.github.io/documents/benchmarks.html):
+TPC-DS 1TB Benchmark Results:
 
 ![tpcds-benchmark-echarts.png](./benchmark-results/tpcds-benchmark-echarts.png)
+
+For methodology and additional results, please refer to [benchmark documentation](https://auron.apache.org/documents/benchmarks.html).
 
 We also encourage you to benchmark Auron and share the results with us. 🤗
 
