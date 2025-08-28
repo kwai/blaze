@@ -43,7 +43,7 @@
     <project.version>5.0.0-SNAPSHOT</project.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
-    <protobufVersion>3.21.9</protobufVersion>
+    <protobufVersion>3.25.5</protobufVersion>
 
     <javaVersion>8</javaVersion>
     <scalaVersion>2.12</scalaVersion>
