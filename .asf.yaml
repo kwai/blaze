@@ -20,6 +20,8 @@ github:
     - rust-lang
     - big-data
     - spark
+    - datafusion
+    - arrow
   enabled_merge_buttons:
     squash: true
     merge: false
