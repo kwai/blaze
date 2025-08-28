@@ -21,3 +21,15 @@
 [submodule ".github/actions/setup-rust-toolchain"]
 	path = .github/actions/setup-rust-toolchain
 	url = https://github.com/actions-rust-lang/setup-rust-toolchain
+[submodule ".github/actions/setup-maven-action"]
+	path = .github/actions/setup-maven-action
+	url = https://github.com/s4u/setup-maven-action
+[submodule ".github/actions/actions-commit-hash"]
+	path = .github/actions/actions-commit-hash
+	url = https://github.com/prompt/actions-commit-hash
+[submodule ".github/actions/rootless-docker"]
+	path = .github/actions/rootless-docker
+	url = https://github.com/scribemd/rootless-docker
+[submodule ".github/actions/docker-cache"]
+	path = .github/actions/docker-cache
+	url = https://github.com/scribemd/docker-cache
