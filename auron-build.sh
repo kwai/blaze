@@ -33,6 +33,7 @@ print_help() {
     echo "  --paimon <VERSION>       Specify Paimon version (e.g. 1.1)"
     echo "  --clean <true|false>     Clean before build (default: true)"
     echo "  --skiptests <true|false> Skip unit tests (default: true)"
+    echo "  --skipBuildNative        Skip compile native engine"
     echo "  -h, --help               Show this help message"
     echo
     echo "Examples:"
@@ -48,6 +49,7 @@ PRE_PROFILE=false
 RELEASE_PROFILE=false
 CLEAN=true
 SKIP_TESTS=true
+SKIP_BUILD_NATIVE=false
 SPARK_VER=""
 SCALA_VER=""
 CELEBORN_VER=""
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
                 echo "ERROR: --skiptests requires true/false" >&2
                 exit 1
             fi
+            ;;
+        --skipBuildNative)
+            SKIP_BUILD_NATIVE=true
+            shift
             ;;
         --sparkver)
             if [[ -n "$2" && "$2" != -* ]]; then
@@ -186,7 +192,9 @@ if [[ "$SKIP_TESTS" == true ]]; then
 else
     BUILD_ARGS+=("package")
 fi
-
+if [[ "$SKIP_BUILD_NATIVE" == true ]]; then
+    BUILD_ARGS+=("-DskipBuildNative")
+fi
 if [[ "$PRE_PROFILE" == true ]]; then
     BUILD_ARGS+=("-Ppre")
 fi
