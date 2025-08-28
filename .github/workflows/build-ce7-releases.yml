@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: s4u/setup-maven-action@main
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses:  ./.github/actions/setup-rust-toolchain
 
       - uses: prompt/actions-commit-hash@v3
         id: commit

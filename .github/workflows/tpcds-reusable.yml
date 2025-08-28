@@ -121,15 +121,12 @@ jobs:
           version: "21.7"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses:  ./.github/actions/setup-rust-toolchain
         with:
           rustflags: --allow warnings -C target-feature=+aes
           components:
             cargo
             rustfmt
-
-      - name: Rustfmt Check
-        uses: actions-rust-lang/rustfmt@v1
 
       - name: Cargo test
         run: |
