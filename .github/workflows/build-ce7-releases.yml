@@ -48,6 +48,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: s4u/setup-maven-action@main
       - uses:  ./.github/actions/setup-rust-toolchain
 
