@@ -43,37 +43,35 @@ Based on the inherent well-defined extensibility of DataFusion, Auron can be eas
 - Simple and Aggregate functions.
 - File formats.
 
-We encourage you to [extend DataFusion](https://github.com/apache/arrow-datafusion) capability directly and add the
+We encourage you to extend [DataFusion](https://github.com/apache/arrow-datafusion) capability directly and add the
 supports in Auron with simple modifications in plan-serde and extension translation.
 
 ## Build from source
 
-To build Auron, please follow the steps below:
+To build Auron from source, follow the steps below:
 
 1. Install Rust
 
-The native execution lib is written in Rust. So you're required to install Rust (nightly) first for
-compilation. We recommend you to use [rustup](https://rustup.rs/).
+Auron's native execution lib is written in Rust. You need to install Rust (nightly) before compiling.
+
+We recommend using [rustup](https://rustup.rs/) for installation.
 
 2. Install JDK
 
-Auron has been well tested on jdk8/11/17.
+Auron has been well tested with JDK 8, 11, and 17.
+
+Make sure `JAVA_HOME` is properly set and points to your desired version.
 
 3. Check out the source code.
 
 4. Build the project.
 
-use `./auron-build.sh` for building the project. execute `./auron-build.sh --help` for help.
+You can build Auron either *locally* or *inside Docker with CentOS7* using a unified script: `auron-build.sh`.
 
-After the build is finished, a fat Jar package that contains all the dependencies will be generated in the `target`
-directory.
+Run `./auron-build.sh --help` to see all available options.
 
-## Build with docker
-
-You can use the following command to build a centos-7 compatible release:
-```shell
-SHIM=spark-3.3 MODE=release JAVA_VERSION=8 SCALA_VERSION=2.12 ./release-docker.sh
-```
+After the build completes, a fat JAR with all dependencies will be generated in either the `target/` directory (for local builds)
+or `target-docker/` directory (for Docker builds), depending on the selected build mode.
 
 ## Run Spark Job with Auron Accelerator
 
