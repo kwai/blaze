@@ -5,7 +5,7 @@
       <list>
         <IssueNavigationLink>
           <option name="issueRegexp" value="#(\d+)" />
-          <option name="linkRegexp" value="https://github.com/kwai/auron/pull/$1" />
+          <option name="linkRegexp" value="https://github.com/apache/auron/pull/$1" />
         </IssueNavigationLink>
       </list>
     </option>
