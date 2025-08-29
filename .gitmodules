@@ -18,6 +18,8 @@
 [submodule "dev/tpcds_1g"]
 	path = dev/tpcds_1g
 	url = https://github.com/auron-project/tpcds_1g
+# git submodule add --force  https://github.com/actions-rust-lang/setup-rust-toolchain .github/actions/setup-rust-toolchain
+# git -C .github/actions/setup-rust-toolchain checkout ac90e63697ac2784f4ecfe2964e1a285c304003a
 [submodule ".github/actions/setup-rust-toolchain"]
 	path = .github/actions/setup-rust-toolchain
 	url = https://github.com/actions-rust-lang/setup-rust-toolchain
