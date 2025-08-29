@@ -75,7 +75,7 @@ abstract class NativeFileSourceScanBase(basedFileScan: FileSourceScanExec)
 
   // predicate pruning is buggy for decimal type, so we need to
   // temporarily disable predicate pruning for decimal type
-  // see https://github.com/kwai/auron/issues/1032
+  // see https://github.com/apache/auron/issues/1032
   protected def nativePruningPredicateFilters: Seq[pb.PhysicalExprNode] =
     basedFileScan.dataFilters
       .filter(expr => expr.find(_.dataType.isInstanceOf[DecimalType]).isEmpty)
