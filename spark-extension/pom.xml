@@ -31,6 +31,11 @@
   <dependencies>
     <dependency>
       <groupId>org.apache.auron</groupId>
+      <artifactId>hadoop-shim_${scalaVersion}</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.auron</groupId>
       <artifactId>spark-version-annotation-macros_${scalaVersion}</artifactId>
       <version>${project.version}</version>
       <scope>compile</scope>
@@ -39,11 +44,6 @@
       <groupId>org.apache.auron</groupId>
       <artifactId>proto</artifactId>
       <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.scala-lang</groupId>
-      <artifactId>scala-library</artifactId>
-      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.spark</groupId>
@@ -75,11 +75,6 @@
     <dependency>
       <groupId>org.apache.arrow</groupId>
       <artifactId>arrow-vector</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.auron</groupId>
-      <artifactId>hadoop-shim_${scalaVersion}</artifactId>
-      <version>${project.version}</version>
     </dependency>
   </dependencies>
 

@@ -51,15 +51,5 @@
       <artifactId>spark-core_${scalaVersion}</artifactId>
       <scope>provided</scope>
     </dependency>
-    <dependency>
-      <groupId>org.scala-lang</groupId>
-      <artifactId>scala-library</artifactId>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.scalatest</groupId>
-      <artifactId>scalatest_${scalaVersion}</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
 </project>
