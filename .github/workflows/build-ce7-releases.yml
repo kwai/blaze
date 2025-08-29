@@ -52,6 +52,12 @@ jobs:
           submodules: recursive
       - uses:  ./.github/actions/setup-rust-toolchain
 
+      - name: Extract spark version
+        run: |
+          raw="${{ matrix.sparkver }}"
+          ver="${raw#spark-}"
+          echo "sparkver_short=$ver" >> $GITHUB_ENV
+
       - name: Detect osclassfier
         id: detect-osclassfier
         run: |
@@ -67,8 +73,12 @@ jobs:
 
       - name: Build auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         run: |
-          sed -i 's/docker-compose -f/docker compose -f/g' ./release-docker.sh
-          SHIM=${{ matrix.sparkver }} MODE=release SCALA_VERSION=${{ matrix.scalaver }} ./release-docker.sh
+          sed -i 's/docker-compose -f/docker compose -f/g' ./auron-build.sh
+          ./auron-build.sh \
+          --docker true \
+          --release \
+          --sparkver ${{ env.sparkver_short }} \
+          --scalaver ${{ matrix.scalaver }}
 
       - name: Upload auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         uses: actions/upload-artifact@v4
