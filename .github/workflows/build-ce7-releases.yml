@@ -23,6 +23,12 @@ on:
     branches:
       - master
       - branch-*
+  pull_request:
+    branches:
+      - master
+      - branch-*
+    paths:
+      - '.github/workflows/build-ce7-releases.yml'
 
 jobs:
   build-snapshot:
