@@ -37,6 +37,7 @@ print_help() {
     echo
     echo "Examples:"
     echo "  $0 --pre --sparkver 3.5 --scalaver 2.12"
+    echo "  $0 --pre --sparkver 3.5 --scalaver 2.12 -DskipBuildNative"
     echo "  $0 --clean true --skiptests true --release --sparkver 3.5 --scalaver 2.12 --celeborn 0.5 --uniffle 0.9 --paimon 1.1"
     exit 0
 }
