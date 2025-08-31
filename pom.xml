@@ -29,6 +29,10 @@
   <version>${project.version}</version>
   <packaging>pom</packaging>
 
+  <name>Auron Parent Pom</name>
+  <description>Apache Auron (incubating)</description>
+  <url>https://github.com/apache/auron.git</url>
+
   <modules>
     <module>common</module>
     <module>spark-version-annotation-macros</module>
