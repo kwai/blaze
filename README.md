@@ -15,7 +15,7 @@
 - limitations under the License.
 -->
 
-# AURON
+# Apache Auron (Incubating)
 
 [![TPC-DS](https://github.com/apache/auron/actions/workflows/tpcds.yml/badge.svg?branch=master)](https://github.com/apache/auron/actions/workflows/tpcds.yml)
 [![master-ce7-builds](https://github.com/apache/auron/actions/workflows/build-ce7-releases.yml/badge.svg?branch=master)](https://github.com/apache/auron/actions/workflows/build-ce7-releases.yml)
