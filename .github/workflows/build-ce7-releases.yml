@@ -33,6 +33,7 @@ jobs:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
         scalaver: [ 2.12, 2.13 ]
         auronver: [5.0.0]
+        runner: [ce7]
         exclude:
           # Only build on scala-2.13 for spark-3.5
           - sparkver: spark-3.0
