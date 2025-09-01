@@ -47,11 +47,14 @@
     <project.version>5.0.0-SNAPSHOT</project.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <arrowVersion>16.0.0</arrowVersion>
+    <bytebuddyVersion>1.12.10</bytebuddyVersion>
+    <hadoopVersion>3.4.1</hadoopVersion>
     <protobufVersion>3.25.5</protobufVersion>
 
     <javaVersion>8</javaVersion>
     <scalaVersion>2.12</scalaVersion>
     <scalaLongVersion>2.12.17</scalaLongVersion>
+    <scalaJava8CompatVersion>1.0.2</scalaJava8CompatVersion>
     <maven.version>3.8.1</maven.version>
     <maven.plugin.scala.version>4.9.2</maven.plugin.scala.version>
     <maven.plugin.scalatest.version>2.2.0</maven.plugin.scalatest.version>
@@ -107,6 +110,17 @@
         <version>${scalaLongVersion}</version>
       </dependency>
       <dependency>
+        <groupId>org.scala-lang.modules</groupId>
+        <artifactId>scala-java8-compat_${scalaVersion}</artifactId>
+        <version>${scalaJava8CompatVersion}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-library</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-core_${scalaVersion}</artifactId>
         <version>${sparkVersion}</version>
@@ -132,6 +146,11 @@
             <artifactId>*</artifactId>
           </exclusion>
         </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-client-api</artifactId>
+        <version>${hadoopVersion}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.paimon</groupId>
@@ -164,11 +183,21 @@
         <version>${protobufVersion}</version>
       </dependency>
       <dependency>
+        <groupId>net.bytebuddy</groupId>
+        <artifactId>byte-buddy</artifactId>
+        <version>${bytebuddyVersion}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.bytebuddy</groupId>
+        <artifactId>byte-buddy-agent</artifactId>
+        <version>${bytebuddyVersion}</version>
+      </dependency>
+
+      <dependency>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest_${scalaVersion}</artifactId>
         <version>${scalaTestVersion}</version>
       </dependency>
-
       <dependency>
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-core_${scalaVersion}</artifactId>
@@ -200,6 +229,21 @@
   </dependencyManagement>
 
   <dependencies>
+    <dependency>
+      <groupId>org.scala-lang</groupId>
+      <artifactId>scala-library</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.scala-lang</groupId>
+      <artifactId>scala-compiler</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.scala-lang</groupId>
+      <artifactId>scala-reflect</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scalaVersion}</artifactId>
