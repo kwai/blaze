@@ -51,6 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           submodules: recursive
       - uses: actions/setup-java@v4
         with:
@@ -75,6 +77,10 @@ jobs:
         run: |
           osclassfier=$(./build/mvn help:evaluate -Dexpression=os.detected.classifier -q -DforceStdout -P${{ matrix.sparkver }})
           echo "osclassfier=$osclassfier" >> $GITHUB_ENV
+
+      - name: Get short commit hash
+        id: commit
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Build auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         run: |

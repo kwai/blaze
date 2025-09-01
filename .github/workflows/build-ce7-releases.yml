@@ -49,6 +49,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           submodules: recursive
       - uses:  ./.github/actions/setup-rust-toolchain
 
@@ -57,6 +59,10 @@ jobs:
         run: |
           osclassfier=$(./build/mvn help:evaluate -Dexpression=os.detected.classifier -q -DforceStdout -P${{ matrix.sparkver }})
           echo "osclassfier=$osclassfier" >> $GITHUB_ENV
+
+      - name: Get short commit hash
+        id: commit
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Cache auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         id: cache
