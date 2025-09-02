@@ -32,6 +32,7 @@ import org.apache.spark.auron.FSDataOutputWrapper;
 import org.apache.spark.auron.FSDataOutputWrapper$;
 import org.apache.spark.sql.auron.memory.OnHeapSpillManager;
 import org.apache.spark.sql.auron.memory.OnHeapSpillManager$;
+import org.apache.spark.sql.auron.util.TaskContextHelper$;
 
 @SuppressWarnings("unused")
 public class JniBridge {
@@ -89,10 +90,14 @@ public class JniBridge {
     public static FSDataInputWrapper openFileAsDataInputWrapper(FileSystem fs, String path) throws Exception {
         // the path is a URI string, so we need to convert it to a URI object, ref:
         // org.apache.spark.paths.SparkPath.toPath
+        TaskContextHelper$.MODULE$.setThreadNameFromTaskContext();
+        TaskContextHelper$.MODULE$.setHDFSCallerContext();
         return FSDataInputWrapper$.MODULE$.wrap(fs.open(new Path(new URI(path))));
     }
 
     public static FSDataOutputWrapper createFileAsDataOutputWrapper(FileSystem fs, String path) throws Exception {
+        TaskContextHelper$.MODULE$.setThreadNameFromTaskContext();
+        TaskContextHelper$.MODULE$.setHDFSCallerContext();
         return FSDataOutputWrapper$.MODULE$.wrap(fs.create(new Path(new URI(path))));
     }
 
