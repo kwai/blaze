@@ -97,6 +97,6 @@ jobs:
       - name: Upload auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: auron-${{matrix.sparkver}}_${{ matrix.scalaver }}-release-${{ matrix.runner }}-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          name: auron-${{matrix.sparkver}}_${{ matrix.scalaver }}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT-${{ matrix.runner }}-${{ steps.commit.outputs.short }}.jar
           path: target/auron-${{matrix.sparkver}}_${{ matrix.scalaver }}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT.jar
           overwrite: true
