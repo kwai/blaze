@@ -116,7 +116,7 @@ fn xxh64_avalanche(mut hash: u64) -> u64 {
     hash ^= hash >> 29;
     hash *= PRIME64_3;
     hash ^= hash >> 32;
-    return hash;
+    hash
 }
 
 #[cfg(test)]

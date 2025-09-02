@@ -64,10 +64,6 @@ fn hash_array<T: num::PrimInt>(
 ) {
     assert_eq!(array.len(), hashes_buffer.len());
 
-    macro_rules! initial_seed_or {
-        ($h:expr) => {{ if is_initial { initial_seed } else { $h } }};
-    }
-
     macro_rules! hash_array {
         ($array_type:ident, $column:ident, $hashes:ident, $h:expr) => {
             let array = $column.as_any().downcast_ref::<$array_type>().unwrap();

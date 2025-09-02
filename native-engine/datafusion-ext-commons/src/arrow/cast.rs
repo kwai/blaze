@@ -24,11 +24,11 @@ use num::{Bounded, FromPrimitive, Integer, Signed};
 use crate::df_execution_err;
 
 pub fn cast(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    return cast_impl(array, cast_type, false);
+    cast_impl(array, cast_type, false)
 }
 
 pub fn cast_scan_input_array(array: &dyn Array, cast_type: &DataType) -> Result<ArrayRef> {
-    return cast_impl(array, cast_type, true);
+    cast_impl(array, cast_type, true)
 }
 
 pub fn cast_impl(
@@ -418,10 +418,7 @@ fn to_date(s: &str) -> Option<i32> {
     }
     let local_date =
         chrono::NaiveDate::from_ymd_opt(sign * segments[0], segments[1] as u32, segments[2] as u32);
-    match local_date {
-        Some(local_date) => Some(local_date.num_days_from_ce() - 719163),
-        None => None,
-    }
+    local_date.map(|local_date| local_date.num_days_from_ce() - 719163)
 }
 
 #[cfg(test)]
