@@ -46,7 +46,7 @@ jobs:
           -Pscala-2.12 -Pspark-3.5 \
           -Pceleborn,celeborn-0.6 \
           -Puniffle,uniffle-0.9 \
-          -Ppaimon,paimon-1.1
+          -Ppaimon,paimon-1.2
       - name: Upload rat report
         if: failure()
         uses: actions/upload-artifact@v4
