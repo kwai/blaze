@@ -13,8 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-
 use auron_jni_bridge::{
     conf::{DoubleConf, IntConf},
     jni_bridge::JavaClasses,
@@ -24,8 +22,9 @@ use datafusion::{
     common::Result,
     error::DataFusionError,
     execution::{
-        disk_manager::DiskManagerConfig,
-        runtime_env::{RuntimeConfig, RuntimeEnv},
+        SessionStateBuilder,
+        disk_manager::{DiskManagerBuilder, DiskManagerMode},
+        runtime_env::RuntimeEnvBuilder,
     },
     prelude::{SessionConfig, SessionContext},
 };
@@ -85,11 +84,16 @@ pub extern "system" fn Java_org_apache_spark_sql_auron_JniBridge_callNative(
                     .execution
                     .parquet
                     .schema_force_view_types = false;
-
-                let runtime_config =
-                    RuntimeConfig::new().with_disk_manager(DiskManagerConfig::Disabled);
-                let runtime = Arc::new(RuntimeEnv::new(runtime_config)?);
-                let session = SessionContext::new_with_config_rt(session_config, runtime);
+                let diskManagerBuilder =
+                    DiskManagerBuilder::default().with_mode(DiskManagerMode::Disabled);
+                let runtime = RuntimeEnvBuilder::new()
+                    .with_disk_manager_builder(diskManagerBuilder)
+                    .build_arc()?;
+                let state = SessionStateBuilder::new()
+                    .with_config(session_config)
+                    .with_runtime_env(runtime)
+                    .build();
+                let session = SessionContext::from(state);
                 Ok::<_, DataFusionError>(session)
             })?;
             Ok::<_, DataFusionError>(())

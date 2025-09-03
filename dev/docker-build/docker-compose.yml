@@ -33,8 +33,11 @@ services:
       - ./../../target-docker/build-helper-assembly-target:/auron/dev/mvn-build-helper/assembly/target:rw
     environment:
       RUSTFLAGS: "-C target-cpu=skylake"
-      SHIM: "${SHIM}"
-      MODE: "${MODE}"
-      JAVA_VERSION: "${JAVA_VERSION}"
-      SCALA_VERSION: "${SCALA_VERSION}"
-    command: "bash -c 'source ~/.bashrc && cd /auron && ./build/mvn -T8 package -P${SHIM} -P${MODE} -Pjdk-${JAVA_VERSION} -Pscala-${SCALA_VERSION}'"
+      AURON_BUILD_ARGS: "${AURON_BUILD_ARGS}"
+    command: >
+      bash -c '
+        source ~/.bashrc &&
+        cd /auron &&
+        echo "[DOCKER] Running: ./build/mvn $AURON_BUILD_ARGS" &&
+        ./build/mvn $AURON_BUILD_ARGS
+      '

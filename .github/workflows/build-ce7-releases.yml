@@ -23,6 +23,12 @@ on:
     branches:
       - master
       - branch-*
+  pull_request:
+    branches:
+      - master
+      - branch-*
+    paths:
+      - '.github/workflows/build-ce7-releases.yml'
 
 jobs:
   build-snapshot:
@@ -33,6 +39,7 @@ jobs:
         sparkver: [spark-3.0, spark-3.1, spark-3.2, spark-3.3, spark-3.4, spark-3.5]
         scalaver: [ 2.12, 2.13 ]
         auronver: [5.0.0]
+        runner: [ce7]
         exclude:
           # Only build on scala-2.13 for spark-3.5
           - sparkver: spark-3.0
@@ -54,6 +61,12 @@ jobs:
           submodules: recursive
       - uses:  ./.github/actions/setup-rust-toolchain
 
+      - name: Extract spark version
+        run: |
+          raw="${{ matrix.sparkver }}"
+          ver="${raw#spark-}"
+          echo "sparkver_short=$ver" >> $GITHUB_ENV
+
       - name: Detect osclassfier
         id: detect-osclassfier
         run: |
@@ -73,12 +86,16 @@ jobs:
 
       - name: Build auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         run: |
-          sed -i 's/docker-compose -f/docker compose -f/g' ./release-docker.sh
-          SHIM=${{ matrix.sparkver }} MODE=release SCALA_VERSION=${{ matrix.scalaver }} ./release-docker.sh
+          sed -i 's/docker-compose -f/docker compose -f/g' ./auron-build.sh
+          ./auron-build.sh \
+          --docker true \
+          --release \
+          --sparkver ${{ env.sparkver_short }} \
+          --scalaver ${{ matrix.scalaver }}
 
       - name: Upload auron-${{ matrix.sparkver }}_${{ matrix.scalaver }}
         uses: actions/upload-artifact@v4
         with:
-          name: auron-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT-ce7-${{ steps.commit.outputs.short }}.jar
+          name: auron-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT-${{ matrix.runner }}-${{ steps.commit.outputs.short }}.jar
           path: target-docker/auron-${{matrix.sparkver}}_${{matrix.scalaver}}-release-${{ env.osclassfier }}-${{ matrix.auronver }}-SNAPSHOT.jar
           overwrite: true
