@@ -711,12 +711,12 @@
     </profile>
 
     <profile>
-      <id>paimon-1.1</id>
+      <id>paimon-1.2</id>
       <modules>
         <module>thirdparty/auron-paimon</module>
       </modules>
       <properties>
-        <paimonVersion>1.1.1</paimonVersion>
+        <paimonVersion>1.2.0</paimonVersion>
       </properties>
     </profile>
   </profiles>
