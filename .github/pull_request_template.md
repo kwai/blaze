@@ -1,3 +1,11 @@
+<!--
+Thanks for sending a pull request!  Please keep the following tips in mind:
+  - Start the PR title with the related issue ID, e.g. '[AURON-XXXX] Short summary...'.
+  - Make your PR title clear and descriptive, summarizing what this PR changes.
+  - Provide a concise example to reproduce the issue, if possible.
+  - Keep the PR description up to date with all changes.
+-->
+
 # Which issue does this PR close?
 
 <!--
