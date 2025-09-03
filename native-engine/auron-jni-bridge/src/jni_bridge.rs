@@ -573,6 +573,8 @@ pub struct JniBridge<'a> {
     pub method_getTotalMemoryLimited_ret: ReturnType,
     pub method_getDirectWriteSpillToDiskFile: JStaticMethodID,
     pub method_getDirectWriteSpillToDiskFile_ret: ReturnType,
+    pub method_initNativeThread: JStaticMethodID,
+    pub method_initNativeThread_ret: ReturnType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/auron/JniBridge";
@@ -657,6 +659,12 @@ impl<'a> JniBridge<'a> {
                 "()Ljava/lang/String;",
             )?,
             method_getDirectWriteSpillToDiskFile_ret: ReturnType::Object,
+            method_initNativeThread: env.get_static_method_id(
+                class,
+                "initNativeThread",
+                "()V",
+            )?,
+            method_initNativeThread_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

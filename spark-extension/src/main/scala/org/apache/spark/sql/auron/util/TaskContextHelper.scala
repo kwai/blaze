@@ -46,7 +46,7 @@ object TaskContextHelper extends Logging {
     val context: TaskContext = TaskContext.get()
     if (context != null) {
       val threadName =
-        s"Spark native task ${context.partitionId()}.${context.attemptNumber()} in stage ${context
+        s"auron native task ${context.partitionId()}.${context.attemptNumber()} in stage ${context
           .stageId()}.${context.stageAttemptNumber()} (TID ${context.taskAttemptId()})"
       Thread.currentThread().setName(threadName)
     }

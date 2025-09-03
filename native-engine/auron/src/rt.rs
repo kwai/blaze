@@ -120,6 +120,9 @@ impl NativeExecutionRuntime {
                 let _ = jni_call_static!(
                     JniBridge.setTaskContext(spark_task_context_global.as_obj()) -> ()
                 );
+                let _ = jni_call_static!(
+                    JniBridge.initNativeThread() -> ()
+                );
                 THREAD_STAGE_ID.set(stage_id);
                 THREAD_PARTITION_ID.set(partition_id);
                 THREAD_TID.set(tid);
