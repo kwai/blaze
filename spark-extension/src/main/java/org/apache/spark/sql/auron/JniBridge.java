@@ -66,10 +66,6 @@ public class JniBridge {
         return TaskContext$.MODULE$.get();
     }
 
-    public static void setTaskContext(TaskContext tc) {
-        TaskContext$.MODULE$.setTaskContext(tc);
-    }
-
     public static OnHeapSpillManager getTaskOnHeapSpillManager() {
         return OnHeapSpillManager$.MODULE$.current();
     }
@@ -119,7 +115,9 @@ public class JniBridge {
                 .getPath();
     }
 
-    public static void initNativeThread() {
+    public static void initNativeThread(ClassLoader cl, TaskContext tc) {
+        setContextClassLoader(cl);
+        TaskContext$.MODULE$.setTaskContext(tc);
         TaskContextHelper$.MODULE$.setThreadNameFromTaskContext();
         TaskContextHelper$.MODULE$.setHDFSCallerContext();
     }
