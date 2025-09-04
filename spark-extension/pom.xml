@@ -24,7 +24,7 @@
     <version>${project.version}</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
-  <groupId>org.apache.auron</groupId>
+
   <artifactId>spark-extension_${scalaVersion}</artifactId>
   <packaging>jar</packaging>
 
