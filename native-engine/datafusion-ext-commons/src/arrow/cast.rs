@@ -312,7 +312,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
         offset += 1;
         if b == separator {
             // We allow decimals and will return a truncated integral in that case.
-            // Therefore we won't throw an exception here (checking the fractional
+            // Therefore, we won't throw an exception here (checking the fractional
             // part happens below.)
             break;
         }
@@ -342,7 +342,7 @@ fn to_integer<T: Bounded + FromPrimitive + Integer + Signed + Copy>(input: &str)
 
     // This is the case when we've encountered a decimal separator. The fractional
     // part will not change the number, but we will verify that the fractional part
-    // is well formed.
+    // is well-formed.
     while offset < bytes.len() {
         let current_byte = bytes[offset];
         if !current_byte.is_ascii_digit() {
