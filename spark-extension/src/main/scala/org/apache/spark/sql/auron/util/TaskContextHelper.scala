@@ -42,14 +42,16 @@ object TaskContextHelper extends Logging {
     }
   }
 
-  def setThreadNameFromTaskContext(): Unit = {
+  def setNativeThreadName(): Unit = {
     val context: TaskContext = TaskContext.get()
-    if (context != null) {
-      val threadName =
-        s"auron native task ${context.partitionId()}.${context.attemptNumber()} in stage ${context
-          .stageId()}.${context.stageAttemptNumber()} (TID ${context.taskAttemptId()})"
-      Thread.currentThread().setName(threadName)
+    val thread = Thread.currentThread()
+    val threadName = if (context != null) {
+      s"auron native task ${context.partitionId()}.${context.attemptNumber()} in stage ${context
+        .stageId()}.${context.stageAttemptNumber()} (TID ${context.taskAttemptId()})"
+    } else {
+      "auron native task " + thread.getName
     }
+    thread.setName(threadName)
   }
 
   def setHDFSCallerContext(): Unit = {

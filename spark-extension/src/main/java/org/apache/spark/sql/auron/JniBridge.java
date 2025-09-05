@@ -118,7 +118,7 @@ public class JniBridge {
     public static void initNativeThread(ClassLoader cl, TaskContext tc) {
         setContextClassLoader(cl);
         TaskContext$.MODULE$.setTaskContext(tc);
-        TaskContextHelper$.MODULE$.setThreadNameFromTaskContext();
+        TaskContextHelper$.MODULE$.setNativeThreadName();
         TaskContextHelper$.MODULE$.setHDFSCallerContext();
     }
 }
