@@ -32,6 +32,7 @@ import org.apache.spark.auron.FSDataOutputWrapper;
 import org.apache.spark.auron.FSDataOutputWrapper$;
 import org.apache.spark.sql.auron.memory.OnHeapSpillManager;
 import org.apache.spark.sql.auron.memory.OnHeapSpillManager$;
+import org.apache.spark.sql.auron.util.TaskContextHelper$;
 
 @SuppressWarnings("unused")
 public class JniBridge {
@@ -63,10 +64,6 @@ public class JniBridge {
 
     public static TaskContext getTaskContext() {
         return TaskContext$.MODULE$.get();
-    }
-
-    public static void setTaskContext(TaskContext tc) {
-        TaskContext$.MODULE$.setTaskContext(tc);
     }
 
     public static OnHeapSpillManager getTaskOnHeapSpillManager() {
@@ -116,5 +113,12 @@ public class JniBridge {
                 .createTempLocalBlock()
                 ._2
                 .getPath();
+    }
+
+    public static void initNativeThread(ClassLoader cl, TaskContext tc) {
+        setContextClassLoader(cl);
+        TaskContext$.MODULE$.setTaskContext(tc);
+        TaskContextHelper$.MODULE$.setNativeThreadName();
+        TaskContextHelper$.MODULE$.setHDFSCallerContext();
     }
 }

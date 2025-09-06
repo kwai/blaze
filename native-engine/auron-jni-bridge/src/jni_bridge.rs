@@ -553,8 +553,6 @@ pub struct JniBridge<'a> {
     pub method_getSparkEnvConfAsString_ret: ReturnType,
     pub method_getResource: JStaticMethodID,
     pub method_getResource_ret: ReturnType,
-    pub method_setTaskContext: JStaticMethodID,
-    pub method_setTaskContext_ret: ReturnType,
     pub method_getTaskContext: JStaticMethodID,
     pub method_getTaskContext_ret: ReturnType,
     pub method_getTaskOnHeapSpillManager: JStaticMethodID,
@@ -573,6 +571,8 @@ pub struct JniBridge<'a> {
     pub method_getTotalMemoryLimited_ret: ReturnType,
     pub method_getDirectWriteSpillToDiskFile: JStaticMethodID,
     pub method_getDirectWriteSpillToDiskFile_ret: ReturnType,
+    pub method_initNativeThread: JStaticMethodID,
+    pub method_initNativeThread_ret: ReturnType,
 }
 impl<'a> JniBridge<'a> {
     pub const SIG_TYPE: &'static str = "org/apache/spark/sql/auron/JniBridge";
@@ -611,12 +611,6 @@ impl<'a> JniBridge<'a> {
                 "()Lorg/apache/spark/TaskContext;",
             )?,
             method_getTaskContext_ret: ReturnType::Object,
-            method_setTaskContext: env.get_static_method_id(
-                class,
-                "setTaskContext",
-                "(Lorg/apache/spark/TaskContext;)V",
-            )?,
-            method_setTaskContext_ret: ReturnType::Primitive(Primitive::Void),
             method_getTaskOnHeapSpillManager: env.get_static_method_id(
                 class,
                 "getTaskOnHeapSpillManager",
@@ -657,6 +651,12 @@ impl<'a> JniBridge<'a> {
                 "()Ljava/lang/String;",
             )?,
             method_getDirectWriteSpillToDiskFile_ret: ReturnType::Object,
+            method_initNativeThread: env.get_static_method_id(
+                class,
+                "initNativeThread",
+                "(Ljava/lang/ClassLoader;Lorg/apache/spark/TaskContext;)V",
+            )?,
+            method_initNativeThread_ret: ReturnType::Primitive(Primitive::Void),
         })
     }
 }

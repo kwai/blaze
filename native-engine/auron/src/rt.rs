@@ -115,10 +115,7 @@ impl NativeExecutionRuntime {
             .on_thread_start(move || {
                 let classloader = JavaClasses::get().classloader;
                 let _ = jni_call_static!(
-                    JniBridge.setContextClassLoader(classloader) -> ()
-                );
-                let _ = jni_call_static!(
-                    JniBridge.setTaskContext(spark_task_context_global.as_obj()) -> ()
+                    JniBridge.initNativeThread(classloader,spark_task_context_global.as_obj()) -> ()
                 );
                 THREAD_STAGE_ID.set(stage_id);
                 THREAD_PARTITION_ID.set(partition_id);
